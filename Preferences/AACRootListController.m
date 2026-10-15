@@ -11,9 +11,7 @@
  return _specifiers;
 }
 - (void)pickAudio:(PSSpecifier *)specifier {
- UIDocumentPickerViewController *picker;
- if (@available(iOS 14.0,*)) picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[[UTType audio]]] ;
- else picker=[[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.audio"] inMode:UIDocumentPickerModeImport];
+ UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[[UTType audio]]];
  picker.delegate=self; picker.allowsMultipleSelection=NO; [self presentViewController:picker animated:YES completion:nil];
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
