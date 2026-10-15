@@ -1,7 +1,7 @@
 TARGET := iphone:clang:latest:17.0
 ARCHS := arm64e
 THEOS_PACKAGE_SCHEME := roothide
-PACKAGE_VERSION := 1.2.0
+PACKAGE_VERSION := 1.3.0
 INSTALL_TARGET_PROCESSES := MobilePhone
 
 include $(THEOS)/makefiles/common.mk
