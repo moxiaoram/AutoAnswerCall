@@ -16,7 +16,8 @@ static BOOL AACWhitelisted(id call) {
  return NO;
 }
 static void AACPlayAudio(void) {
- NSString *path=AACPrefs()[@"AudioPath"]; if(!path.length)return; NSURL *url=[NSURL fileURLWithPath:path]; if(![[NSFileManager defaultManager] fileExistsAtPath:path])return;
+ NSDictionary *prefs=AACPrefs(); if(![prefs[@"PlayAudio"] boolValue]) return;
+ NSString *path=prefs[@"AudioPath"]; if(!path.length)return; NSURL *url=[NSURL fileURLWithPath:path]; if(![[NSFileManager defaultManager] fileExistsAtPath:path])return;
  NSError *e=nil; AACPlayer=[[AVAudioPlayer alloc] initWithContentsOfURL:url error:&e]; [AACPlayer prepareToPlay]; [AACPlayer play];
 }
 %hook CTCall
