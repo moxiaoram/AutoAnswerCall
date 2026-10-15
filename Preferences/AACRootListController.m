@@ -11,7 +11,8 @@
  return _specifiers;
 }
 - (void)pickAudio:(PSSpecifier *)specifier {
- UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[[UTType audio]]];
+ UTType *audioType=[UTType typeWithIdentifier:@"public.audio"];
+ UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[audioType]];
  picker.delegate=self; picker.allowsMultipleSelection=NO; [self presentViewController:picker animated:YES completion:nil];
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
