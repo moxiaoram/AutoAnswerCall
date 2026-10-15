@@ -1,0 +1,39 @@
+name: Build AutoAnswerCall
+on:
+  workflow_dispatch:
+  push:
+    branches: ['main']
+    tags: ['v*']
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install RootHide Theos
+        run: |
+          git clone --depth 1 --recursive https://github.com/roothide/theos.git "$RUNNER_TEMP/theos"
+          echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
+      - name: Install tools
+        run: brew install ldid dpkg
+      - name: Build package
+        run: |
+          set -euxo pipefail
+          make clean package FINALPACKAGE=1 ARCHS=arm64e THEOS="$THEOS" THEOS_PACKAGE_SCHEME=roothide 2>&1 | tee build.log
+      - name: Validate package
+        run: |
+          set -euxo pipefail
+          test -n "$(ls packages/*.deb)"
+          dpkg-deb --info packages/*.deb
+          test "$(dpkg-deb -f packages/*.deb Architecture)" = iphoneos-arm64e
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: build.log
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoAnswerCall-roothide-arm64e
+          path: packages/*.deb
+          if-no-files-found: error
