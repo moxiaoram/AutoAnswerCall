@@ -9,16 +9,19 @@ for good in ['CXAnswerCallAction','requestTransaction:tx','callChanged:(CXCall *
 for good in ['asCopy:YES','NSFileCoordinator','startAccessingSecurityScopedResource','stopAccessingSecurityScopedResource','Limit+1','NSApplicationSupportDirectory','SETTINGS','PHONE']:
  assert good in s+t,good
 p=plistlib.loads((r/'Preferences/Resources/Root.plist').read_bytes());mode=next(i for i in p['items'] if i.get('key')=='Mode');assert mode['default']==2 and mode['cell']=='PSLinkListCell' and mode['validValues']==[1,2]
-# 1.10.0: the filter must ship BOTH official, case-sensitive bundle ids and must never
-# carry the historical wrong-case phone id. The tweak may still accept the wrong-case id
-# and the process name at runtime as compatibility fallbacks.
+# 1.10.0/1.12.0: the filter must ship the official, case-sensitive bundle ids exactly and
+# must never carry the historical wrong-case phone id. The tweak may still accept the
+# wrong-case id and the process names at runtime as compatibility fallbacks.
 filter_text=(r/'AutoAnswerCall.plist').read_text()
 assert 'com.apple.mobilephone' in filter_text, 'filter must carry the official lowercase phone id'
 assert 'com.apple.springboard' in filter_text, 'filter must carry com.apple.springboard'
+assert 'com.apple.InCallService' in filter_text, 'filter must carry com.apple.InCallService'
+assert 'com.apple.incallservice' in filter_text, 'filter must carry the lowercase incallservice variant'
 assert 'MobilePhone' not in filter_text, 'filter must not carry any wrong-case/MobilePhone identifier'
-assert re.findall(r'"([^"]+)"',filter_text)==['com.apple.mobilephone','com.apple.springboard'],re.findall(r'"([^"]+)"',filter_text)
+assert re.findall(r'"([^"]+)"',filter_text)==['com.apple.mobilephone','com.apple.springboard','com.apple.InCallService','com.apple.incallservice'],re.findall(r'"([^"]+)"',filter_text)
 assert 'isEqualToString:@"com.apple.mobilephone"' in t and '[process isEqualToString:@"MobilePhone"]' in t
 assert 'isEqualToString:@"com.apple.springboard"' in t and 'inSpringBoardProcess' in t
+assert 'isEqualToString:@"com.apple.incallservice"' in t and '[process isEqualToString:@"InCallService"]' in t and 'inInCallServiceProcess' in t
 delay=next(i for i in p['items'] if i.get('key')=='Delay');assert delay['cell']=='PSEditTextCell' and delay['get']=='readDelay:' and delay['set']=='setDelay:specifier:'
 assert 'PSSliderCell' not in str(p)
 for good in ['AACParseDelay(text.UTF8String','setBool:NO forKey:@"Enabled"','com.autoanswer.call.stop','allowsMultipleSelection=YES','NSUUID.UUID.UUIDString','dispatch_sync(dispatch_get_main_queue()','showAudioLibrary:']:
@@ -55,7 +58,7 @@ for good in ['com.autoanswer.call.probe.','20.0','notify_post','dispatch_source_
  assert good in probe,good
 assert 'AACProbeStart' in t and 'AACProbeStart(ProcessTag)' in t
 assert 'com.autoanswer.call.probe.' in pc and 'probe.mobilephone' not in pc  # settings side builds names from the same prefix
-# SpringBoard runtime inventory: real enumeration, bounded, no hooks
+# runtime inventory: real enumeration, bounded, no hooks
 for good in ['objc_getClassList','class_copyMethodList','IncomingCall','CallAlert','CallToAction','CallController','InCallService','AnswerCall','CallPresentation','SBLockScreen','answer','accept','pick','dial','connect','AACInventoryMaxClasses=400','AACInventoryMaxSelectors=40','no hooks installed']:
  assert good in inv,good
 assert 'AACSharedInventoryCapBytes=200000' in inv
@@ -66,7 +69,7 @@ for good in ['AACProbeController','AACSharedLogController','probeProcesses:','sh
  assert good in s or good in pc or good in logs,good
 actions=[i.get('action') for i in p['items'] if i.get('action')]
 assert 'probeProcesses:' in actions and 'showSharedLogs:' in actions,actions
-# no invented Apple preference domains/keys anywhere in the new evidence code: the only
+# no invented Apple preference domains/keys anywhere in the evidence code: the only
 # CFPreferences domains used are our own, and no Apple accessor/key name is referenced.
 for text in (shared,probe,inv):
  assert 'callAudioRouting' not in text
@@ -74,7 +77,7 @@ for text in (shared,probe,inv):
  assert 'AXSettings' not in text
 assert 'com.autoanswer.call.sharelog' in shared and 'com.autoanswer.call.probe' in shared
 
-# ---- 1.11.0: SpringBoard runtime discovery + dynamic hook answer path ----
+# ---- 1.11.0: runtime discovery + dynamic hook answer path (now host-parameterised) ----
 sb=(r/'AACSpringBoard.h').read_text()
 pstr=(r/'Preferences/Resources/Root.plist').read_text()
 for good in ['objc_getClassList','class_copyMethodList','method_getImplementation','method_setImplementation','method_getNumberOfArguments','method_getReturnType','AACSBAnswerHook','AACSBOriginalFor','AACSBInvoking','AACSBDepth','AACSBWeakTarget','AACSBStrongTarget','AACSBRescan','AACSBInvokeDiscovered','AACSBHookedIMPs','AACSBHookCap=24','AACSBClassCap=400','AACSBSelectorCap=12','AACSBRetryDiscoveryIfEmpty','AACSBWriteDiscoveryFile','AACSBStart','runtime-discovered','discovery.txt','仅日志','AACSBRecord','AACSBSelectorMatches']:
@@ -93,21 +96,72 @@ assert 'AACSBInvoking' in sb and 'AACSBOriginalFor' in sb and 'recursion guard' 
 for bad in ['NSClassFromString','SBIncomingCallViewController','SBCallAlertViewController','IncomingCallViewController','SBInCallPresentationManager','SBLockScreenCallController','%hook','substrate.h','MSHookMessageEx']:
  assert bad not in sb,bad
 # policy/answer wiring in Tweak.x
-for good in ['SubmitBlock','if(SubmitBlock){SubmitBlock(uuid,s);}else{','RegisterControls();','AACSBStart(env)','SpringBoardStart(ProcessTag)','AACSBRetryDiscoveryIfEmpty()','AACSBEnv *env=[AACSBEnv new]','com.autoanswer.call.pong.springboard','LOG-ONLY primary path','已调用运行时发现的 UI 接听方法（尚未确认接通）','未发现可调用的 UI 接听路径']:
+for good in ['SubmitBlock','if(SubmitBlock){SubmitBlock(uuid,s);}else{','RegisterControls();','AACSBStart(env)','AnswerHostStart(answerHost)','AACSBRetryDiscoveryIfEmpty()','AACSBEnv *env=[AACSBEnv new]','LOG-ONLY primary path','已调用运行时发现的 UI 接听方法（尚未确认接通）','未发现可调用的 UI 接听路径']:
  assert good in t,good
 assert sb.count('AACSBAnswerHook')>=4
 # phone module keeps its 1.9.x/1.10.0 behaviour byte-for-byte
-assert 'Loaded 1.11.0 evidence build; retained CXCallObserver in MobilePhone' in t
+assert 'Loaded 1.12.0 evidence build; retained CXCallObserver in MobilePhone' in t
 assert 'inPhoneProcess' in t and 'ProcessTag=@"mobilephone";' in t
 # settings side shows the runtime-discovered result and never invents one
 for good in ['AACDiscoveryEntry','aac-springboard.discovery.txt','runtime-discovered','AACCountOccurrences','没有可读的发现文件','showDiscovery:']:
  assert good in pc or good in s or good in pstr,good
 assert 'showDiscovery:' in pstr and 'showDiscovery:' in s
-# version bumped everywhere, package id unchanged, filter untouched
-assert 'Version: 1.11.0' in (r/'control').read_text() and 'Package: com.autoanswer.call' in (r/'control').read_text()
-assert 'PACKAGE_VERSION := 1.11.0' in (r/'Makefile').read_text()
-assert 'SpringBoard MobilePhone' in (r/'Makefile').read_text()
-assert '1.11.0' in (r/'README.md').read_text() and '1.11.0' in pstr
-assert 'config[@"Version"]=@"1.11.0";' in s
 
-print('PASS: transactions, mode2 exclusions, finite seconds, stop generations, bounded multiselect import, library schema/migration/delete guards, native accessor ABI guards, 1.10.0 evidence channel (two-bundle filter, per-process probe, bounded SB inventory, per-path log reporting) plus 1.11.0 SpringBoard runtime discovery (broad candidate classes, ABI-proven dynamic hooks, per-method original IMP, recursion guard, weak capture + hierarchy re-scan, explicit log-only fallback) - static checks only, NOT device runtime')
+# ---- 1.12.0: host table, per-host probe/pong/discovery names, single-owner answer rule ----
+host=(r/'AACAnswerHost.h').read_text()
+# the host table itself, one entry per host, with all five documented fields
+for good in ['AACAnswerHostTable','@"tag"','@"bundle"','@"altBundle"','@"process"','@"probe"','@"pong"','@"discovery"','@"priority"','@"answer"',
+             'AACAnswerHostByTag','AACAnswerHostsAnswerCapable','AACAnswerHostsHigherPriority','AACAnswerHostTagForBundle',
+             'AACAnswerHostDiscoveryName','AACAnswerProbeNames','AACAnswerOwnerClaimNames','AACAnswerOwnerClaimName',
+             'AACAnswerHostRoleForTag','AACAnswerPresenceFreshSeconds','AACAnswerHostSeenProbe','AACAnswerHostSeenOwnerClaim',
+             'AACAnswerRoleOwner','AACAnswerRoleObserver','AACAnswerRoleLogOnly','com.autoanswer.call.owner.',
+             'AACAnswerPresenceText','AACAnswerPostOwnerClaim','AACAnswerPeerPresenceReason']:
+ assert good in host,good
+# exact per-host names: SpringBoard keeps its 1.11.0 names, InCallService gets its own
+for good in ['com.apple.InCallService','com.apple.incallservice','com.apple.mobilephone','com.apple.springboard','MobilePhone','SpringBoard','InCallService',
+             'com.autoanswer.call.probe.incall','com.autoanswer.call.pong.incall','aac-incall.discovery.txt',
+             'com.autoanswer.call.probe.springboard','com.autoanswer.call.pong.springboard','aac-springboard.discovery.txt',
+             'com.autoanswer.call.probe.mobilephone','com.autoanswer.call.probe.settings']:
+ assert good in host,good
+# ownership is a deterministic role table: InCallService > SpringBoard > log-only
+assert 'InCallService(2) > SpringBoard(1) > 仅日志(0)' in host
+assert host.index('@"tag":@"incall"')<host.index('@"tag":@"springboard"'),'the incall host must be listed as the higher-priority host first'
+# every other host records this exact observer-only sentence instead of answering
+assert 'observer only, answer owned by' in host
+# the host module must not hardcode a private class name either
+for bad in ['NSClassFromString','SBIncomingCallViewController','SBCallAlertViewController','IncomingCallViewController','%hook','substrate.h','MSHookMessageEx','mayPerformAction']:
+ assert bad not in host,bad
+# the host-parameterised answer module takes its names from the host table
+for good in ['AACSBEnvShared.host','AACSBHostDiscoveryFile','AACSBShouldAnswer','AACSBClaimAnswerUUID','AACSBHostProbeArrived','AACSBRecomputeRole','AACSBHostRoleText','AACSBHostOwnerTagText','AACSBRole','AACSBHostTag','# host=','# role=','# roleReason=','# observedHostPresence=','HOOKED_TOTAL','HOOK_SUMMARY','HOOK_ENTRY','CONCLUSIVE']:
+ assert good in sb,good
+assert 'AACAnswerHostsAnswerCapable' in sb or 'AACAnswerHostRoleForTag' in sb
+# Tweak.x: InCallService is a real module, not a copy-paste promise
+for good in ['AnswerHostStart(NSDictionary *host)','AACAnswerHostTagForBundle(bundle,process)','inInCallServiceProcess','answerHost=inInCallServiceProcess?AACAnswerHostByTag(@"incall")','AACSBShouldAnswer(&ownership)','AACSBClaimAnswerUUID(uuid.UUIDString)','observer only, answer owned by %@','duplicate answer submission refused','"observerOnly"','AACSBHostOwnerTagText()']:
+ assert good in t,good
+# single-owner rule: the ownership gate runs BEFORE any answer submission, the observer
+# branch returns without submitting, and there is exactly ONE public-transaction attempt
+# (never more weight on a path proven ineffective on this device).
+assert t.index('AACSBShouldAnswer(&ownership)')<t.index('secondary unverified diagnostic attempt')
+observer_branch=t.split('if(!AACSBShouldAnswer(&ownership)){')[1].split('if(!AACSBClaimAnswerUUID')[0]
+assert 'return;' in observer_branch and 'CXAnswerCallAction' not in observer_branch
+assert t.count('secondary unverified diagnostic attempt')==1
+# exactly two: the unchanged phone module (1.9.x path) and the single diagnostic attempt
+assert t.count('requestTransaction:tx')==2
+# CallKit error meaning is decoded, not reported as a generic failure
+for good in ['CallKitErrorMeaning','com.apple.CallKit.error.requesttransaction','com.apple.CallKit.error.incomingcall','code 1 = unknownCallUUID','不拥有该蜂窝通话','不猜测含义','含义：']:
+ assert good in t,good
+# each answer host proves its own discovery result so the next device test is conclusive
+for good in ['已挂钩方法=','本宿主已挂钩运行时发现到的接听方法','因此本宿主不可能接听']:
+ assert good in sb,good
+# settings page: new incall probe row + its pong counter, per-host discovery labelling
+for good in ['@"mobilephone",@"springboard",@"incall",@"settings"','com.autoanswer.call.pong.incall','incall-pong','AACDiscoveryHosts','AACDiscoveryHostLabel','AACDiscoveryEntryForHost','AACDiscoveryLabelForEntry','aac-incall.discovery.txt','aac-springboard.discovery.txt','没有可读的发现文件']:
+ assert good in pc,good
+# version bumped everywhere, package id unchanged, filter is the four documented ids
+assert 'Version: 1.12.0' in (r/'control').read_text() and 'Package: com.autoanswer.call' in (r/'control').read_text()
+assert 'PACKAGE_VERSION := 1.12.0' in (r/'Makefile').read_text()
+assert 'INSTALL_TARGET_PROCESSES := SpringBoard MobilePhone InCallService' in (r/'Makefile').read_text()
+assert '1.12.0' in (r/'README.md').read_text() and '1.12.0' in pstr and '1.12.0' in pc
+assert 'config[@"Version"]=@"1.12.0";' in s
+assert '设置模块已加载 1.12.0' in s
+
+print('PASS: transactions, mode2 exclusions, finite seconds, stop generations, bounded multiselect import, library schema/migration/delete guards, native accessor ABI guards, 1.10.0 evidence channel (per-process probe, bounded inventory, per-path log reporting) plus 1.11.0/1.12.0 answer-host module (host table InCallService+SpringBoard+MobilePhone, per-host probe/pong/discovery names, broad runtime candidate classes, ABI-proven dynamic hooks, per-method original IMP, recursion guard, weak capture + hierarchy re-scan, deterministic single-owner role table with a per-UUID submission guard, decoded CallKit error meanings, explicit observer/log-only fallbacks) - static checks only, NOT device runtime')

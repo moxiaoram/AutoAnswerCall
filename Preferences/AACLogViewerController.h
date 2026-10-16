@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import "../AACSharedLog.h"
-/* 共享日志查看器 (1.11.0).
+/* 共享日志查看器 (1.12.0).
    Tries every candidate path in order, shows whichever one is actually readable and
    clearly labels which path succeeded. It never merges contents and never claims that
    a file written by another process is visible here. */

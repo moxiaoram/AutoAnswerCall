@@ -4,7 +4,12 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import "AACSharedLog.h"
-/* SpringBoard answer path (1.11.0): runtime discovery + dynamic hook + capture.
+#import "AACAnswerHost.h"
+/* Host-parameterised answer module (1.12.0; 1.11.0 shipped this file SpringBoard-only).
+   The SAME machinery now runs in whichever host process the caller names through
+   AACSBEnv.host: probe/pong Darwin names, discovery file name and the ownership role all
+   come from the host table in AACAnswerHost.h. Refactor basis: runtime discovery +
+   dynamic hook + capture.
    Device evidence from the 1.10.0 probe build: the SpringBoard module loads on this
    iOS 17.3 RootHide device while the phone app process never announced itself, so
    SpringBoard is the only host that is known to be present. Nothing in this header
@@ -23,6 +28,11 @@ static NSTimeInterval const AACSBStrongHoldSeconds=180.0;
 static NSUInteger const AACSBMaxDiscoverRuns=3;
 
 @interface AACSBEnv : NSObject
+/* The host descriptor from AACAnswerHost.h. Every name this module uses (process tag,
+   probe/pong name, discovery file name, priority, answer capability) comes from here, so
+   the module body is identical in InCallService and in SpringBoard. */
+@property(nonatomic,copy) NSDictionary *host;
+/* Legacy field kept for 1.11.0 compatibility; used only when host is nil. */
 @property(nonatomic,copy) NSString *process;
 @property(nonatomic,copy) NSDictionary *(^prefs)(void);
 @property(nonatomic,copy) BOOL (^allowed)(CXCall *call);
@@ -45,8 +55,92 @@ static id AACSBStrongTarget=nil;
 static SEL AACSBInvokeSelector=NULL;
 static volatile int32_t AACSBDepth=0;
 static volatile int32_t AACSBInvoking=0;
+/* 1.12.0 single-owner arbitration state. AACSBAnswerRole mirrors AACAnswerRole; the
+   module is the only place in this process that may submit an answer. */
+static AACAnswerRole AACSBRole=AACAnswerRoleLogOnly;
+static NSString *AACSBHostTag=nil;
+static NSString *AACSBHostDisplay=nil;
+static NSString *AACSBOwnerTag=nil;
+static NSString *AACSBRoleReason=nil;
+static NSMutableSet *AACSBSubmittedUUIDs=nil;
 
-static NSString *AACSBProcess(void){return AACSBEnvShared.process.length?AACSBEnvShared.process:@"springboard";}
+/* Forward declarations: the ownership helpers below are defined above these two. */
+static void AACSBLog(NSString *message);
+static void AACSBRecord(NSString *status,NSDictionary *flags);
+
+static NSDictionary *AACSBHost(void){
+ NSDictionary *host=AACSBEnvShared.host;
+ if([host isKindOfClass:NSDictionary.class]&&host[@"tag"])return host;
+ return AACAnswerHostByTag(@"springboard");
+}
+/* Process tag drives probe name (com.autoanswer.call.probe.<tag>) and the discovery file
+   (aac-<tag>.discovery.txt) through the shared-log leaf naming. */
+static NSString *AACSBProcess(void){
+ NSDictionary *host=AACSBHost();NSString *tag=host[@"tag"];
+ if([tag isKindOfClass:NSString.class]&&tag.length)return tag;
+ return AACSBEnvShared.process.length?AACSBEnvShared.process:@"springboard";
+}
+static NSString *AACSBDisplay(void){
+ NSDictionary *host=AACSBHost();NSString *name=host[@"display"];
+ return [name isKindOfClass:NSString.class]&&name.length?name:AACSBProcess();
+}
+static NSString *AACSBHostDiscoveryFile(void){
+ NSString *name=AACAnswerHostDiscoveryName(AACSBHost()[@"tag"]);
+ return name?:@"aac-springboard.discovery.txt";
+}
+/* Re-evaluates the single-owner role from the role table plus observed host presence. */
+static void AACSBRecomputeRole(void){
+ NSString *reason=nil;NSString *owner=nil;
+ AACAnswerRole role=AACAnswerHostRoleForTag(AACSBHost()[@"tag"],AACSBHookCount>0,&reason,&owner);
+ BOOL changed=(role!=AACSBRole)||![owner isEqualToString:AACSBOwnerTag?:@""];
+ AACSBRole=role;AACSBHostTag=AACSBHost()[@"tag"];AACSBHostDisplay=AACSBDisplay();AACSBOwnerTag=owner;AACSBRoleReason=reason;
+ if(!changed)return;
+ NSString *line=[NSString stringWithFormat:@"%@ 接听归属角色：%@（%@）",AACSBDisplay(),role==AACAnswerRoleOwner?@"OWNER 本宿主负责接听":(role==AACAnswerRoleObserver?@"OBSERVER 仅观察与记录":@"LOG-ONLY 仅日志"),reason?:@"无说明"];
+ dispatch_async(dispatch_get_main_queue(),^{
+  AACSBLog(line);
+  if(role==AACAnswerRoleOwner)AACSBRecord(@"接听归属：本宿主负责执行接听（单一负责宿主规则）",@{@"owner":@YES});
+  else AACSBRecord(owner?[NSString stringWithFormat:@"观察者：接听由 %@ 负责，本宿主不提交接听",owner]:@"仅日志：本宿主不提交接听",@{@"owner":@NO});
+ });
+ if(role!=AACAnswerRoleOwner&&owner.length){
+  dispatch_async(dispatch_get_main_queue(),^{
+   AACSBLog([NSString stringWithFormat:@"observer only, answer owned by %@（本宿主不会为该通话提交接听；绝不出现两个宿主同时提交）",owner]);
+  });
+ }
+}
+/* A higher-priority host's probe/claim just arrived: refresh presence and re-run the
+   role rule (this is how an already-loaded lower-priority host deterministically
+   demotes itself to observer when InCallService shows up later). */
+static void AACSBHostProbeArrived(NSString *tag){
+ if(![tag isKindOfClass:NSString.class]||!tag.length)return;
+ AACAnswerHostSeenProbe(tag);
+ if([tag isEqualToString:AACSBProcess()])return;
+ if(![AACSBHost()[@"answer"] boolValue])return;
+ AACSBRecomputeRole();
+}
+/* Answer-time gate: only the owner may submit, and only once per call UUID. */
+static BOOL AACSBShouldAnswer(NSString **reason){
+ AACSBRecomputeRole();
+ if(AACSBRole!=AACAnswerRoleOwner){
+  if(reason)*reason=AACSBHostTag.length?[NSString stringWithFormat:@"%@ 不是接听负责宿主（%@）：%@",AACSBHostDisplay,AACAnswerRoleTableText(),AACSBRoleReason?:@"无说明"]:@"本进程不在宿主表内，不接听";
+  return NO;
+ }
+ if(reason)*reason=[NSString stringWithFormat:@"%@ 是接听负责宿主：%@",AACSBHostDisplay,AACSBRoleReason?:@""];
+ return YES;
+}
+/* Role text used by Tweak.x logs/records: host, role and (when observer) the owner. */
+static NSString *AACSBHostRoleText(void){
+ return [NSString stringWithFormat:@"host=%@ role=%@ owner=%@",AACSBDisplay(),AACSBRole==AACAnswerRoleOwner?@"OWNER":(AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY"),AACSBOwnerTag?:@"(none)"];
+}
+static NSString *AACSBHostOwnerTagText(void){return AACSBOwnerTag.length?AACSBOwnerTag:@"(none)";}
+static BOOL AACSBClaimAnswerUUID(NSString *uuid){
+ if(![uuid isKindOfClass:NSString.class]||!uuid.length)return NO;
+ if(!AACSBSubmittedUUIDs)AACSBSubmittedUUIDs=[NSMutableSet new];
+ @try{
+  if([AACSBSubmittedUUIDs containsObject:uuid])return NO;
+  [AACSBSubmittedUUIDs addObject:uuid];
+ }@catch(NSException *e){return NO;}
+ return YES;
+}
 static void AACSBLog(NSString *message){
  if(![message isKindOfClass:NSString.class])return;
  if(AACSBEnvShared.log){AACSBEnvShared.log(message);return;}
@@ -202,17 +296,33 @@ static NSString *AACSBHookedSummary(void){
  return AACSBHookedSelectors.count>12?[text stringByAppendingFormat:@" 等 %lu 个",(unsigned long)AACSBHookedSelectors.count]:text;
 }
 static void AACSBWriteDiscoveryFile(void){
+ if(!AACSBDiscoveryLines){AACSBDiscoveryLines=[NSMutableArray new];}
+ AACSBRecomputeRole();
+ /* Appended every run so a device test can read the host, its role and its hooks from
+   one file, without any cross-process file visibility being assumed. */
+ [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# host=%@ tag=%@ display=%@ discoveryFile=%@",AACSBDisplay(),AACSBProcess(),AACSBDisplay(),AACSBHostDiscoveryFile()]];
+ [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# role=%@ owner=%@ roleTable=%@",AACSBRole==AACAnswerRoleOwner?@"OWNER":(AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY"),AACSBOwnerTag?:@"(none)",AACAnswerRoleTableText()]];
+ [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# roleReason=%@",AACSBRoleReason?:@"(none)"]];
+ [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# observedHostPresence=%@",AACAnswerPresenceText()]];
+ [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# HOOKED_TOTAL %lu of candidate classes=%lu rejected=%lu discoverRuns=%lu",(unsigned long)AACSBHookCount,(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBRejectedMethods,(unsigned long)AACSBDiscoverRuns]];
+ if(AACSBHookCount){
+  [AACSBDiscoveryLines addObject:[@"# HOOK_SUMMARY " stringByAppendingString:AACSBHookedSummary()]];
+  for(NSString *entry in AACSBHookedSelectors)[AACSBDiscoveryLines addObject:[@"# HOOK_ENTRY " stringByAppendingString:entry]];
+  [AACSBDiscoveryLines addObject:@"# CONCLUSIVE: 本宿主已挂钩运行时发现到的接听方法；下一次设备来电若命中，日志会记录 HOOKED 方法被调用与调用结果。"];
+ }else{
+  [AACSBDiscoveryLines addObject:@"# CONCLUSIVE: 本宿主发现到的可挂钩接听方法=0，因此本宿主不可能接听；请以下一次设备来电时的日志确认其他宿主是否可接听。"];
+ }
  NSString *text=AACSBDiscoveryLines.count?[AACSBDiscoveryLines componentsJoinedByString:@"\n"]:@"# 运行时发现未运行";
  NSError *error=nil;
  BOOL written=AACSharedWriteNamed(AACSBProcess(),@"discovery.txt",text,&error);
  NSDictionary *chosen=AACSharedResolve(AACSBProcess(),NO);
  NSString *path=chosen?[chosen[@"dir"] stringByAppendingPathComponent:AACSharedFileLeaf(AACSBProcess(),@"discovery.txt")]:nil;
- AACSBLog([NSString stringWithFormat:@"runtime-discovered answer path: matchedClasses=%lu hookedMethods=%lu rejected=%lu fileWritten=%d path=%@ error=%@",(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBHookCount,(unsigned long)AACSBRejectedMethods,written,path?:@"<没有可写候选路径>",written?@"none":(error.localizedDescription?:@"unknown")]);
+ AACSBLog([NSString stringWithFormat:@"%@ runtime-discovered answer path: host=%@ role=%@ matchedClasses=%lu hookedMethods=%lu rejected=%lu fileWritten=%d path=%@ error=%@",AACSBDisplay(),AACSBProcess(),AACSBRole==AACAnswerRoleOwner?@"OWNER":(AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY"),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBHookCount,(unsigned long)AACSBRejectedMethods,written,path?:@"<没有可写候选路径>",written?@"none":(error.localizedDescription?:@"unknown")]);
  if(AACSBHookCount)AACSBLog([@"已挂钩方法：" stringByAppendingString:AACSBHookedSummary()]);
  else AACSBLog(@"没有挂钩任何方法：接听路径在本版本退化为仅日志；下一步设备测试请查看发现摘要判断真实类名");
  NSString *digest=text.length>4000?[text substringToIndex:4000]:text;
  AACSBLog([@"discovery digest (summary only; full file path above):\n" stringByAppendingString:digest]);
- AACSBRecord(AACSBHookCount?[NSString stringWithFormat:@"运行时发现（非硬编码，objc_getClassList 枚举）：候选类=%lu，已挂钩方法=%lu（%@），安全跳过=%lu",(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBHookCount,AACSBHookedSummary(),(unsigned long)AACSBRejectedMethods]:[NSString stringWithFormat:@"运行时发现：候选类=%lu，但没有可安全挂钩的接听方法（跳过 %lu）；接听路径退化为仅日志",(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBRejectedMethods],@{@"discovered":@(AACSBHookCount>0)});
+ AACSBRecord(AACSBHookCount?[NSString stringWithFormat:@"%@ 运行时发现（非硬编码，objc_getClassList 枚举）：候选类=%lu，已挂钩方法=%lu（%@），安全跳过=%lu；角色=%@",AACSBDisplay(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBHookCount,AACSBHookedSummary(),(unsigned long)AACSBRejectedMethods,AACSBRole==AACAnswerRoleOwner?@"接听负责宿主":(AACSBRole==AACAnswerRoleObserver?@"观察者":@"仅日志")]:[NSString stringWithFormat:@"%@ 运行时发现：候选类=%lu，但没有可安全挂钩的接听方法（跳过 %lu）；本宿主不可能接听（仅日志）%@",AACSBDisplay(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBRejectedMethods,AACSBOwnerTag.length?[NSString stringWithFormat:@"，接听由 %@ 负责",AACSBOwnerTag]:@""],@{@"discovered":@(AACSBHookCount>0)});
 }
 static void AACSBDiscover(void){
  if(AACSBDiscoverRuns>=AACSBMaxDiscoverRuns)return;
@@ -221,7 +331,8 @@ static void AACSBDiscover(void){
  if(!AACSBHookedIMPs){AACSBHookedIMPs=[NSMutableSet new];}
  if(!AACSBDiscoveryLines){AACSBDiscoveryLines=[NSMutableArray new];}
  if(!AACSBHookedSelectors){AACSBHookedSelectors=[NSMutableArray new];}
- [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# AutoAnswerCall 1.11.0 SpringBoard runtime discovery run %lu (runtime-discovered; no hardcoded class name)",(unsigned long)AACSBDiscoverRuns]];
+ [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# AutoAnswerCall 1.12.0 answer-host runtime discovery run %lu host=%@ tag=%@ (runtime-discovered; no hardcoded class name)",(unsigned long)AACSBDiscoverRuns,AACSBDisplay(),AACSBProcess()]];
+ [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# discoveryFile=%@ roleTable=%@",AACSBHostDiscoveryFile(),AACAnswerRoleTableText()]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# process=%@ date=%@",AACSBProcess(),NSDate.date]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# classFilters=%@",[AACSBClassKeywords() componentsJoinedByString:@","]]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# selectorFilters=%@",[AACSBSelectorKeywords() componentsJoinedByString:@","]]];
@@ -298,7 +409,14 @@ static void AACSBDiscover(void){
 }
 static inline void AACSBStart(AACSBEnv *env){
  AACSBEnvShared=env;
+ AACSBHostTag=AACSBHost()[@"tag"];AACSBHostDisplay=AACSBDisplay();
  @try{AACSBDiscover();}@catch(NSException *e){AACSBLog([@"discovery exception: " stringByAppendingString:e.reason?:@"unknown"]);AACSBRecord(@"运行时发现异常：接听路径退化为仅日志",@{@"discovered":@NO});}
+ AACSBRecomputeRole();
+ if(AACSBRole==AACAnswerRoleOwner){
+  /* Announce ownership once so lower-priority hosts can yield deterministically. */
+  uint32_t claim=AACAnswerPostOwnerClaim(AACSBProcess());
+  AACSBLog([NSString stringWithFormat:@"%@ 已在 %@ 上广播接听归属声明（post=%u；Darwin 通知无载荷，只断言到达）",AACSBDisplay(),AACAnswerOwnerClaimName(AACSBProcess()),claim]);
+ }
 }
 /* A call arrived and we still have nothing hooked: the class list can grow after other
    frameworks load, so retry the enumeration a bounded number of times. */

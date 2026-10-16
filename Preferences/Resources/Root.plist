@@ -174,9 +174,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>证据采集（1.11.0）</string>
+			<string>证据采集（1.12.0）</string>
 			<key>footerText</key>
-			<string>1.11.0 只采集证据：注入范围现为 com.apple.mobilephone 与 com.apple.springboard 两个官方标识；每个已加载模块在载入时及每约 20 秒发送一条按进程区分的 Darwin 通知（com.autoanswer.call.probe.&lt;进程&gt;），设置页据此列出哪些进程何时响应。SpringBoard 模块仅在运行时枚举真实的来电/接听相关类与方法名，不安装任何 hook、不改变任何接听行为。共享日志会按顺序尝试多个绝对候选路径（含 /var/jb 前缀、进程容器 Application Support、临时目录）并记录命中哪一个；跨进程可写/可读并未验证，失败时回退到自有 CFPreferences 域且不声称可见。本版本未在设备上安装或验证，不能说明自动接听可用。</string>
+			<string>1.12.0 采集证据并支持双宿主：注入范围现为 com.apple.mobilephone、com.apple.springboard、com.apple.InCallService、com.apple.incallservice 四个标识（手机号标识只允许小写 com.apple.mobilephone；两个 InCall 拼写仅覆盖大小写差异，重复或不存在的标识无害）。每个已加载模块在载入时及每约 20 秒发送一条按进程区分的 Darwin 通知（com.autoanswer.call.probe.&lt;进程&gt;）；每个接听宿主另有自己的 pong 名与自己的运行时发现文件（aac-incall.discovery.txt / aac-springboard.discovery.txt），设置页逐宿主标注来源与路径。接听只由一个宿主提交：角色表 InCallService(2) &gt; SpringBoard(1) &gt; 仅日志(0)，其余宿主只观察记录。共享日志会按顺序尝试多个绝对候选路径并记录命中哪一个；跨进程可写/可读并未验证，失败时回退到自有 CFPreferences 域且不声称可见。本版本未在设备上安装或验证，不能说明自动接听可用。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -190,7 +190,7 @@
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>SpringBoard 运行时发现 / 挂钩结果</string>
+			<string>接听宿主运行时发现 / 挂钩结果（InCallService / SpringBoard 逐宿主）</string>
 			<key>action</key>
 			<string>showDiscovery:</string>
 		</dict>
@@ -238,7 +238,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>1.11.0：SpringBoard 接听路径版。音频最大5MB且仍位于设置沙盒；本地试听不代表电话进程能读取，也不会注入通话上行。SpringBoard 模块现在会安装运行时发现的动态挂钩并调用发现到的 UI 接听方法；若运行时没有可挂钩方法或找不到活的 UI 对象，它明确退化为仅日志。共享日志路径与进程探测结果均为本机实际读数，未在设备安装验证，不构成自动接听可用的证据。</string>
+			<string>1.12.0：InCallService 优先的双宿主接听版。音频最大5MB且仍位于设置沙盒；本地试听不代表电话进程能读取，也不会注入通话上行。InCallService 与 SpringBoard 使用同一套运行时发现 + 动态挂钩逻辑：只有发现了可挂钩接听方法、且没有更高优先级接听宿主存活的那个宿主执行接听；其余宿主只观察记录，并明确写出 observer only, answer owned by &lt;宿主&gt;。设备证据（1.11.0，19:46:53 实测）：SpringBoard 的检测、延时与策略层工作正常，但它没有可挂钩的接听 UI，公开事务回退失败于 com.apple.CallKit.error.requesttransaction code 1 = unknownCallUUID（本进程的 CXCallController 不拥有蜂窝通话），因此公开事务路径在本设备上无效，只做一次带含义说明的诊断尝试。共享日志路径与进程探测结果均为本机实际读数，未在设备安装验证，不构成自动接听可用的证据。</string>
 		</dict>
 	</array>
 </dict>
