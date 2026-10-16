@@ -3,6 +3,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import <CallKit/CallKit.h>
 
 static AVAudioPlayer *AACPlayer;
 static NSString *AACSharedDir(void) { return @"/var/jb/Library/Application Support/AutoAnswerCall"; }
@@ -23,6 +24,20 @@ static void AACPlayAudio(void) {
  NSString *path=prefs[@"AudioPath"]; if(!path.length) path=[AACSharedDir() stringByAppendingPathComponent:@"answer-audio"]; if(!path.length || ![[NSFileManager defaultManager] fileExistsAtPath:path]) { AACLog(@"音频文件不存在"); return; } NSURL *url=[NSURL fileURLWithPath:path]; if(![[NSFileManager defaultManager] fileExistsAtPath:path])return;
  NSError *e=nil; AACPlayer=[[AVAudioPlayer alloc] initWithContentsOfURL:url error:&e]; if(e){AACLog([NSString stringWithFormat:@"音频初始化失败：%@",e.localizedDescription]);return;} [AACPlayer prepareToPlay]; [AACPlayer play]; AACLog(@"音频播放开始");
 }
+static NSString *AACCallNumber(id update) { @try { id remote=[update valueForKey:@"remoteID"]; NSURL *uri=[remote valueForKey:@"URI"]; NSString *v=uri.absoluteString; return [v hasPrefix:@"tel:"]?[v substringFromIndex:4]:nil; } @catch(__unused NSException *e){ return nil; } }
+static void AACHandleCallUpdate(id update) {
+ @try {
+  BOOL outgoing=[[update valueForKey:@"hasOutgoing"] boolValue]; BOOL connected=[[update valueForKey:@"hasConnected"] boolValue]; BOOL ended=[[update valueForKey:@"hasEnded"] boolValue]; NSString *number=AACCallNumber(update);
+  AACLog([NSString stringWithFormat:@"锁屏CallKit回调 outgoing=%@ connected=%@ ended=%@ number=%@",outgoing?@"YES":@"NO",connected?@"YES":@"NO",ended?@"YES":@"NO",number.length?@"已取得":@"未知"]);
+  if(!outgoing&&!connected&&!ended&&AACEnabled()) { AACRecord(number,@"检测到锁屏来电，等待延迟"); dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(AACDelay()*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ AACRecord(number,@"锁屏延迟结束；系统接听事务需设备接口验证"); }); }
+ } @catch(NSException *e) { AACLog([NSString stringWithFormat:@"锁屏回调解析失败：%@",e.reason]); }
+}
+@interface AACCallObserverDelegate : NSObject <CXCallObserverDelegate> @end
+@implementation AACCallObserverDelegate
+- (void)callObserver:(CXCallObserver *)observer callChanged:(CXCallUpdate *)update { AACHandleCallUpdate(update); }
+@end
+static CXCallObserver *AACObserver; static AACCallObserverDelegate *AACObserverDelegate;
+static void AACStartObserver(void) { AACObserver=[CXCallObserver new]; AACObserverDelegate=[AACCallObserverDelegate new]; [AACObserver setDelegate:AACObserverDelegate queue:dispatch_get_main_queue()]; AACLog(@"锁屏 CallKit 观察者已创建"); }
 %hook CTCall
 - (void)setCallState:(id)state {
  %orig;
@@ -44,4 +59,4 @@ static void AACPlayAudio(void) {
  } @catch(NSException *e) { AACLog([NSString stringWithFormat:@"读取 CXCallUpdate 失败：%@",e.reason]); }
 }
 %end
-%ctor { if([NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.MobilePhone"]) { AACLog(@"插件已加载：MobilePhone"); NSLog(@"[AutoAnswer] loaded"); } }
+%ctor { if([NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.MobilePhone"]) { AACLog(@"插件已加载：MobilePhone"); AACStartObserver(); NSLog(@"[AutoAnswer] loaded"); } }
