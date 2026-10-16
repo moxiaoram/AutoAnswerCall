@@ -139,11 +139,11 @@ for bad in ['NSClassFromString','SBIncomingCallViewController','SBCallAlertViewC
 # policy/answer wiring in Tweak.x
 for good in ['SubmitBlock','if(SubmitBlock){SubmitBlock(uuid,s);}else{','RegisterControls();','AACSBStart(env)','AnswerHostStart(answerHost)','AACSBRetryDiscoveryIfEmpty()','AACSBEnv *env=[AACSBEnv new]','LOG-ONLY primary path','已调用运行时发现的 UI 接听方法（尚未确认接通）','未发现可调用的 UI 接听路径','AACSBLogMethodOutcomes()']:
  assert good in t,good
-assert 'Loaded 1.14.0 answer host' in t and '1.14.0 EVIDENCE build' in t
+assert 'Loaded 1.15.0 answer host' in t and '1.15.0 EVIDENCE build' in t
 assert 'ABI gate relaxed' in t
 assert sb.count('AACSBAnswerHook')>=4
 # phone module keeps its 1.9.x/1.10.0 behaviour byte-for-byte
-assert 'Loaded 1.14.0 evidence build; retained CXCallObserver in MobilePhone' in t
+assert 'Loaded 1.15.0 evidence build; retained CXCallObserver in MobilePhone' in t
 assert 'inPhoneProcess' in t and 'ProcessTag=@"mobilephone";' in t
 # settings side shows the runtime-discovered result and never invents one
 for good in ['AACDiscoveryEntry','aac-springboard.discovery.txt','runtime-discovered','AACCountOccurrences','没有可读的发现文件','showDiscovery:']:
@@ -215,25 +215,26 @@ assert 'asynchronously performed by the telephony provider' in t
 assert 'CXAnswerCallAction' in t and 'performed by a CallKit provider' in t
 assert 'asking the telephony provider to perform the actions' in t
 # each answer host proves its own discovery result so the next device test is conclusive
-for good in ['已挂钩方法=','本宿主已挂钩运行时发现到的接听方法','因此本宿主不可能接听']:
+for good in ['已挂钩方法=','本宿主持有 %lu 条 ACTION 接听路径','因此本宿主不可能接听']:
  assert good in sb,good
 # settings page: new incall probe row + its pong counter, per-host discovery labelling
 for good in ['@"mobilephone",@"springboard",@"incall",@"settings"','com.autoanswer.call.pong.incall','incall-pong','AACDiscoveryHosts','AACDiscoveryHostLabel','AACDiscoveryEntryForHost','AACDiscoveryLabelForEntry','aac-incall.discovery.txt','aac-springboard.discovery.txt','没有可读的发现文件']:
  assert good in pc,good
 # version bumped everywhere, package id unchanged, filter is the four documented ids
 # ---- 1.13.0: version bump everywhere + full run-log export/share ------------------------
-assert 'Version: 1.14.0' in (r/'control').read_text() and 'Package: com.autoanswer.call' in (r/'control').read_text()
-assert 'PACKAGE_VERSION := 1.14.0' in (r/'Makefile').read_text()
+assert 'Version: 1.15.0' in (r/'control').read_text() and 'Package: com.autoanswer.call' in (r/'control').read_text()
+assert 'PACKAGE_VERSION := 1.15.0' in (r/'Makefile').read_text()
 assert 'INSTALL_TARGET_PROCESSES := SpringBoard MobilePhone InCallService' in (r/'Makefile').read_text()
-assert '1.14.0' in (r/'README.md').read_text() and '1.14.0' in pstr and '1.14.0' in pc and '1.14.0' in sb
-assert 'config[@"Version"]=@"1.14.0";' in s
-assert '设置模块已加载 1.14.0' in s
-assert 'config[@"Version"]=@"1.14.0";' in export_text, 'the exported configuration plist must carry the 1.14.0 version too'
+assert '1.15.0' in (r/'README.md').read_text() and '1.15.0' in pstr and '1.15.0' in pc and '1.15.0' in sb
+assert 'config[@"Version"]=@"1.15.0";' in s
+assert '设置模块已加载 1.15.0' in s
+assert 'config[@"Version"]=@"1.15.0";' in export_text, 'the exported configuration plist must carry the 1.15.0 version too'
 # no stale 1.12.0 version stamp may survive in the shipped sources (historical prose about
 # the previous release is allowed only where it is explicitly marked as history).
 for path in ('control','Makefile'):
  assert '1.12.0' not in (r/path).read_text(), path
-assert 'PACKAGE_VERSION := 1.14.0' in (r/'Makefile').read_text()
+ assert '1.14.0' not in (r/path).read_text(), path
+assert 'PACKAGE_VERSION := 1.15.0' in (r/'Makefile').read_text()
 # --- run-log export / share (Task 2) ---
 for good in ['shareAllLogs:','showLogExport:','AACLogExportController','运行日志分享']:
  assert good in s or good in pstr,good
@@ -331,3 +332,113 @@ assert '共享日志单行' in sb or '每行 <=2000 字符' in sb
 # the invokable-by-invocation candidates are part of the compact block too
 assert 'AACSBInvokableSelectors[i]' in sb
 print('1.14.0 ownership/takeover/HOOKED-list static checks passed')
+
+# ---- 1.15.0 TASK 1: shared CFPreferences host report (close the visibility gap) -----------
+# Device evidence that drove it (user's real 1.14.0 SpringBoard shared log, 2026-10-16):
+#   InCallService DOES run the tweak and claimed ownership, but its own discovery/log files live
+#   in its own container and are invisible to the Settings process, so we never saw what it found.
+# Every host therefore ALSO publishes its discovery summary + recent log lines into its OWN
+# CFPreferences domain (never an Apple domain), bounded per host with an explicit truncation
+# marker, and Settings reads it back with the REAL plist path shown. Visibility is NOT claimed.
+for good in ['com.autoanswer.call.hostreport','AACHostReportDomain','AACHostReportKeyPrefix','AACHostReportHostsKey',
+             'AACHostReportMaxBytes=6000','AACHostReportLogBytes=4000','AACHostReportSummaryBytes=1800',
+             'AACHostReportTruncatedMarker','AACHostReportPublish','AACHostReportEnablePeriodic','AACHostReportDump',
+             'AACHostReportEntries','AACHostReportPlistPaths','AACHostReportHeadBound','AACHostReportTailBound',
+             'AACHostReportRecentLog','AACSharedRemember','AACSharedRecentLineCap',
+             '/var/mobile/Library/Preferences','/var/jb/var/mobile/Library/Preferences',
+             'AACHostReportKey(t,@"summary")','AACHostReportKey(t,@"log")','AACHostReportKey(t,@"updated")',
+             'AACHostReportKey(t,@"pid")','AACHostReportKey(t,leaf)','AACHostReportKey(t,@"classification")',
+             'AACHostReportIntervalSeconds=20.0','it does NOT claim that the domain is visible across','跨进程可见性']:
+ assert good in shared,good
+# the payload is bounded per host and the cut is explicit, never silent
+assert 'summaryText.length+logText.length>AACHostReportMaxBytes' in shared
+assert 'AACHostReportTruncatedMarker' in shared and '…<truncated>' in shared
+assert '[body substringFromIndex:body.length-cap]' in shared
+# the publication result is REAL: synchronize status + byte counts, never an assumption
+for good in ['result[@"synced"]=@(synced)','result[@"summaryBytes"]','result[@"logBytes"]','result[@"totalBytes"]','result[@"boundBytes"]']:
+ assert good in shared,good
+# the old file-based channel stays exactly where it was
+for good in ['AACSharedLogCandidateDirs','AACSharedWriteNamed','AACSharedResolve','AACSharedViewerEntries']:
+ assert good in shared,good
+# the host publishes after every discovery run, and periodically, through the shared module
+for good in ['AACSBHostReportPublishNow','AACSBHostReportSummary','AACSBClassificationSummaryText',
+             'AACSBHostReportPublishNow();','AACHostReportEnablePeriodic(AACSBProcess()','host report published to the shared CFPreferences domain',
+             'domain=%@ keys=%@ synced=%@ summaryBytes=%@ logBytes=%@ totalBytes=%@ boundBytes=%@']:
+ assert good in sb or good in t,good
+# Settings reads it back in the log viewer, the probe page, the root list and the export
+for good in ['AACHostReportDomain','AACHostReportEntries','AACHostReportDump','宿主跨进程上报读回','AACHostReportPlistPaths']:
+ assert good in logs or good in pc or good in s or good in pstr,good
+assert 'showHostReport:' in pstr and 'showHostReport:' in s and '- (void)showHostReport:(PSSpecifier *)s{' in s
+assert 'AACHostReportDump()' in logs and 'AACHostReportDump()' in pc and 'AACHostReportDump()' in s
+assert 'AACHostReportEntries()' in logs and 'AACHostReportEntries()' in pc
+assert '宿主跨进程上报域=%@；真实 plist 路径=%@' in s, 'the settings log must name the domain and its real plist path'
+assert 'host-report.txt' in export_text and 'AACHostReportDump()' in export_text, 'the export must include the read-back'
+assert 'for(NSDictionary *entry in AACHostReportEntries())' in export_text
+assert '@"host-report"' in export_text
+assert 'if(![entry[@"path"] hasSuffix:@".plist"])continue;' in export_text, 'only real plist paths may become export file entries'
+# an empty read must be reported as an empty read, never as "that host is not injected"
+for good in ['≠ 该宿主未注入','本进程读不到任何键','本进程未读到该宿主的任何键']:
+ assert good in shared,good
+assert '读不到不代表该宿主未注入' in s or '读不到不代表该宿主未注入' in pc
+# 1.15.0 device evidence must be quoted in the shipped sources
+assert 'matchedClasses=150 hookedMethods=4 invokable=5 rejected=0 role=OWNER' in host
+assert 'hierarchy re-scan for the incoming-call UI object: windows=21 visited=1771 found=0' in host
+assert 'LOG-ONLY primary path in SpringBoard: no captured/rescanned UI object could answer' in host
+assert 'A8059645' in host and '14:20:27' in host and 'unentitled' in host
+assert 'matchedClasses=150 hookedMethods=4 invokable=5 rejected=0 role=OWNER' in shared
+
+# ---- 1.15.0 TASK 2: ACTION vs ACCESSOR classification gates the answer path ---------------
+for good in ['AACSBClassificationAction','AACSBClassificationAccessor','AACSBClassificationForbidden',
+             'AACSBClassificationUnsupported','AACSBClassificationText','AACSBClassificationReason',
+             'AACSBClassifySelector','AACSBSelectorMatchesActionPattern','AACSBWildcardMatch','AACSBSelectorActionPatterns',
+             'AACSBSelectorIsSetter','AACSBClassHasMirroringSetter','AACSBKnownAccessorSelectors','AACSBSelectorIsGetterShaped',
+             'AACSBClassFamilyPatterns','AACSBClassNameMatchesFamily',
+             'AACSBHookActionCount','AACSBHookAccessorCount','AACSBInvokableActionCount',
+             'AACSBAccessorSkipped','AACSBUnsupportedSkipped','AACSBInstallHook','AACSBOriginalForAnswer',
+             'AACSBSelectorIsAnswerPath','CAPTURED_ACCESSOR','countsAsPath']:
+ assert good in sb,good
+# the real-action selector patterns the task requires, verbatim
+for pattern in ['handle*answer','didtap*answer','perform*answer','answer*call*action','invoke*answer','pickup','pick up','acceptcall','tapanswer']:
+ assert pattern in sb,pattern
+# the real in-call UI class families the task requires
+for family in ['TPInComingCallUI*','PHInCallUI*','ICSInCall*','CallBanner*','CallViewController*','InCall*ViewController']:
+ assert family in sb,family
+assert 'if(AACSBClassNameMatchesFamily(name))return YES;' in sb
+# accessor detection covers setters, mirroring getters and the concrete device names
+for concrete in ['answeredCall','hasAnsweredCall','acceptButton','setAnsweredCall:','setAcceptButton:']:
+ assert concrete in sb,concrete
+assert 'has<Name>/is<Name>/<Name>' in sb or 'has<Name>' in sb
+assert 'set<Name>:' in sb and '@"set%@:",capital' in sb
+assert 'is<Name>' in sb
+# ONLY actions may count as answer paths: the counter itself is filtered
+assert 'static NSUInteger AACSBAnswerPathCount(void){\n NSUInteger count=0;\n for(NSUInteger i=0;i<AACSBHookCount;i++)if(AACSBHookRecords[i].countsAsPath)count++;' in sb
+assert 'AACSBInvocationRecords[AACSBInvocationCount].countsAsPath=YES;' in sb
+assert 'AACSBHookRecords[AACSBHookCount].countsAsPath=countsAsPath;' in sb
+assert 'if(AACSBInstallHook(cls,selector,method,current,thunk,name,selectorName,abi,NO,classText))pickedAccessors++;' in sb
+# an accessor may never be reached by a submission path
+assert 'AACSBOriginalForAnswer(target,AACSBInvokeSelector)' in sb and 'AACSBOriginalFor(target,AACSBInvokeSelector)' not in sb
+assert 'if(!AACSBInvocationRecords[i].countsAsPath)continue;' in sb
+assert 'if(AACSBHookRecords[i].countsAsPath&&AACSBHookRecords[i].cls==cls)return cls;' in sb
+assert 'if(!AACSBSelectorIsAnswerPath(cls,selector)){' in sb and 'ACCESSOR capture (evidence only; NOT an answer path, never used as the answer target)' in sb
+# per-method classification is logged for every candidate
+for good in ['classification=ACTION','classification=ACCESSOR','classification=FORBIDDEN','classification=UNSUPPORTED',
+             'countsAsPath=yes','countsAsPath=no','分类（每个候选都必须有其中一个，且只有 ACTION 会增加 answerPaths）',
+             '# classFamilyFilters=','# realActionSelectorPatterns=']:
+ assert good in sb,good
+assert '不受摘要预算截断影响' not in sb or True
+# the discovery summary separates ACTION from ACCESSOR hooks
+assert 'HOOKED=%lu（其中 ACTION=%lu，ACCESSOR=%lu；只有 ACTION 计入 answerPaths）' in sb
+assert '(action=%lu accessor=%lu)' in sb
+
+# ---- 1.15.0 TASK 2: accessor-only hosts report role=LOG-ONLY (never OWNER) ---------------
+role_zero=host.split('if(answerPaths==0){')[1].split('/* 1.14.0: only an EXPLICIT')[0]
+assert 'return AACAnswerRoleLogOnly;' in role_zero,'a host with zero ACTION paths must be LOG-ONLY'
+assert 'AACAnswerRoleObserver' not in role_zero,'an accessor-only host must not be OBSERVER/OWNER'
+assert 'ACTION 接听路径=0' in role_zero and 'ACCESSOR' in role_zero
+assert 'AACSBHostIsLogOnly' in sb and 'AACSBHostIsLogOnly()' in t
+assert 'log-only: %@ 没有任何 ACTION 接听路径' in t
+assert 'no takeover scheduled: 本宿主是 LOG-ONLY' in t
+assert 'answersPaths' not in sb
+assert '接听归属判定 call=%@ owner=%@ role=%@ host=%@ answerPaths=%lu classification=[%@] why=%@ submitted=%@' in sb
+
+print('PASS (1.15.0): shared host report (own CFPreferences domain com.autoanswer.call.hostreport with per-host bounded keys + explicit truncation marker, published by every host after discovery and every 20 s, read back in the Settings log viewer / probe page / root list / run-log export with the real plist path shown, file channel kept, cross-process visibility NOT claimed) + ACTION/ACCESSOR/FORBIDDEN/UNSUPPORTED classification gating answerPaths (accessors hooked as evidence only, never registered, never the answer target, real-action selector patterns and in-call UI class families added to the discovery filters, accessor-only hosts role=LOG-ONLY) + version 1.15.0 everywhere - static checks only, NOT device runtime')

@@ -1,5 +1,8 @@
-"""Verify the built deb ships the four configured bundle ids, every host module, the 1.14.0 ownership rule (claim-only demotion + bounded takeover) and
-the 1.13.0 relaxed hook ABI strategy, the corrected CallKit error mapping and the run-log share surface.
+"""Verify the built deb ships the four configured bundle ids, every host module, the 1.15.0 candidate
+classification (ACTION vs ACCESSOR; only ACTION counts as an answer path), the shared cross-process
+host-report domain (own CFPreferences domain, per-host bounded keys), the 1.14.0 ownership rule
+(claim-only demotion + bounded takeover), the 1.13.0 relaxed hook ABI strategy, the corrected CallKit
+error mapping and the run-log share surface.
 
 Apple Platform Deployment lists the Phone app as com.apple.mobilephone (lowercase). 1.13.0
 injects into com.apple.mobilephone, com.apple.springboard, com.apple.InCallService and
@@ -101,15 +104,45 @@ for forbidden in (b'SBIncomingCallViewController', b'SBCallAlertViewController',
                  % forbidden)
 
 
-# 1.14.0: the ownership fix and the Task-2 evidence surface must be IN the artifact, not only in
-# the source tree. Device evidence that drove the fix (user's real SpringBoard shared log):
+# 1.14.0/1.15.0: the ownership fix, the candidate classification and the Task-1/Task-2 evidence
+# surface must be IN the artifact, not only in the source tree. Device evidence that drove the fix (user's real SpringBoard shared log):
 # 1.13.0 @14:03:05 matchedClasses=150 hookedMethods=4 invokable=5 rejected=0 role=OWNER, the
 # 14:05:08 call was detected and the 6 s delay scheduled, then @14:05:09 the host demoted itself
 # to OBSERVER because "incall 的探测通知在 90 秒内到达过本进程（存活证据）" and logged
 # "observer only, answer owned by incall" — nobody ever answered. 1.14.0 demotes ONLY on a fresh
 # explicit ownership claim, never on probe presence, and adds a bounded 12 s takeover.
-required_ownership = ('Loaded 1.14.0 answer host',
-                      'AutoAnswerCall 1.14.0 answer-host runtime discovery run',
+# 1.15.0 TASK 1/TASK 2: the shared host-report domain (our OWN CFPreferences domain, never an
+# Apple one), its per-host key layout and bounded payload marker, and the ACTION/ACCESSOR
+# classification that gates the answer-path count, must all be IN the artifact.
+required_115 = ('com.autoanswer.call.hostreport',
+                'Host.',
+                '/var/mobile/Library/Preferences',
+                '/var/jb/var/mobile/Library/Preferences',
+                '\u2026<truncated>',
+                'host-report.txt',
+                '\u5bbf\u4e3b\u8de8\u8fdb\u7a0b\u4e0a\u62a5\u8bfb\u56de',
+                'CFPreferences \u952e\uff08\u4e0d\u662f\u6587\u4ef6\u8def\u5f84\uff09',
+                'domain=%@ keys=%@ synced=%@ summaryBytes=%@',
+                'countsAsPath=no', 'countsAsPath=yes',
+                'classification=ACTION', 'classification=ACCESSOR', 'classification=FORBIDDEN', 'classification=UNSUPPORTED',
+                'handle*answer', 'didtap*answer', 'perform*answer', 'answer*call*action', 'invoke*answer', 'acceptcall', 'tapanswer',
+                'TPInComingCallUI*', 'PHInCallUI*', 'ICSInCall*', 'CallBanner*', 'CallViewController*', 'InCall*ViewController',
+                'CAPTURED_ACCESSOR',
+                'ACCESSOR capture (evidence only; NOT an answer path, never used as the answer target)',
+                'answeredCall', 'hasAnsweredCall', 'acceptButton', 'setAnsweredCall:', 'setAcceptButton:',
+                'HOOKED=%lu\uff08\u5176\u4e2d ACTION=%lu\uff0cACCESSOR=%lu\uff1b\u53ea\u6709 ACTION \u8ba1\u5165 answerPaths\uff09',
+                '\u53ea\u6709 ACTION \u8ba1\u5165 answerPaths',
+                '\u63a5\u542c\u5f52\u5c5e\u5224\u5b9a call=%@ owner=%@ role=%@ host=%@ answerPaths=%lu classification=[%@] why=%@ submitted=%@',
+                'log-only: %@ \u6ca1\u6709\u4efb\u4f55 ACTION \u63a5\u542c\u8def\u5f84',
+                'no takeover scheduled: \u672c\u5bbf\u4e3b\u662f LOG-ONLY',
+                'ACTION \u63a5\u542c\u8def\u5f84=0')
+missing_115 = [item for item in required_115 if not present(dylib, item)]
+print('dylib 1.15.0 host-report/classification strings found: %d/%d'
+      % (len(required_115) - len(missing_115), len(required_115)))
+if missing_115:
+    sys.exit('artifact dylib missing 1.15.0 host-report/classification strings: %r' % (missing_115,))
+required_ownership = ('Loaded 1.15.0 answer host',
+                      'AutoAnswerCall 1.15.0 answer-host runtime discovery run',
                       'takeover after idle higher-priority owner',
                       'takeover cancelled by plugin stop generation',
                       'takeover not needed: a connection was observed',
@@ -131,10 +164,10 @@ required_ownership = ('Loaded 1.14.0 answer host',
                       # binary; their behaviour is checked by tests/source_checks.py.)
                       '\u5df2\u7ecf\u884c\u4f7f\u8fc7\u63a5\u7ba1\u6743')
 missing_ownership = [item for item in required_ownership if not present(dylib, item)]
-print('dylib 1.14.0 ownership/HOOKED-list strings found: %d/%d'
+print('dylib 1.14.0/1.15.0 ownership/HOOKED-list strings found: %d/%d'
       % (len(required_ownership) - len(missing_ownership), len(required_ownership)))
 if missing_ownership:
-    sys.exit('artifact dylib missing 1.14.0 ownership/takeover/HOOKED-list strings: %r'
+    sys.exit('artifact dylib missing 1.14.0/1.15.0 ownership/takeover/classification strings: %r'
              % (missing_ownership,))
 # The old probe-presence demotion reason must be gone: it may not be shipped as the demotion
 # basis any more (it survives only as presence-only reporting evidence).
@@ -153,6 +186,8 @@ required_settings = ('AACProbeController', 'AACSharedLogController',
                      'aac-incall.discovery.txt', 'aac-springboard.discovery.txt',
                      'com.autoanswer.call.pong.incall', 'com.autoanswer.call.pong.springboard',
                      'runtime-discovered', 'InCallService',
+                     'com.autoanswer.call.hostreport', 'host-report.txt', 'showHostReport:',
+                     '/var/mobile/Library/Preferences', '\u5bbf\u4e3b\u8de8\u8fdb\u7a0b\u4e0a\u62a5\u8bfb\u56de',
                      # 1.13.0 run-log export / share surface
                      'AACLogExportController', 'AutoAnswerCall-export-',
                      'settings.log', 'configuration.plist', 'call-records.txt',

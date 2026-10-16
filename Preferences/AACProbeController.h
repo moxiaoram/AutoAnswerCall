@@ -3,7 +3,9 @@
 #import <notify.h>
 #import "../AACSharedLog.h"
 #import "AACLogViewerController.h"
-/* 进程探测 / 环境清单 (1.14.0；1.13.0 建立，evidence only).
+/* 进程探测 / 环境清单 (1.15.0；1.13.0 建立，evidence only).
+   1.15.0 增加「宿主跨进程上报读回」一行：读回自有 CFPreferences 域 com.autoanswer.call.hostreport
+   （每宿主键 + 真实 plist 路径 + 本进程实际读到的键数）。没有读到就是没有读到，不据此断言宿主未注入。
    Darwin notifications carry no payload, so this page registers one observer per
    process notification name and timestamps arrivals. Nothing on this page claims that
    the phone module was injected, that answering works, or that any cross-process path
@@ -121,7 +123,7 @@ static inline NSUInteger AACCountOccurrences(NSString *needle,NSString *haystack
  if(section==0)return AACProbeWatchedProcesses().count+1;
  if(section==1)return 2;
  if(section==2)return AACSharedViewerEntries(@[@"mobilephone",@"springboard",@"incall",@"settings"]).count;
- if(section==3)return 3;
+ if(section==3)return 4;
  return 1;
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section{
@@ -134,8 +136,8 @@ static inline NSUInteger AACCountOccurrences(NSString *needle,NSString *haystack
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section{
  if(section==0)return @"每个进程使用独立通知名 com.autoanswer.call.probe.<进程>；Darwin 通知无载荷，所以这里只按名称区分进程。未到达只表示本页没观察到，不等于该进程未注入。";
  if(section==2)return @"这是设置进程自己的读写结果；另一个进程中同一路径是否可写必须看该进程写入的日志，不能由此推断跨进程可见。";
- if(section==3)return @"这些文件是各宿主在设备上枚举 objc_getClassList 得到的真实类/方法名（含 HOOKED 与跳过原因），构建不保证这些私有类在 iOS 17.3 存在。接听由唯一负责宿主提交：角色表 InCallService(2) > SpringBoard(1) > 仅日志(0)。若某宿主显示 0 个已挂钩方法，它在该设备上只能退化为仅日志，插件不会谎报接听成功。";
- if(section==4)return @"本页不能证明接听可用；1.14.0 的 InCallService/SpringBoard 接听路径仍未在设备验证（1.14.0 修正的是接听归属判定：探测量达到不再让出接听，只有明确归属声明才会），依赖运行时到底存在哪个私有 UI 类。";
+ if(section==3)return @"这些文件是各宿主在设备上枚举 objc_getClassList 得到的真实类/方法名（含分类 ACTION/ACCESSOR/FORBIDDEN/UNSUPPORTED、HOOKED 与跳过原因），构建不保证这些私有类在 iOS 17.3 存在。接听由唯一负责宿主提交：角色表 InCallService(2) > SpringBoard(1) > 仅日志(0)。若某宿主显示 0 个已挂钩方法，它在该设备上只能退化为仅日志，插件不会谎报接听成功。";
+ if(section==4)return @"本页不能证明接听可用；1.15.0 的 InCallService/SpringBoard 接听路径仍未在设备验证（1.15.0 修正的是候选分类：属性访问器 ACCESSOR 不再计入 answerPaths，只有 ACTION 才算接听路径，因此只有访问器的宿主是 LOG-ONLY 而不是 OWNER；1.14.0 修正的是归属判定），依赖运行时到底存在哪个私有 UI 类。";
  return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath{
@@ -162,7 +164,13 @@ static inline NSUInteger AACCountOccurrences(NSString *needle,NSString *haystack
   else cell.detailTextLabel.text=[NSString stringWithFormat:@"%@；可读=%@；%llu 字节\n%@",exists?@"文件存在":@"未创建",readable?@"是":@"否",[entry[@"size"] unsignedLongLongValue],entry[@"path"]];
   cell.accessoryType=readable?UITableViewCellAccessoryDisclosureIndicator:UITableViewCellAccessoryNone;
  }else if(indexPath.section==3){
-  if(indexPath.row==2){cell.textLabel.text=@"打开完整发现清单（类/方法/跳过原因）";NSString *t=nil;NSDictionary *e=AACDiscoveryEntry();if(e)t=AACSharedReadFile(e[@"path"],NULL);cell.detailTextLabel.text=t.length?[NSString stringWithFormat:@"来自 %@；点击查看该宿主实际枚举到的类与已挂钩方法。",AACDiscoveryLabelForEntry(e)]:@"暂无可读内容";cell.accessoryType=t.length?UITableViewCellAccessoryDisclosureIndicator:UITableViewCellAccessoryNone;}
+  if(indexPath.row==3){
+   NSMutableArray *lines=[NSMutableArray new];
+   for(NSDictionary *entry in AACHostReportEntries())[lines addObject:[NSString stringWithFormat:@"%@：%@；%lu 字符\n%@",entry[@"label"],entry[@"note"],(unsigned long)[entry[@"size"] unsignedLongLongValue],entry[@"path"]]];
+   cell.textLabel.text=@"宿主跨进程上报读回（自有 CFPreferences 域）";
+   cell.detailTextLabel.text=[NSString stringWithFormat:@"域：%@（每宿主独立键，载荷有上限）。本进程实际读到的内容如下；读不到不代表该宿主未注入。\n%@",AACHostReportDomain,[lines componentsJoinedByString:@"\n"]];
+   cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+  }else if(indexPath.row==2){cell.textLabel.text=@"打开完整发现清单（类/方法/跳过原因）";NSString *t=nil;NSDictionary *e=AACDiscoveryEntry();if(e)t=AACSharedReadFile(e[@"path"],NULL);cell.detailTextLabel.text=t.length?[NSString stringWithFormat:@"来自 %@；点击查看该宿主实际枚举到的类与已挂钩方法。",AACDiscoveryLabelForEntry(e)]:@"暂无可读内容";cell.accessoryType=t.length?UITableViewCellAccessoryDisclosureIndicator:UITableViewCellAccessoryNone;}
   else if(indexPath.row==1){
    NSMutableArray *lines=[NSMutableArray new];
    for(NSString *tag in AACDiscoveryHosts()){
@@ -193,6 +201,7 @@ static inline NSUInteger AACCountOccurrences(NSString *needle,NSString *haystack
  [tableView deselectRowAtIndexPath:indexPath animated:YES];
  if(indexPath.section==0||indexPath.section==4){[self refresh];return;}
  if(indexPath.section==3){
+  if(indexPath.row==3){AACLogText([NSString stringWithFormat:@"宿主跨进程上报读回（%@）",AACHostReportDomain],AACHostReportDump(),self.navigationController);return;}
   if(indexPath.row==0||indexPath.row==1){[self.tableView reloadData];return;}
   NSDictionary *found=AACDiscoveryEntry();NSError *error=nil;NSString *text=found?AACSharedReadFile(found[@"path"],&error):nil;
   NSString *title=found?[NSString stringWithFormat:@"运行时发现清单（%@）",AACDiscoveryLabelForEntry(found)]:@"运行时发现清单";

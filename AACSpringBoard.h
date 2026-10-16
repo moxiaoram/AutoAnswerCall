@@ -66,8 +66,8 @@ static NSUInteger const AACSBMaxDiscoverRuns=3;
 @end
 @implementation AACSBEnv @end
 
-typedef struct { Class cls; SEL sel; IMP original; } AACSBHookRecord;
-typedef struct { Class cls; SEL sel; } AACSBInvocationRecord;
+typedef struct { Class cls; SEL sel; IMP original; BOOL countsAsPath; } AACSBHookRecord;
+typedef struct { Class cls; SEL sel; BOOL countsAsPath; } AACSBInvocationRecord;
 static AACSBEnv *AACSBEnvShared=nil;
 static AACSBHookRecord AACSBHookRecords[AACSBHookCap];
 static NSUInteger AACSBHookCount=0;
@@ -82,6 +82,13 @@ static NSMutableArray *AACSBHookedSelectors=nil;
 static NSMutableArray *AACSBInvokableSelectors=nil;
 /* One detail string per hook record, index-aligned with AACSBHookRecords. */
 static NSMutableArray *AACSBHookDetails=nil;
+/* 1.15.0 TASK 2 counters. An ACCESSOR may still be hooked (behaviour-neutral capture of a live
+   instance) but it may NEVER count as an answer path and may never be the object the answer
+   step acts on. These two counters exist so the log can state that distinction explicitly
+   instead of silently folding accessors into the answer-path count (which is what made the
+   1.14.0 device run report role=OWNER with four pure accessors). */
+static NSUInteger AACSBHookActionCount=0,AACSBHookAccessorCount=0,AACSBInvokableActionCount=0;
+static NSUInteger AACSBAccessorSkipped=0,AACSBUnsupportedSkipped=0;
 static NSUInteger AACSBMatchedClasses=0,AACSBRejectedMethods=0,AACSBDiscoverRuns=0,AACSBInvokableSkipped=0,AACSBInvokedByInvocation=0,AACSBGlobalScanned=0,AACSBRescanVisits=0;
 static __weak id AACSBWeakTarget=nil;
 static id AACSBStrongTarget=nil;
@@ -102,6 +109,9 @@ static void AACSBLog(NSString *message);
 static void AACSBRecord(NSString *status,NSDictionary *flags);
 static void AACSBAppendDiscovery(NSString *line);
 static void AACSBCapture(id object,SEL selector);
+/* Defined together with the 1.15.0 ACTION/ACCESSOR classifier further down; declared here
+   because the class filters already use the same '*' wildcard matcher. */
+static BOOL AACSBWildcardMatch(NSString *text,NSString *pattern);
 
 static NSDictionary *AACSBHost(void){
  NSDictionary *host=AACSBEnvShared.host;
@@ -123,9 +133,44 @@ static NSString *AACSBHostDiscoveryFile(void){
  NSString *name=AACAnswerHostDiscoveryName(AACSBHost()[@"tag"]);
  return name?:@"aac-springboard.discovery.txt";
 }
-/* Number of answer paths this host really holds: one hooked method or one
-   invocation candidate both count, because both can be attempted at answer time. */
-static NSUInteger AACSBAnswerPathCount(void){return AACSBHookCount+AACSBInvocationCount;}
+/* Number of ANSWER PATHS this host really holds. 1.15.0 TASK 2: ONLY ACTION methods count.
+   A hooked ACCESSOR (property getter/setter, see AACSBClassifySelector) can never answer a
+   call, so counting it was a false positive: the device run reported role=OWNER from four pure
+   accessors (answeredCall / hasAnsweredCall / answeredCall / acceptButton) that cannot answer
+   anything. Accessor hooks are still installed for evidence/capture, but they are excluded
+   here, they are never registered as NSInvocation candidates, and they are never the object
+   the answer step acts on (AACSBOriginalForAnswer / AACSBMatchedAnswerClass below). */
+static NSUInteger AACSBAnswerPathCount(void){
+ NSUInteger count=0;
+ for(NSUInteger i=0;i<AACSBHookCount;i++)if(AACSBHookRecords[i].countsAsPath)count++;
+ for(NSUInteger i=0;i<AACSBInvocationCount;i++)if(AACSBInvocationRecords[i].countsAsPath)count++;
+ return count;
+}
+/* Answer-path-only IMP lookup: the answer step may never act through an accessor hook. */
+static IMP AACSBOriginalForAnswer(id object,SEL selector){
+ if(!object||!selector)return NULL;
+ Class cls=object_getClass(object);
+ @try{
+  while(cls){
+   for(NSUInteger i=0;i<AACSBHookCount;i++)
+    if(AACSBHookRecords[i].countsAsPath&&AACSBHookRecords[i].cls==cls&&AACSBHookRecords[i].sel==selector)return AACSBHookRecords[i].original;
+   cls=class_getSuperclass(cls);
+  }
+ }@catch(NSException *e){}
+ return NULL;
+}
+static BOOL AACSBSelectorIsAnswerPath(Class cls,SEL selector){
+ if(!cls||!selector)return NO;
+ @try{
+  Class walk=cls;
+  while(walk){
+   for(NSUInteger i=0;i<AACSBHookCount;i++)if(AACSBHookRecords[i].countsAsPath&&AACSBHookRecords[i].cls==walk&&AACSBHookRecords[i].sel==selector)return YES;
+   for(NSUInteger i=0;i<AACSBInvocationCount;i++)if(AACSBInvocationRecords[i].countsAsPath&&AACSBInvocationRecords[i].cls==walk&&AACSBInvocationRecords[i].sel==selector)return YES;
+   walk=class_getSuperclass(walk);
+  }
+ }@catch(NSException *e){}
+ return NO;
+}
 /* Re-evaluates the single-owner role from the role table plus observed host presence.
    1.14.0: AACAnswerHostRoleForTag takes the number of answer paths this host really holds and
    demotes ONLY on a fresh explicit higher-priority ownership claim (see the device evidence at
@@ -176,15 +221,39 @@ static NSString *AACSBHostRoleText(void){
  return [NSString stringWithFormat:@"host=%@ role=%@ owner=%@",AACSBDisplay(),AACSBRole==AACAnswerRoleOwner?@"OWNER":(AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY"),AACSBOwnerTag?:@"(none)"];
 }
 static NSString *AACSBHostOwnerTagText(void){return AACSBOwnerTag.length?AACSBOwnerTag:@"(none)";}
+/* 1.15.0: a LOG-ONLY host has no ACTION answer path at all; such a host never submits and the
+   takeover path refuses immediately instead of scheduling a pointless bounded wait. */
+static BOOL AACSBHostIsLogOnly(void){return AACSBRole==AACAnswerRoleLogOnly;}
 /* 1.14.0: the durable reason string of the current decision, always loggable. */
 static NSString *AACSBClaimReasonText(void){return AACSBRoleReason.length?AACSBRoleReason:@"无说明（角色尚未判定）";}
+/* 1.15.0 TASK 1: what this host publishes through the shared host-report CFPreferences domain,
+   and the publication call itself. The summary is bounded by AACHostReportSummaryBytes and the
+   recent log lines by AACHostReportLogBytes inside AACSharedLog.h, so one host can never flood
+   the domain. Publishing is best effort and its result is always reported as the REAL
+   CFPreferences status, never as an assumption that another process can read it. */
+static NSString *AACSBClassificationSummaryText(void){
+ return [NSString stringWithFormat:@"%lu 个 ACTION（其中已挂钩 %lu、NSInvocation 候选 %lu），%lu 个 ACCESSOR 挂钩（仅证据），ACCESSOR 跳过 %lu，UNSUPPORTED 跳过 %lu",(unsigned long)(AACSBHookActionCount+AACSBInvokableActionCount),(unsigned long)AACSBHookActionCount,(unsigned long)AACSBInvokableActionCount,(unsigned long)AACSBHookAccessorCount,(unsigned long)AACSBAccessorSkipped,(unsigned long)AACSBUnsupportedSkipped];
+}
+static NSString *AACSBHostReportSummary(void){
+ return [NSString stringWithFormat:@"host=%@ tag=%@ pid=%d role=%@ owner=%@ answerPaths=%lu；分类：%@；候选类=%lu 跳过=%lu discoverRuns=%lu；判定原因：%@",AACSBDisplay(),AACSBProcess(),(int)getpid(),(AACSBRole==AACAnswerRoleOwner?@"OWNER":(AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY")),AACSBHostOwnerTagText(),(unsigned long)AACSBAnswerPathCount(),AACSBClassificationSummaryText(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBRejectedMethods,(unsigned long)AACSBDiscoverRuns,AACSBClaimReasonText()];
+}
+static NSDictionary *AACSBHostReportPublishNow(void){
+ NSDictionary *facts=@{@"role":AACSBRole==AACAnswerRoleOwner?@"OWNER":(AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY"),
+                       @"display":AACSBDisplay(),
+                       @"hostTag":AACSBProcess(),
+                       @"answerPaths":[NSString stringWithFormat:@"%lu",(unsigned long)AACSBAnswerPathCount()],
+                       @"actionMethods":[NSString stringWithFormat:@"%lu",(unsigned long)(AACSBHookActionCount+AACSBInvokableActionCount)],
+                       @"accessorMethods":[NSString stringWithFormat:@"%lu",(unsigned long)AACSBHookAccessorCount],
+                       @"classification":AACSBClassificationSummaryText()};
+ return AACHostReportPublish(AACSBProcess(),AACSBHostReportSummary(),facts);
+}
 /* 1.14.0 TASK 2: one explicit line per incoming call saying which host owns the answer, WHY,
    and whether a submission happened. The role is recomputed first, so the line is the
    discovery-time decision and (called again immediately before submitting) the submit-time
    decision. */
 static NSString *AACSBAnswerOwnershipLine(NSString *uuid,BOOL submitted,NSString *detail){
  AACSBRecomputeRole();
- return [NSString stringWithFormat:@"接听归属判定 call=%@ owner=%@ role=%@ host=%@ why=%@ submitted=%@%@",uuid.length?uuid:@"(unknown)",AACSBHostOwnerTagText(),AACSBHostRoleText(),AACSBDisplay(),AACSBClaimReasonText(),submitted?@"yes":@"no",detail.length?[NSString stringWithFormat:@"；%@",detail]:@""];
+ return [NSString stringWithFormat:@"接听归属判定 call=%@ owner=%@ role=%@ host=%@ answerPaths=%lu classification=[%@] why=%@ submitted=%@%@",uuid.length?uuid:@"(unknown)",AACSBHostOwnerTagText(),AACSBHostRoleText(),AACSBDisplay(),(unsigned long)AACSBAnswerPathCount(),AACSBClassificationSummaryText(),AACSBClaimReasonText(),submitted?@"yes":@"no",detail.length?[NSString stringWithFormat:@"；%@",detail]:@""];
 }
 /* 1.14.0 bounded safety takeover state. One takeover per call UUID, and the takeover
    submission still has to pass AACSBClaimAnswerUUID, so this host can never submit the same
@@ -242,7 +311,20 @@ static void AACSBRecord(NSString *status,NSDictionary *flags){
    the only thing standing between the module and the real answer entry. */
 static NSArray *AACSBClassKeywords(void){
  return @[@"IncomingCall",@"CallAlert",@"CallToAction",@"CallPresentation",@"InCall",@"SBInCall",@"LockScreenCall",@"AnswerCall",@"CallController",@"CallUI",
-          @"PhoneCall",@"CallBanner",@"CallNotification",@"CallDisplay",@"CallViewController",@"CallButton",@"CallAction",@"CallWindow",@"InCallUI",@"HUDCall",@"SBCall",@"ICSInCall",@"ICSAnswer"];
+          @"PhoneCall",@"CallBanner",@"CallNotification",@"CallDisplay",@"CallViewController",@"CallButton",@"CallAction",@"CallWindow",@"InCallUI",@"HUDCall",@"SBCall",@"ICSInCall",@"ICSAnswer",
+          @"TPInComingCall",@"PHInCall"];
+}
+/* 1.15.0 TASK 2: real in-call UI CLASS FAMILIES (the evidence shows the live incoming-call UI
+   is NOT the TPInComingCallUISnapshotViewController snapshot, so the families below are added
+   as first-class candidates next to the substring keywords). These are wildcard patterns, not
+   guessed concrete class names: the module still asks the objc runtime what exists. */
+static NSArray *AACSBClassFamilyPatterns(void){
+ return @[@"TPInComingCallUI*",@"PHInCallUI*",@"ICSInCall*",@"CallBanner*",@"CallViewController*",@"InCall*ViewController"];
+}
+static BOOL AACSBClassNameMatchesFamily(NSString *name){
+ if(!name.length||[name hasPrefix:@"AAC"])return NO;
+ for(NSString *pattern in AACSBClassFamilyPatterns())if(AACSBWildcardMatch(name,pattern))return YES;
+ return NO;
 }
 /* Answer-ish selectors. "answer" stays the primary keyword; the additions cover button
    handlers and the "pick up" wording without ever matching a decline/hang-up action. */
@@ -258,13 +340,16 @@ static NSArray *AACSBSelectorForbidden(void){return @[@"decline",@"reject",@"han
 static BOOL AACSBClassMatches(NSString *name){
  if(!name.length||[name hasPrefix:@"AAC"])return NO;
  for(NSString *keyword in AACSBClassKeywords())if([name rangeOfString:keyword].location!=NSNotFound)return YES;
+ if(AACSBClassNameMatchesFamily(name))return YES;
  if([name hasPrefix:@"SBLockScreen"]){NSString *lower=name.lowercaseString;if([lower rangeOfString:@"call"].location!=NSNotFound||[lower rangeOfString:@"answer"].location!=NSNotFound)return YES;}
  return NO;
 }
-/* Global pass: any runtime class whose NAME contains "call" (case-insensitive), which is a
-   far larger candidate set than the keyword list while still excluding unrelated classes. */
+/* Global pass: any runtime class whose NAME contains "call" (case-insensitive) or matches one
+   of the real in-call UI families, which is a far larger candidate set than the keyword list
+   while still excluding unrelated classes. */
 static BOOL AACSBClassMatchesGlobal(NSString *name){
  if(!name.length||[name hasPrefix:@"AAC"])return NO;
+ if(AACSBClassNameMatchesFamily(name))return YES;
  return [name.lowercaseString rangeOfString:@"call"].location!=NSNotFound;
 }
 static NSString *AACSBForbiddenKeyword(NSString *selector){
@@ -295,6 +380,146 @@ static BOOL AACSBSelectorMatches(NSString *selector,BOOL strict){
  if(AACSBForbiddenKeyword(selector))return NO;
  for(NSString *keyword in (strict?AACSBSelectorKeywordsStrict():AACSBSelectorKeywords()))if([lower rangeOfString:keyword].location!=NSNotFound)return YES;
  return NO;
+}
+
+/* ================= 1.15.0 TASK 2: ACTION vs ACCESSOR/NO-OP CLASSIFICATION =================
+   WHAT WENT WRONG: the 1.14.0 device run (user's real SpringBoard shared log, 2026-10-16,
+   14:19:05) reported "matchedClasses=150 hookedMethods=4 invokable=5 rejected=0 role=OWNER".
+   All four HOOKED methods were pure property ACCESSORS, i.e. they cannot answer anything:
+     -[INAnswerCallIntentResponse answeredCall]                                   (0args+object)
+     -[_INPBAnswerCallIntentResponse hasAnsweredCall]                             (0args+BOOL)
+     -[_INPBAnswerCallIntentResponse answeredCall]                                (0args+object)
+     -[TPInComingCallUISnapshotViewController acceptButton]                       (0args+object)
+   and all five INVOKABLE candidates were setters/unrelated:
+     -[CXCallControllerHost listener:shouldAcceptNewConnection:]
+     -[INAnswerCallIntentResponse setAnsweredCall:]
+     -[_INPBAnswerCallIntentResponse setAnsweredCall:]
+     -[TUCallNotificationManager answeringMachineStreamTokenChangedForCall:]
+     -[TPInComingCallUISnapshotViewController setAcceptButton:]
+   Counting those as "answer paths" is what made role=OWNER false. So from 1.15.0 every
+   candidate method carries exactly one classification, it is logged per method, and ONLY
+   ACTION may set the answer-path count or be reached by the submission path:
+     ACTION       the selector really names an answer action (see AACSBSelectorActionPatterns);
+                  only ACTION methods may be hooked-as-answer / registered as invocable and
+                  therefore only they can set answerPaths>0.
+     ACCESSOR     a property accessor: a setter of the form set<Name>:, or a getter of the form
+                  has<Name> / is<Name> / <name> that mirrors an existing setter on the same
+                  class (plus the five concrete names observed on this device). Hooked only when
+                  the existing safe zero-argument ABI applies, purely so a live instance can be
+                  captured as evidence; NEVER counted as an answer path, never registered as an
+                  NSInvocation candidate, never used as the answer target.
+     FORBIDDEN    matches the decline/reject/hang-up blacklist: never hooked, never registered,
+                  never invoked.
+     UNSUPPORTED  anything else that the keyword/global pass happened to match but that is not a
+                  real answer action (e.g. -[CXCallControllerHost listener:
+                  shouldAcceptNewConnection:] and the "…Changed…"-style notification callbacks
+                  such as -[TUCallNotificationManager
+                  answeringMachineStreamTokenChangedForCall:]); logged with a reason, never
+                  hooked, never registered. */
+typedef NS_ENUM(NSInteger,AACSBClassification){
+ AACSBClassificationAction=0,
+ AACSBClassificationAccessor=1,
+ AACSBClassificationForbidden=2,
+ AACSBClassificationUnsupported=3
+};
+static NSString *AACSBClassificationText(AACSBClassification classification){
+ switch(classification){
+  case AACSBClassificationAction:return @"ACTION";
+  case AACSBClassificationAccessor:return @"ACCESSOR";
+  case AACSBClassificationForbidden:return @"FORBIDDEN";
+  default:return @"UNSUPPORTED";
+ }
+}
+/* Real-action selector patterns, matched case-insensitively against the selector with and
+   without its colons, with '*' as "any run of characters (including none)". These are the
+   patterns a genuine answer action uses; a bare "answer"/"accept" substring is NOT enough. */
+static NSArray *AACSBSelectorActionPatterns(void){
+ return @[@"handle*answer",@"didtap*answer",@"perform*answer",@"answer*call*action",@"invoke*answer",@"pickup",@"pick up",@"acceptcall",@"tapanswer"];
+}
+/* Wildcard match ('*' = any run). Deliberately tiny and allocation-free per character. */
+static BOOL AACSBWildcardMatch(NSString *text,NSString *pattern){
+ NSUInteger t=0,p=0,star=NSNotFound,mark=0;
+ while(t<text.length){
+  if(p<pattern.length&&([pattern characterAtIndex:p]==[text characterAtIndex:t])){t++;p++;continue;}
+  if(p<pattern.length&&[pattern characterAtIndex:p]=='*'){star=p++;mark=t;continue;}
+  if(star!=NSNotFound){p=star+1;t=++mark;continue;}
+  return NO;
+ }
+ while(p<pattern.length&&[pattern characterAtIndex:p]=='*')p++;
+ return p==pattern.length;
+}
+static BOOL AACSBSelectorMatchesActionPattern(NSString *selector){
+ NSString *lower=selector.lowercaseString;
+ NSString *plain=[lower stringByReplacingOccurrencesOfString:@":" withString:@""];
+ for(NSString *pattern in AACSBSelectorActionPatterns()){
+  if(AACSBWildcardMatch(lower,pattern))return YES;
+  if(AACSBWildcardMatch(plain,pattern))return YES;
+ }
+ return NO;
+}
+/* The concrete accessor names seen on THIS device, as literal strings: the classification must
+   cover them even if the mirroring-setter lookup cannot see the setter (readonly property,
+   different class in the chain, or a class that only ships the getter in a given process). */
+static NSArray *AACSBKnownAccessorSelectors(void){
+ return @[@"answeredCall",@"hasAnsweredCall",@"acceptButton",@"setAnsweredCall:",@"setAcceptButton:"];
+}
+/* Property getter detection: has<Name> / is<Name> / <name> that mirrors an existing setter
+   set<Name>: on the same class chain. Checked both ways for the has/is prefixes. */
+static BOOL AACSBClassHasMirroringSetter(Class cls,NSString *selector){
+ if(!cls||!selector.length||[selector rangeOfString:@":"].location!=NSNotFound)return NO;
+ NSMutableArray *candidates=[NSMutableArray arrayWithObject:selector];
+ if(selector.length>3&&[[selector substringToIndex:3].lowercaseString isEqualToString:@"has"])[candidates addObject:[selector substringFromIndex:3]];
+ if(selector.length>2&&[[selector substringToIndex:2].lowercaseString isEqualToString:@"is"])[candidates addObject:[selector substringFromIndex:2]];
+ for(NSString *base in candidates){
+  if(!base.length)continue;
+  unichar first=[base characterAtIndex:0];
+  NSString *capital=[[[NSString stringWithFormat:@"%C",first] uppercaseString] stringByAppendingString:(base.length>1?[base substringFromIndex:1]:@"")];
+  if(class_getInstanceMethod(cls,NSSelectorFromString([NSString stringWithFormat:@"set%@:",capital]))!=NULL)return YES;
+  @try{if(class_getInstanceMethod(cls,NSSelectorFromString([NSString stringWithFormat:@"set%@:",base]))!=NULL)return YES;}@catch(NSException *e){}
+ }
+ return NO;
+}
+/* A plain Objective-C setter: set<Name>: with exactly one argument and a capitalized tail. */
+static BOOL AACSBSelectorIsSetter(NSString *selector,NSUInteger arguments){
+ if(![selector hasPrefix:@"set"]||selector.length<5)return NO;
+ if([selector rangeOfString:@":"].location==NSNotFound)return NO;
+ if([selector componentsSeparatedByString:@":"].count!=2)return NO;
+ if(arguments!=3)return NO;
+ unichar c=[selector characterAtIndex:3];
+ return c>='A'&&c<='Z';
+}
+/* Getter-shaped: no explicit arguments. */
+static BOOL AACSBSelectorIsGetterShaped(NSString *selector,NSUInteger arguments){
+ return arguments==2&&[selector rangeOfString:@":"].location==NSNotFound;
+}
+static NSString *AACSBClassificationReason(Class cls,NSString *selector,NSUInteger arguments,AACSBClassification classification){
+ (void)cls;
+ switch(classification){
+  case AACSBClassificationAccessor:
+   if(AACSBSelectorIsSetter(selector,arguments))return @"属性 setter set<Name>:（1.15.0 设备证据：setAnsweredCall: / setAcceptButton:）";
+   return [NSString stringWithFormat:@"属性 getter（has<Name>/is<Name>/<Name> 且类上存在对应的 set<Name>:；设备证据：answeredCall / hasAnsweredCall / acceptButton）"];
+  case AACSBClassificationForbidden:return [NSString stringWithFormat:@"拒绝/挂断类关键字（%@）",AACSBForbiddenKeyword(selector)?:@"匹配"]; 
+  case AACSBClassificationAction:return @"匹配真实接听动作模式";
+  default:return @"关键字命中但不是真实接听动作（例如 XPC/通知回调、…Changed… 观察回调）：不作为接听路径";
+ }
+}
+static AACSBClassification AACSBClassifySelector(Class cls,NSString *selector,NSUInteger arguments,NSString **detail){
+ AACSBClassification classification=AACSBClassificationUnsupported;
+ NSString *why=nil;
+ if(AACSBForbiddenKeyword(selector)){classification=AACSBClassificationForbidden;why=AACSBClassificationReason(cls,selector,arguments,classification);}
+ else{
+  NSString *lower=selector.lowercaseString;
+  for(NSString *known in AACSBKnownAccessorSelectors())if([known.lowercaseString isEqualToString:lower]){classification=AACSBClassificationAccessor;break;}
+  if(classification!=AACSBClassificationAccessor){
+   if(AACSBSelectorIsSetter(selector,arguments))classification=AACSBClassificationAccessor;
+   else if(AACSBSelectorIsGetterShaped(selector,arguments)&&AACSBClassHasMirroringSetter(cls,selector))classification=AACSBClassificationAccessor;
+  }
+  if(classification==AACSBClassificationAccessor)why=AACSBClassificationReason(cls,selector,arguments,classification);
+  else if(AACSBSelectorMatchesActionPattern(selector)){classification=AACSBClassificationAction;why=AACSBClassificationReason(cls,selector,arguments,classification);}
+  else why=AACSBClassificationReason(cls,selector,arguments,AACSBClassificationUnsupported);
+ }
+ if(detail)*detail=why?:@"无说明";
+ return classification;
 }
 
 /* Original IMP lookup walks the real class chain and is keyed by (class, selector), so two
@@ -413,11 +638,20 @@ static BOOL AACSBIsOurThunk(IMP imp){
 }
 static void AACSBCapture(id object,SEL selector){
  if(!object)return;
+ Class cls=object_getClass(object);
+ NSString *detail=[NSString stringWithFormat:@"-[%@ %@]",NSStringFromClass(cls),NSStringFromSelector(selector)];
+ /* 1.15.0 TASK 2: an ACCESSOR capture is evidence only. It never becomes the answer target and
+    it never points the submission path at a method that cannot act. */
+ if(!AACSBSelectorIsAnswerPath(cls,selector)){
+  dispatch_async(dispatch_get_main_queue(),^{
+   AACSBLog([NSString stringWithFormat:@"ACCESSOR capture (evidence only; NOT an answer path, never used as the answer target): %@",detail]);
+   AACSBAppendDiscovery([@"  CAPTURED_ACCESSOR " stringByAppendingString:detail]);
+  });
+  return;
+ }
  AACSBWeakTarget=object;
  AACSBStrongTarget=object;
  AACSBInvokeSelector=selector;
- Class cls=object_getClass(object);
- NSString *detail=[NSString stringWithFormat:@"-[%@ %@]",NSStringFromClass(cls),NSStringFromSelector(selector)];
  dispatch_async(dispatch_get_main_queue(),^{
   AACSBLog([NSString stringWithFormat:@"captured live incoming-call UI object via dynamic hook: %@ (强引用仅在本通话窗口内保留，另有弱引用与重扫兜底)",detail]);
   AACSBAppendDiscovery([@"  CAPTURED " stringByAppendingString:detail]);
@@ -428,13 +662,17 @@ static void AACSBCapture(id object,SEL selector){
 }
 /* Bounded hierarchy walk: window tree, view controllers and responder chains. This is the
    fallback used when the weak/strong capture is gone by answer time, and it is also how a
-   live instance of an NSInvocation candidate class is located. */
+   live instance of an NSInvocation candidate class is located.
+   1.15.0 TASK 2: ONLY classes that carry a real ACTION answer method are matched, so the
+   re-scan can never hand the submission path an object whose only relation to the call is a
+   property accessor (that is exactly the 14:20:21 device case: windows=21 visited=1771
+   found=0). */
 static Class AACSBMatchedCandidateClass(id object){
  if(!object)return Nil;
  Class cls=object_getClass(object);
  while(cls){
-  for(NSUInteger i=0;i<AACSBHookCount;i++)if(AACSBHookRecords[i].cls==cls)return cls;
-  for(NSUInteger i=0;i<AACSBInvocationCount;i++)if(AACSBInvocationRecords[i].cls==cls)return cls;
+  for(NSUInteger i=0;i<AACSBHookCount;i++)if(AACSBHookRecords[i].countsAsPath&&AACSBHookRecords[i].cls==cls)return cls;
+  for(NSUInteger i=0;i<AACSBInvocationCount;i++)if(AACSBInvocationRecords[i].countsAsPath&&AACSBInvocationRecords[i].cls==cls)return cls;
   cls=class_getSuperclass(cls);
  }
  return Nil;
@@ -542,6 +780,7 @@ static SEL AACSBInvocationSelectorFor(id target){
  @try{
   while(cls){
    for(NSUInteger i=0;i<AACSBInvocationCount;i++){
+    if(!AACSBInvocationRecords[i].countsAsPath)continue;
     if(AACSBInvocationRecords[i].cls!=cls)continue;
     SEL selector=AACSBInvocationRecords[i].sel;
     if(!selector)continue;
@@ -597,12 +836,12 @@ static BOOL AACSBInvokeDiscovered(id target,NSString **reason){
  /* 1) hooked, zero-explicit-argument method with a saved original IMP: call the original
        directly. AACSBInvokeSelector is the selector the capture saw; when it does not belong
        to the class chain, fall back to the first hooked method of a class in the chain. */
- IMP original=AACSBOriginalFor(target,AACSBInvokeSelector);
+ IMP original=AACSBOriginalForAnswer(target,AACSBInvokeSelector);
  SEL chosen=AACSBInvokeSelector;
  if(!original){
   Class cls=object_getClass(target);
   while(cls&&!original){
-   for(NSUInteger i=0;i<AACSBHookCount;i++)if(AACSBHookRecords[i].cls==cls){original=AACSBHookRecords[i].original;chosen=AACSBHookRecords[i].sel;break;}
+   for(NSUInteger i=0;i<AACSBHookCount;i++)if(AACSBHookRecords[i].countsAsPath&&AACSBHookRecords[i].cls==cls){original=AACSBHookRecords[i].original;chosen=AACSBHookRecords[i].sel;break;}
    if(!original)cls=class_getSuperclass(cls);
   }
  }
@@ -648,7 +887,7 @@ static NSString *AACSBInvokableSummary(void){
    in the discovery file), so the next device test can read the conclusions from the log too. */
 static void AACSBLogMethodOutcomes(void){
  NSMutableArray *lines=[NSMutableArray new];
- [lines addObject:[NSString stringWithFormat:@"方法处置摘要 host=%@：HOOKED=%lu（%@）INVOKABLE_BY_INVOCATION=%lu（%@）SKIPPED=%lu invocationAttempts=%lu discoverRuns=%lu",AACSBDisplay(),(unsigned long)AACSBHookCount,AACSBHookedSummary(),(unsigned long)AACSBInvocationCount,AACSBInvokableSummary(),(unsigned long)AACSBRejectedMethods,(unsigned long)AACSBInvokedByInvocation,(unsigned long)AACSBDiscoverRuns]];
+ [lines addObject:[NSString stringWithFormat:@"方法处置摘要 host=%@：HOOKED=%lu（其中 ACTION=%lu，ACCESSOR=%lu；只有 ACTION 计入 answerPaths）INVOKABLE_BY_INVOCATION=%lu（ACTION=%lu）（%@）SKIPPED=%lu（ACCESSOR 跳过=%lu，UNSUPPORTED 跳过=%lu）invocationAttempts=%lu discoverRuns=%lu",AACSBDisplay(),(unsigned long)AACSBHookCount,(unsigned long)AACSBHookActionCount,(unsigned long)AACSBHookAccessorCount,(unsigned long)AACSBInvocationCount,(unsigned long)AACSBInvokableActionCount,AACSBInvokableSummary(),(unsigned long)AACSBRejectedMethods,(unsigned long)AACSBAccessorSkipped,(unsigned long)AACSBUnsupportedSkipped,(unsigned long)AACSBInvokedByInvocation,(unsigned long)AACSBDiscoverRuns]];
  @try{
   for(NSUInteger i=0;i<AACSBHookCount&&AACSBHookDetails&&i<AACSBHookDetails.count;i++)[lines addObject:[@"  HOOKED " stringByAppendingString:AACSBHookDetails[i]]];
   for(NSString *entry in AACSBInvokableSelectors)[lines addObject:[@"  INVOKABLE " stringByAppendingString:entry]];
@@ -677,10 +916,10 @@ static NSString *AACSBHookedBlockText(void){
  NSUInteger hookTotal=AACSBHookCount;
  NSUInteger invokeTotal=AACSBInvocationCount;
  [lines addObject:@"# ===== HOOKED list（紧凑块：类+选择器+机制；日志行与发现文件都放在最前面，不受摘要预算截断影响） ====="];
- [lines addObject:[NSString stringWithFormat:@"# HOOKED_TOTAL hooked=%lu invokable=%lu answerPaths=%lu candidateClasses=%lu rejected=%lu role=%@ owner=%@ discoverRuns=%lu",(unsigned long)hookTotal,(unsigned long)invokeTotal,(unsigned long)AACSBAnswerPathCount(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBRejectedMethods,AACSBRole==AACAnswerRoleOwner?@"OWNER":(AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY"),AACSBHostOwnerTagText(),(unsigned long)AACSBDiscoverRuns]];
+ [lines addObject:[NSString stringWithFormat:@"# HOOKED_TOTAL hooked=%lu (action=%lu accessor=%lu) invokable=%lu answerPaths=%lu candidateClasses=%lu rejected=%lu role=%@ owner=%@ discoverRuns=%lu（只有 ACTION 计入 answerPaths：accessor 挂钩仅作证据）",(unsigned long)hookTotal,(unsigned long)AACSBHookActionCount,(unsigned long)AACSBHookAccessorCount,(unsigned long)invokeTotal,(unsigned long)AACSBAnswerPathCount(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBRejectedMethods,AACSBRole==AACAnswerRoleOwner?@"OWNER":(AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY"),AACSBHostOwnerTagText(),(unsigned long)AACSBDiscoverRuns]];
  [lines addObject:[NSString stringWithFormat:@"# HOOKED_LIST count=%lu host=%@ display=%@",(unsigned long)hookTotal,AACSBProcess(),AACSBDisplay()]];
  if(hookTotal==0){
-  [lines addObject:@"  HOOKED (none) 没有挂钩任何方法：没有「零显式参数且返回类型可直通」的候选（每个候选的具体原因见本文件 SKIPPED 行）"];
+  [lines addObject:@"  HOOKED (none) 没有挂钩任何方法：没有「零显式参数且返回类型可直通」的候选（每个候选的具体原因见本文件 SKIPPED 行；访问器即使被挂钩也不计入 answerPaths）"];
  }else{
   for(NSUInteger i=0;i<hookTotal&&i<AACSBListBlockMaxEntries;i++){
    NSString *detail=(AACSBHookDetails&&i<AACSBHookDetails.count)?AACSBHookDetails[i]:[NSString stringWithFormat:@"-[%@ %@]（详情索引缺失）",@"(unknown-class)",@"(unknown-selector)"];
@@ -736,7 +975,7 @@ static void AACSBWriteDiscoveryFile(void){
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# role=%@ owner=%@ roleTable=%@",AACSBRole==AACAnswerRoleOwner?@"OWNER":(AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY"),AACSBOwnerTag?:@"(none)",AACAnswerRoleTableText()]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# roleReason=%@",AACSBRoleReason?:@"(none)"]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# observedHostPresence=%@",AACAnswerPresenceText()]];
- [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# HOOKED_TOTAL hooked=%lu invokable=%lu answerPaths=%lu of candidateClasses=%lu rejected=%lu invokableSkipped=%lu invocationAttempts=%lu rescanVisited=%lu discoverRuns=%lu globalPassScanned=%lu",(unsigned long)AACSBHookCount,(unsigned long)AACSBInvocationCount,(unsigned long)AACSBAnswerPathCount(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBRejectedMethods,(unsigned long)AACSBInvokableSkipped,(unsigned long)AACSBInvokedByInvocation,(unsigned long)AACSBRescanVisits,(unsigned long)AACSBDiscoverRuns,(unsigned long)AACSBGlobalScanned]];
+ [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# HOOKED_TOTAL hooked=%lu (action=%lu accessor=%lu) invokable=%lu (action=%lu) answerPaths=%lu of candidateClasses=%lu rejected=%lu invokableSkipped=%lu accessorSkipped=%lu unsupportedSkipped=%lu invocationAttempts=%lu rescanVisited=%lu discoverRuns=%lu globalPassScanned=%lu",(unsigned long)AACSBHookCount,(unsigned long)AACSBHookActionCount,(unsigned long)AACSBHookAccessorCount,(unsigned long)AACSBInvocationCount,(unsigned long)AACSBInvokableActionCount,(unsigned long)AACSBAnswerPathCount(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBRejectedMethods,(unsigned long)AACSBInvokableSkipped,(unsigned long)AACSBAccessorSkipped,(unsigned long)AACSBUnsupportedSkipped,(unsigned long)AACSBInvokedByInvocation,(unsigned long)AACSBRescanVisits,(unsigned long)AACSBDiscoverRuns,(unsigned long)AACSBGlobalScanned]];
  if(AACSBHookCount){
   [AACSBDiscoveryLines addObject:[@"# HOOK_SUMMARY " stringByAppendingString:AACSBHookedSummary()]];
   for(NSString *entry in AACSBHookedSelectors)[AACSBDiscoveryLines addObject:[@"# HOOK_ENTRY " stringByAppendingString:entry]];
@@ -748,9 +987,9 @@ static void AACSBWriteDiscoveryFile(void){
   for(NSString *entry in AACSBInvokableSelectors)[AACSBDiscoveryLines addObject:[@"# INVOKE_ENTRY " stringByAppendingString:entry]];
  }
  if(AACSBAnswerPathCount()){
-  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# CONCLUSIVE: 本宿主已挂钩运行时发现到的接听方法 %lu 个（另有 %lu 个 NSInvocation 候选）；下一次设备来电若命中，日志会记录 HOOKED 方法被调用 / CAPTURED 活实例 / INVOKED_BY_INVOCATION 及其结果。",(unsigned long)AACSBHookCount,(unsigned long)AACSBInvocationCount]];
+  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# CONCLUSIVE: 本宿主持有 %lu 条 ACTION 接听路径（已挂钩 ACTION=%lu，NSInvocation ACTION 候选=%lu）；另有 %lu 个 ACCESSOR 挂钩仅作证据、不计入 answerPaths；下一次设备来电若命中，日志会记录 ACTION 方法被调用 / CAPTURED 活实例 / INVOKED_BY_INVOCATION 及其结果。",(unsigned long)AACSBAnswerPathCount(),(unsigned long)AACSBHookActionCount,(unsigned long)AACSBInvokableActionCount,(unsigned long)AACSBHookAccessorCount]];
  }else{
-  [AACSBDiscoveryLines addObject:@"# CONCLUSIVE: 本宿主发现到的可挂钩接听方法=0，因此本宿主不可能接听；请以下一次设备来电时的日志确认其他宿主是否可接听。"];
+  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# CONCLUSIVE: 本宿主发现到的 ACTION 接听路径=0，因此本宿主不可能接听（role 必须是 LOG-ONLY，不是 OWNER）；本宿主有 %lu 个 ACCESSOR 挂钩（%lu 个 ACCESSOR 被跳过、%lu 个 UNSUPPORTED 被跳过），这些都只是属性访问器/无关方法，绝不能当作接听路径。请以下一次设备来电时的日志确认其他宿主是否可接听。",(unsigned long)AACSBHookAccessorCount,(unsigned long)AACSBAccessorSkipped,(unsigned long)AACSBUnsupportedSkipped]];
  }
  NSString *body=AACSBDiscoveryLines.count?[AACSBDiscoveryLines componentsJoinedByString:@"\n"]:@"# 运行时发现未运行";
  /* 1.14.0 TASK 2: the compact HOOKED list goes FIRST in the file (and in the log below), so the
@@ -770,6 +1009,14 @@ static void AACSBWriteDiscoveryFile(void){
  for(NSString *blockLine in [hookedBlock componentsSeparatedByString:@"\n"])AACSBLog(blockLine);
  AACSBLog([NSString stringWithFormat:@"%@ 接听归属判定（发现时）：owner=%@ role=%@ submitted=no why=%@",AACSBDisplay(),AACSBHostOwnerTagText(),AACSBHostRoleText(),AACSBClaimReasonText()]);
  AACSBLogDigest(text);
+ /* 1.15.0 TASK 1: also publish the discovery summary + this host's recent log lines through the
+    shared host-report CFPreferences domain (our own domain, per-host keys, bounded payload).
+    The result line below reports the REAL synchronize status and the real byte counts; it does
+    NOT claim that Settings or another host can read them. */
+ @try{
+  NSDictionary *report=AACSBHostReportPublishNow();
+  AACSBLog([NSString stringWithFormat:@"host report published to the shared CFPreferences domain: domain=%@ keys=%@ synced=%@ summaryBytes=%@ logBytes=%@ totalBytes=%@ boundBytes=%@ tag=%@（跨进程可见性未验证：本行只报告本进程实际写入与同步结果，其他进程能否读到由它们各自的读回结果显示）",report[@"domain"],report[@"keys"],report[@"synced"],report[@"summaryBytes"],report[@"logBytes"],report[@"totalBytes"],report[@"boundBytes"],report[@"tag"]]);
+ }@catch(NSException *e){AACSBLog([@"host report publication exception: " stringByAppendingString:e.reason?:@"unknown"]);}
  AACSBRecord(AACSBAnswerPathCount()?[NSString stringWithFormat:@"%@ 运行时发现（非硬编码，objc_getClassList 枚举）：候选类=%lu，已挂钩方法=%lu（%@），NSInvocation 候选=%lu（%@），安全跳过=%lu；角色=%@（%@）",AACSBDisplay(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBHookCount,AACSBHookedSummary(),(unsigned long)AACSBInvocationCount,AACSBInvokableSummary(),(unsigned long)AACSBRejectedMethods,AACSBRole==AACAnswerRoleOwner?@"接听负责宿主":(AACSBRole==AACAnswerRoleObserver?@"观察者":@"仅日志"),AACSBClaimReasonText()]:[NSString stringWithFormat:@"%@ 运行时发现：候选类=%lu，但没有可挂钩或可调用的接听方法（跳过 %lu）；本宿主不可能接听（仅日志）%@；%@",AACSBDisplay(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBRejectedMethods,AACSBOwnerTag.length?[NSString stringWithFormat:@"，接听由 %@ 负责",AACSBOwnerTag]:@"",AACSBClaimReasonText()],@{@"discovered":@(AACSBAnswerPathCount()>0)});
 }
 
@@ -777,11 +1024,59 @@ static void AACSBWriteDiscoveryFile(void){
 /* Handles one candidate class: every method of it that matches the selector filter gets
    exactly one recorded outcome (HOOKED / INVOKABLE_BY_INVOCATION / SKIPPED+reason), so the
    discovery file alone tells the next device test what happened to every candidate. */
+/* Installs one behaviour-neutral dynamic hook (thunk -> saved original IMP). Used for BOTH
+   ACTION answer methods and ACCESSOR evidence hooks; the only difference is countsAsPath,
+   which is what keeps accessors out of the answer-path count and out of the submission path.
+   Returns YES only when a real original IMP was obtained and recorded. */
+static BOOL AACSBInstallHook(Class cls,SEL selector,Method method,IMP current,IMP thunk,NSString *name,NSString *selectorName,NSString *abi,BOOL countsAsPath,NSString *classificationText){
+ if(!cls||!selector||!method||!thunk)return NO;
+ if(AACSBHookCount>=AACSBHookCap){
+  AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ classification=%@ reason=挂钩数量达到 %d 上限",selectorName,classificationText,AACSBHookCap]);
+  return NO;
+ }
+ IMP original=NULL;
+ NSString *mechanism=nil;
+ AACMSHookMessageExFn hookFn=AACSBResolveMSHook();
+ if(hookFn){
+  @try{hookFn(cls,selector,thunk,&original);}
+  @catch(NSException *e){original=NULL;AACSBLog([@"MSHookMessageEx exception: " stringByAppendingString:e.reason?:@"unknown"]);}
+  mechanism=@"MSHookMessageEx（ElleKit/substrate 兼容层）";
+ }else{
+  original=method_setImplementation(method,thunk);
+  mechanism=@"method_setImplementation（MSHookMessageEx 不可用时的回退，同样保存原始 IMP）";
+ }
+ if(!original||original==thunk){
+  /* Roll back only when the mechanism allows it and says exactly what it replaced. */
+  BOOL rolledBack=NO;
+  if(!hookFn&&original==thunk){method_setImplementation(method,current);rolledBack=YES;}
+  AACSBRejectedMethods++;
+  AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ classification=%@ reason=挂钩没有返回有效的原始 IMP 或检测到重复挂钩（mechanism=%@ rolledBack=%d）",selectorName,classificationText,mechanism?:@"none",rolledBack]);
+  return NO;
+ }
+ AACSBHookRecords[AACSBHookCount].cls=cls;
+ AACSBHookRecords[AACSBHookCount].sel=selector;
+ AACSBHookRecords[AACSBHookCount].original=original;
+ AACSBHookRecords[AACSBHookCount].countsAsPath=countsAsPath;
+ AACSBHookCount++;
+ [AACSBHookedKeys addObject:[NSString stringWithFormat:@"%@|%@",name,selectorName]];
+ [AACSBHookedIMPs addObject:@((uintptr_t)current)];
+ NSString *entry=[NSString stringWithFormat:@"-[%@ %@] abi=%@ classification=%@ countsAsPath=%@",name,selectorName,abi,classificationText,countsAsPath?@"yes":@"no"];
+ [AACSBHookedSelectors addObject:entry];
+ if(AACSBHookDetails)[AACSBHookDetails addObject:[NSString stringWithFormat:@"%@ mechanism=%@",entry,mechanism?:@"unknown"]];
+ if(countsAsPath)AACSBHookActionCount++;else AACSBHookAccessorCount++;
+ AACSBAppendDiscovery([NSString stringWithFormat:@"  HOOKED %@ classification=%@ countsAsPath=%@ abi=%@ mechanism=%@ originalIMP=%p",selectorName,classificationText,countsAsPath?@"yes":@"no",abi,mechanism,(void *)original]);
+ return YES;
+}
+/* Handles one candidate class: every method of it that matches the selector filter gets exactly
+   one recorded outcome with its 1.15.0 classification (ACTION / ACCESSOR / FORBIDDEN /
+   UNSUPPORTED) plus HOOKED / INVOKABLE_BY_INVOCATION / SKIPPED+reason, so the discovery file
+   alone tells the next device test what happened to every candidate. ONLY ACTION methods may
+   become answer paths. */
 static void AACSBHandleCandidateClass(Class cls,NSString *name,BOOL globalPass,NSUInteger *hooked,NSUInteger *invokable){
  unsigned int methodCount=0;
  Method *methods=class_copyMethodList(cls,&methodCount);
  AACSBAppendDiscovery([NSString stringWithFormat:@"CLASS %@ methods=%u pass=%@",name,methodCount,globalPass?@"global-call-scan":@"keyword"]);
- NSUInteger pickedHooks=0,pickedInvokable=0;
+ NSUInteger pickedHooks=0,pickedInvokable=0,pickedAccessors=0;
  if(methods){
   for(unsigned int j=0;j<methodCount;j++){
    SEL selector=method_getName(methods[j]);
@@ -795,27 +1090,62 @@ static void AACSBHandleCandidateClass(Class cls,NSString *name,BOOL globalPass,N
    char returnType[64]={0};
    method_getReturnType(method,returnType,sizeof(returnType));
    IMP current=method_getImplementation(method);
+   /* 1.15.0 TASK 2: classify FIRST. Only ACTION may set answerPaths or reach a submission path. */
+   NSString *classReason=nil;
+   AACSBClassification classification=AACSBClassifySelector(cls,selectorName,arguments,&classReason);
+   NSString *classText=AACSBClassificationText(classification);
    NSString *forbidden=AACSBForbiddenKeyword(selectorName);
-   if(forbidden){
+   if(classification==AACSBClassificationForbidden){
     AACSBRejectedMethods++;
-    AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ reason=拒绝/挂断类关键字（%@）：绝不挂钩也绝不调用",selectorName,forbidden]);
+    AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ classification=FORBIDDEN reason=拒绝/挂断类关键字（%@）：绝不挂钩也绝不调用，也不作为接听路径",selectorName,forbidden?:@"匹配"]);
     continue;
    }
    if(AACSBSelectorIsARCUnsafe(selectorName)){
     AACSBRejectedMethods++;
-    AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ reason=ARC 方法族（init/new/copy/mutableCopy/alloc 风格的首个选择器段）：返回值所有权约定由调用方假定，thunk 不能安全直通",selectorName]);
+    AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ classification=%@ reason=ARC 方法族（init/new/copy/mutableCopy/alloc 风格的首个选择器段）：返回值所有权约定由调用方假定，thunk 不能安全直通",selectorName,classText]);
     continue;
    }
    if(arguments<2){
     AACSBRejectedMethods++;
-    AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ reason=参数数量=%u 小于 2（类型编码异常）",selectorName,arguments]);
+    AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ classification=%@ reason=参数数量=%u 小于 2（类型编码异常）",selectorName,classText,arguments]);
     continue;
    }
+   if(classification==AACSBClassificationUnsupported){
+    AACSBUnsupportedSkipped++;
+    AACSBRejectedMethods++;
+    AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ classification=UNSUPPORTED reason=%@；关键字命中但不是真实接听动作：不挂钩、不登记、answerPaths 不会因此增加",selectorName,classReason?:@"不是接听动作"]);
+    continue;
+   }
+   if(classification==AACSBClassificationAccessor){
+    /* 1.15.0 TASK 2: an accessor is evidence only. It is hooked ONLY when the existing safe
+       zero-argument ABI applies and only as a behaviour-neutral capture; it is NEVER counted as
+       an answer path, NEVER registered as an NSInvocation candidate, and NEVER the object the
+       answer step acts on (AACSBOriginalForAnswer / AACSBMatchedCandidateClass / AACSBCapture). */
+    NSString *abi=nil;
+    IMP thunk=(arguments==2)?AACSBThunkForReturnType(returnType,&abi):NULL;
+    if(!thunk||AACSBIsOurThunk(current)||current==(IMP)thunk){
+     AACSBAccessorSkipped++;
+     AACSBRejectedMethods++;
+     AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ classification=ACCESSOR countsAsPath=no reason=%@；属性访问器无法接听：本版本不挂钩、也不登记为 NSInvocation 候选（有显式参数或无安全 thunk 时直接跳过）",selectorName,classReason?:@"属性访问器"]);
+     continue;
+    }
+    NSString *key=[NSString stringWithFormat:@"%@|%@",name,selectorName];
+    if([AACSBHookedKeys containsObject:key]){AACSBAppendDiscovery([NSString stringWithFormat:@"  ALREADY_HOOKED %@ classification=ACCESSOR countsAsPath=no reason=同一 (类,方法) 只挂钩一次",selectorName]);continue;}
+    if(current&&[AACSBHookedIMPs containsObject:@((uintptr_t)current)]){
+     AACSBRejectedMethods++;
+     AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ classification=ACCESSOR countsAsPath=no reason=同一 IMP 已在别处挂钩（绝不重复挂钩）",selectorName]);
+     continue;
+    }
+    if(AACSBInstallHook(cls,selector,method,current,thunk,name,selectorName,abi,NO,classText))pickedAccessors++;
+    continue;
+   }
+   /* ---- classification == ACTION from here on: this is the only branch that may produce an
+      answer path. ---- */
    if(arguments>2){
     NSString *why=nil;
     if(!AACSBMethodInvocationSafe(method,&why)){
      AACSBInvokableSkipped++;AACSBRejectedMethods++;
-     AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ reason=NSInvocation 候选也不安全：%@",selectorName,why?:@"未知"]);
+     AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ classification=ACTION reason=NSInvocation 候选也不安全：%@",selectorName,why?:@"未知"]);
      continue;
     }
     NSString *key=[NSString stringWithFormat:@"inv|%@|%@",name,selectorName];
@@ -823,71 +1153,40 @@ static void AACSBHandleCandidateClass(Class cls,NSString *name,BOOL globalPass,N
     if(AACSBInvocationCount>=AACSBInvocationCap){AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ reason=参数化候选达到 %d 上限",selectorName,AACSBInvocationCap]);continue;}
     AACSBInvocationRecords[AACSBInvocationCount].cls=cls;
     AACSBInvocationRecords[AACSBInvocationCount].sel=selector;
+    AACSBInvocationRecords[AACSBInvocationCount].countsAsPath=YES;
     AACSBInvocationCount++;
+    AACSBInvokableActionCount++;
     [AACSBInvocationKeys addObject:key];
-    NSString *entry=[NSString stringWithFormat:@"-[%@ %@] args=%u return=%s",name,selectorName,arguments-2,returnType];
+    NSString *entry=[NSString stringWithFormat:@"-[%@ %@] args=%u return=%s classification=ACTION countsAsPath=yes",name,selectorName,arguments-2,returnType];
     [AACSBInvokableSelectors addObject:entry];
     pickedInvokable++;(*invokable)++;
-    AACSBAppendDiscovery([NSString stringWithFormat:@"  INVOKABLE_BY_INVOCATION %@ reason=有显式参数，任意 ABI 不能用固定 C thunk 安全直通；接听步骤会在活实例上用 NSInvocation 以默认参数调用，并把结果写成 INVOKED_BY_INVOCATION 行",entry]);
+    AACSBAppendDiscovery([NSString stringWithFormat:@"  INVOKABLE_BY_INVOCATION %@ classification=ACTION countsAsPath=yes reason=有显式参数，任意 ABI 不能用固定 C thunk 安全直通；接听步骤会在活实例上用 NSInvocation 以默认参数调用，并把结果写成 INVOKED_BY_INVOCATION 行",entry]);
     continue;
    }
    NSString *abi=nil;
    IMP thunk=AACSBThunkForReturnType(returnType,&abi);
    if(!thunk){
     AACSBRejectedMethods++;
-    AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ reason=零显式参数但返回类型=%s 不能用固定签名 thunk 直通",selectorName,returnType]);
+    AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ classification=ACTION reason=零显式参数但返回类型=%s 不能用固定签名 thunk 直通",selectorName,returnType]);
     continue;
    }
    if(AACSBIsOurThunk(current)){
     AACSBRejectedMethods++;
-    AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ reason=该实现已经是本插件的挂钩（绝不重复挂钩）",selectorName]);
+    AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ classification=ACTION reason=该实现已经是本插件的挂钩（绝不重复挂钩）",selectorName]);
     continue;
    }
    NSString *key=[NSString stringWithFormat:@"%@|%@",name,selectorName];
    if([AACSBHookedKeys containsObject:key]){AACSBAppendDiscovery([NSString stringWithFormat:@"  ALREADY_HOOKED %@ reason=同一 (类,方法) 只挂钩一次",selectorName]);continue;}
    if(current&&[AACSBHookedIMPs containsObject:@((uintptr_t)current)]){
     AACSBRejectedMethods++;
-    AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ reason=同一 IMP 已在别处挂钩（绝不重复挂钩）",selectorName]);
+    AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ classification=ACTION reason=同一 IMP 已在别处挂钩（绝不重复挂钩）",selectorName]);
     continue;
    }
-   if(AACSBHookCount>=AACSBHookCap){
-    AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ reason=挂钩数量达到 %d 上限",selectorName,AACSBHookCap]);
-    continue;
-   }
-   IMP original=NULL;
-   NSString *mechanism=nil;
-   AACMSHookMessageExFn hookFn=AACSBResolveMSHook();
-   if(hookFn){
-    @try{hookFn(cls,selector,thunk,&original);}
-    @catch(NSException *e){original=NULL;AACSBLog([@"MSHookMessageEx exception: " stringByAppendingString:e.reason?:@"unknown"]);}
-    mechanism=@"MSHookMessageEx（ElleKit/substrate 兼容层）";
-   }else{
-    original=method_setImplementation(method,thunk);
-    mechanism=@"method_setImplementation（MSHookMessageEx 不可用时的回退，同样保存原始 IMP）";
-   }
-   if(!original||original==thunk){
-    /* Roll back only when the mechanism allows it and says exactly what it replaced. */
-    BOOL rolledBack=NO;
-    if(!hookFn&&original==thunk){method_setImplementation(method,current);rolledBack=YES;}
-    AACSBRejectedMethods++;
-    AACSBAppendDiscovery([NSString stringWithFormat:@"  SKIPPED %@ reason=挂钩没有返回有效的原始 IMP 或检测到重复挂钩（mechanism=%@ rolledBack=%d）",selectorName,mechanism?:@"none",rolledBack]);
-    continue;
-   }
-   AACSBHookRecords[AACSBHookCount].cls=cls;
-   AACSBHookRecords[AACSBHookCount].sel=selector;
-   AACSBHookRecords[AACSBHookCount].original=original;
-   AACSBHookCount++;
-   [AACSBHookedKeys addObject:key];
-   [AACSBHookedIMPs addObject:@((uintptr_t)current)];
-   NSString *entry=[NSString stringWithFormat:@"-[%@ %@] abi=%@",name,selectorName,abi];
-   [AACSBHookedSelectors addObject:entry];
-   if(AACSBHookDetails)[AACSBHookDetails addObject:[NSString stringWithFormat:@"%@ mechanism=%@",entry,mechanism?:@"unknown"]];
-   pickedHooks++;(*hooked)++;
-   AACSBAppendDiscovery([NSString stringWithFormat:@"  HOOKED %@ abi=%@ mechanism=%@ originalIMP=%p return=%s args=%u",selectorName,abi,mechanism,(void *)original,returnType,arguments-2]);
+   if(AACSBInstallHook(cls,selector,method,current,thunk,name,selectorName,abi,YES,classText)){pickedHooks++;(*hooked)++;}
   }
   free(methods);
  }
- AACSBAppendDiscovery([NSString stringWithFormat:@"  hooked=%lu invokable=%lu pass=%@",(unsigned long)pickedHooks,(unsigned long)pickedInvokable,globalPass?@"global-call-scan":@"keyword"]);
+ AACSBAppendDiscovery([NSString stringWithFormat:@"  hooked=%lu invokable=%lu accessors=%lu pass=%@",(unsigned long)pickedHooks,(unsigned long)pickedInvokable,(unsigned long)pickedAccessors,globalPass?@"global-call-scan":@"keyword"]);
 }
 static void AACSBDiscover(void){
  if(AACSBDiscoverRuns>=AACSBMaxDiscoverRuns)return;
@@ -899,13 +1198,16 @@ static void AACSBDiscover(void){
  if(!AACSBHookedSelectors)AACSBHookedSelectors=[NSMutableArray new];
  if(!AACSBInvokableSelectors)AACSBInvokableSelectors=[NSMutableArray new];
  if(!AACSBHookDetails)AACSBHookDetails=[NSMutableArray new];
- [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# AutoAnswerCall 1.14.0 answer-host runtime discovery run %lu host=%@ tag=%@ (runtime-discovered; no hardcoded class name)",(unsigned long)AACSBDiscoverRuns,AACSBDisplay(),AACSBProcess()]];
+ [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# AutoAnswerCall 1.15.0 answer-host runtime discovery run %lu host=%@ tag=%@ (runtime-discovered; no hardcoded class name)",(unsigned long)AACSBDiscoverRuns,AACSBDisplay(),AACSBProcess()]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# discoveryFile=%@ roleTable=%@",AACSBHostDiscoveryFile(),AACAnswerRoleTableText()]];
+ [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# classFamilyFilters=%@（真实来电 UI 类族，通配匹配）",[AACSBClassFamilyPatterns() componentsJoinedByString:@","]]];
+ [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# realActionSelectorPatterns=%@（只有命中这些模式的候选才算 ACTION，才能成为接听路径）",[AACSBSelectorActionPatterns() componentsJoinedByString:@","]]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# process=%@ date=%@",AACSBProcess(),NSDate.date]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# classFilters=%@",[AACSBClassKeywords() componentsJoinedByString:@","]]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# selectorFilters=%@（全局扫描用严格子集，不含裸 accept）",[AACSBSelectorKeywords() componentsJoinedByString:@","]]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# selectorForbidden=%@（安全黑名单：拒绝/挂断类选择器永不挂钩、永不登记、永不调用）",[AACSBSelectorForbidden() componentsJoinedByString:@","]]];
- [AACSBDiscoveryLines addObject:@"# 每个候选方法的处置（本文件是下一次设备测试的判定依据）：HOOKED=已挂钩（零显式参数+返回类型可直通，已保存原始 IMP 并原样直通）；INVOKABLE_BY_INVOCATION=未挂钩，接听步骤可用 NSInvocation 传默认参数调用；CAPTURED=看到活实例；INVOKED_BY_INVOCATION=接听步骤真的调用了；SKIPPED=带具体原因跳过。"];
+ [AACSBDiscoveryLines addObject:@"# 1.15.0 分类（每个候选都必须有其中一个，且只有 ACTION 会增加 answerPaths）：ACTION=真实接听动作（命中 realActionSelectorPatterns）；ACCESSOR=属性访问器（set<Name>: 或镜像 setter 的 has<Name>/is<Name>/<Name>），只作证据，永不作为接听路径；FORBIDDEN=拒绝/挂断类；UNSUPPORTED=关键字命中但不是接听动作（XPC/通知回调等）。设备证据：1.14.0 的四个 HOOKED 全是访问器（answeredCall / hasAnsweredCall / answeredCall / acceptButton），却把 answerPaths 撑成了 role=OWNER。"];
+ [AACSBDiscoveryLines addObject:@"# 每个候选方法的处置（本文件是下一次设备测试的判定依据）：HOOKED=已挂钩（零显式参数+返回类型可直通，已保存原始 IMP 并原样直通；ACCESSOR 挂钩只用于捕获证据，countsAsPath=no）；INVOKABLE_BY_INVOCATION=未挂钩，接听步骤可用 NSInvocation 传默认参数调用（仅 ACTION）；CAPTURED/CAPTURED_ACCESSOR=看到活实例；INVOKED_BY_INVOCATION=接听步骤真的调用了；SKIPPED=带具体原因跳过。"];
  [AACSBDiscoveryLines addObject:@"# 挂钩机制：MSHookMessageEx（ElleKit/substrate 兼容层，dlsym 解析）优先，不可用时回退 method_setImplementation；两种机制都保存原始 IMP 并依赖 (类,方法) 与 IMP 双重键避免重复挂钩。"];
  int total=objc_getClassList(NULL,0);
  if(total<=0){
@@ -960,7 +1262,7 @@ static void AACSBDiscover(void){
   AACSBAppendDiscovery([NSString stringWithFormat:@"# end global pass processedClasses=%lu hooked=%lu invokable=%lu elapsedSeconds=%.2f",(unsigned long)processed,(unsigned long)hookedPass2,(unsigned long)invokablePass2,CFAbsoluteTimeGetCurrent()-globalStarted]);
  }
  free(classes);
- [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# end run %lu scanned=%d matchedClasses=%lu hookedMethods=%lu invokable=%lu rejected=%lu",(unsigned long)AACSBDiscoverRuns,count,(unsigned long)matched,(unsigned long)AACSBHookCount,(unsigned long)AACSBInvocationCount,(unsigned long)AACSBRejectedMethods]];
+ [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# end run %lu scanned=%d matchedClasses=%lu hookedMethods=%lu (action=%lu accessor=%lu) invokable=%lu (action=%lu) rejected=%lu accessorSkipped=%lu unsupportedSkipped=%lu answerPaths=%lu",(unsigned long)AACSBDiscoverRuns,count,(unsigned long)matched,(unsigned long)AACSBHookCount,(unsigned long)AACSBHookActionCount,(unsigned long)AACSBHookAccessorCount,(unsigned long)AACSBInvocationCount,(unsigned long)AACSBInvokableActionCount,(unsigned long)AACSBRejectedMethods,(unsigned long)AACSBAccessorSkipped,(unsigned long)AACSBUnsupportedSkipped,(unsigned long)AACSBAnswerPathCount()]];
  AACSBWriteDiscoveryFile();
 }
 static inline void AACSBRetryDiscoveryIfEmpty(void);
@@ -981,6 +1283,10 @@ static inline void AACSBStart(AACSBEnv *env){
   AACSBLog([NSString stringWithFormat:@"%@ 未广播接听归属声明（role=%@，owner=%@）：没有归属声明的宿主不可能让更高优先级宿主让出接听",AACSBDisplay(),AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY",AACSBHostOwnerTagText()]);
  }
  AACSBLog(AACSBAnswerOwnershipLine(nil,NO,@"启动时的归属判定（还没有任何通话）"));
+ /* 1.15.0 TASK 1: keep the shared host report fresh (discovery summary + recent log lines)
+    for every host, so the Settings process and the other hosts have a chance to read what a
+    host that lives in its own container actually found. */
+ AACHostReportEnablePeriodic(AACSBProcess(),^NSString *{return AACSBHostReportSummary();});
  /* 1.13.0: the real call UI classes are often registered AFTER this dylib's constructor, so
     repeat the bounded enumeration on a timer as well as on a call event. This is how the
     relaxed gate gets a second chance without an unbounded scan. */

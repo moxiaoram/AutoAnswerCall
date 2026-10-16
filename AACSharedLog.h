@@ -79,11 +79,25 @@ static inline BOOL AACSharedPrefsAppend(NSString *process,NSString *line){
  }@catch(NSException *e){NSLog(@"[AutoAnswerCall] shared-log CFPreferences fallback exception: %@",e.reason?:@"unknown");}
  return NO;
 }
+/* Recent-line ring buffer (1.15.0). Bounded in memory, fed by AACSharedAppend, and used only
+   as the payload source for the shared CFPreferences host report below. It is NOT a second
+   log: it never grows beyond AACSharedRecentLineCap entries and never throws. */
+static NSMutableArray *AACSharedRecentLines=nil;
+static NSUInteger const AACSharedRecentLineCap=200;
+static inline void AACSharedRemember(NSString *line){
+ if(![line isKindOfClass:NSString.class]||!line.length)return;
+ @try{
+  if(!AACSharedRecentLines)AACSharedRecentLines=[NSMutableArray new];
+  [AACSharedRecentLines addObject:AACSharedLine(line,600)];
+  while(AACSharedRecentLines.count>AACSharedRecentLineCap)[AACSharedRecentLines removeObjectAtIndex:0];
+ }@catch(NSException *e){}
+}
 /* Appends one line. Returns YES only when it was written to a file path (or, failing
    that, to the preferences fallback). Every line is also sent to NSLog. */
 static inline BOOL AACSharedAppend(NSString *process,NSString *message){
  NSString *text=[NSString stringWithFormat:@"[%@] %@ %@\n",NSDate.date,process?:@"unknown",AACSharedLine(message,2000)];
  NSLog(@"[AutoAnswerCall][%@] %@",process?:@"unknown",AACSharedLine(message,2000));
+ AACSharedRemember(text);
  NSString *failure=nil;
  @try{
   NSDictionary *chosen=AACSharedResolve(process,NO);
@@ -178,4 +192,223 @@ static inline NSString *AACSharedProbeCompanionDump(void){
   if(!all.count)[s appendString:@"\n（无记录：Darwin 通知本身无载荷，伴随键只是尽力而为。）\n"];
  }@catch(NSException *e){[s appendFormat:@"读取失败：%@\n",e.reason?:@"未知异常"];}
  return s;
+}
+
+/* ============================ 1.15.0 TASK 1: SHARED HOST REPORT ============================
+   CLOSE THE VISIBILITY GAP. Device evidence that drove this (the user's real 1.14.0
+   SpringBoard shared log, 2026-10-16, quoted verbatim because it is the authoritative record):
+     - 14:19:05 discovery: matchedClasses=150 hookedMethods=4 invokable=5 rejected=0 role=OWNER.
+     - the 4 HOOKED methods are ALL accessors, not answer actions:
+       -[INAnswerCallIntentResponse answeredCall] (0args+object),
+       -[_INPBAnswerCallIntentResponse hasAnsweredCall] (0args+BOOL),
+       -[_INPBAnswerCallIntentResponse answeredCall] (0args+object),
+       -[TPInComingCallUISnapshotViewController acceptButton] (0args+object).
+     - the 5 INVOKABLE candidates are setters/unrelated:
+       -[CXCallControllerHost listener:shouldAcceptNewConnection:],
+       -[INAnswerCallIntentResponse setAnsweredCall:],
+       -[_INPBAnswerCallIntentResponse setAnsweredCall:],
+       -[TUCallNotificationManager answeringMachineStreamTokenChangedForCall:],
+       -[TPInComingCallUISnapshotViewController setAcceptButton:].
+     - a real incoming call (UUID A8059645-...) was detected at 14:20:03; at 14:20:04 the host
+       demoted itself because InCallService broadcast an ownership claim, then at 14:20:21 the
+       takeover path submitted=yes, but immediately after:
+         hierarchy re-scan for the incoming-call UI object: windows=21 visited=1771 found=0
+         LOG-ONLY primary path in SpringBoard: no captured/rescanned UI object could answer.
+       The secondary public transaction failed with CallKit error 1 = unentitled. The call ended
+       unanswered at 14:20:27.
+     - InCallService DOES run the tweak and claimed ownership, but its own discovery/log files
+       live in its own container and are invisible to the Settings process, so we never saw what
+       it found.
+   WHAT THIS SECTION DOES: every host ALSO publishes its discovery summary and its recent log
+   lines into this OWN CFPreferences domain with per-host keys, so Settings and the other hosts
+   can try to read them. The publication is bounded (a few KB per host, truncated with an
+   explicit marker) and the DOMAIN IS OUR OWN — no Apple preference key is ever written or
+   invented. The file-based channel above is kept exactly as it was.
+   WHAT THIS SECTION DOES NOT DO: it does NOT claim that the domain is visible across
+   processes. Every reader reports only what it actually reads in its own process, plus the
+   real on-disk plist path of the domain and whether that file is readable here. */
+static NSString * const AACHostReportDomain=@"com.autoanswer.call.hostreport";
+static NSString * const AACHostReportKeyPrefix=@"Host.";
+static NSString * const AACHostReportHostsKey=@"Hosts";
+/* Per-host bound: summary + recent log lines may never exceed this many characters together
+   (a few KB), and the truncation marker says exactly that the payload was cut. */
+static NSUInteger const AACHostReportMaxBytes=6000;
+static NSUInteger const AACHostReportLogBytes=4000;
+static NSUInteger const AACHostReportSummaryBytes=1800;
+static NSString * const AACHostReportTruncatedMarker=@"…<truncated>";
+static NSTimeInterval const AACHostReportIntervalSeconds=20.0;
+static inline NSArray *AACHostReportTags(void){return @[@"incall",@"springboard",@"mobilephone",@"settings"];}
+static inline NSString *AACHostReportKey(NSString *tag,NSString *leaf){
+ return [AACHostReportKeyPrefix stringByAppendingFormat:@"%@.%@",tag?:@"unknown",leaf?:@"unknown"];
+}
+/* Real on-disk plist paths that would hold this domain. Only paths, never invented keys. */
+static inline NSArray *AACHostReportPlistPaths(void){
+ return @[[NSString stringWithFormat:@"/var/mobile/Library/Preferences/%@.plist",AACHostReportDomain],
+          [NSString stringWithFormat:@"/var/jb/var/mobile/Library/Preferences/%@.plist",AACHostReportDomain]];
+}
+static inline NSString *AACHostReportHeadBound(NSString *text,NSUInteger cap){
+ NSString *body=[text isKindOfClass:NSString.class]?text:@"";
+ if(body.length<=cap)return body;
+ return [[body substringToIndex:cap] stringByAppendingString:AACHostReportTruncatedMarker];
+}
+/* Keeps the NEWEST characters and marks the cut explicitly at the front. */
+static inline NSString *AACHostReportTailBound(NSString *text,NSUInteger cap){
+ NSString *body=[text isKindOfClass:NSString.class]?text:@"";
+ if(body.length<=cap)return body;
+ return [AACHostReportTruncatedMarker stringByAppendingFormat:@"(earlier %lu characters dropped)\n%@",(unsigned long)(body.length-cap),[body substringFromIndex:body.length-cap]];
+}
+static inline NSString *AACHostReportRecentLog(void){
+ NSMutableString *s=[NSMutableString string];
+ @try{
+  if(AACSharedRecentLines.count)for(NSString *line in AACSharedRecentLines)[s appendString:line];
+ }@catch(NSException *e){[s appendFormat:@"（读取本进程最近日志行失败：%@）\n",e.reason?:@"未知异常"];}
+ return s;
+}
+/* Publishes one host's report. facts may carry leaves (role, answerPaths, actionMethods,
+   accessorMethods, classification, display, hostTag) and every leaf is written as the
+   per-host key Host.<tag>.<leaf>. Returns REAL results, never an assumption: the CFPreferences
+   synchronize status, the byte sizes actually written and the key list. */
+static inline NSDictionary *AACHostReportPublish(NSString *tag,NSString *summary,NSDictionary *facts){
+ NSMutableDictionary *result=[NSMutableDictionary new];
+ @try{
+  NSString *t=[tag isKindOfClass:NSString.class]&&tag.length?tag:@"unknown";
+  NSString *summaryText=AACHostReportHeadBound(summary?:@"",AACHostReportSummaryBytes);
+  NSString *logText=AACHostReportTailBound(AACHostReportRecentLog(),AACHostReportLogBytes);
+  if(summaryText.length+logText.length>AACHostReportMaxBytes){
+   NSUInteger room=AACHostReportMaxBytes>logText.length?AACHostReportMaxBytes-logText.length:0;
+   summaryText=AACHostReportHeadBound(summaryText,room);
+  }
+  NSString *classification=nil;
+  @try{classification=[facts[@"classification"] isKindOfClass:NSString.class]?(NSString *)facts[@"classification"]:facts[@"classification"]?[NSString stringWithFormat:@"%@",facts[@"classification"]]:nil;}@catch(NSException *e){classification=nil;}
+  CFStringRef domain=(__bridge CFStringRef)AACHostReportDomain;
+  CFPreferencesAppSynchronize(domain);
+  NSMutableArray *leaves=[NSMutableArray arrayWithObjects:@"summary",@"log",@"updated",@"pid",nil];
+  CFPreferencesSetAppValue((__bridge CFStringRef)AACHostReportKey(t,@"summary"),(__bridge CFPropertyListRef)summaryText,domain);
+  CFPreferencesSetAppValue((__bridge CFStringRef)AACHostReportKey(t,@"log"),(__bridge CFPropertyListRef)logText,domain);
+  CFPreferencesSetAppValue((__bridge CFStringRef)AACHostReportKey(t,@"updated"),(__bridge CFPropertyListRef)NSDate.date,domain);
+  CFPreferencesSetAppValue((__bridge CFStringRef)AACHostReportKey(t,@"pid"),(__bridge CFPropertyListRef)@(NSProcessInfo.processInfo.processIdentifier),domain);
+  for(NSString *leaf in facts.allKeys){
+   @try{
+    if(![leaf isKindOfClass:NSString.class]||!leaf.length)continue;
+    id value=facts[leaf];
+    if(!value||[value isKindOfClass:NSNull.class])continue;
+    if([leaf isEqualToString:@"summary"]||[leaf isEqualToString:@"log"])continue;
+    CFPreferencesSetAppValue((__bridge CFStringRef)AACHostReportKey(t,leaf),(__bridge CFPropertyListRef)([value isKindOfClass:NSString.class]?(NSString *)value:[NSString stringWithFormat:@"%@",value]),domain);
+    [leaves addObject:leaf];
+   }@catch(NSException *e){}
+  }
+  if(classification.length)CFPreferencesSetAppValue((__bridge CFStringRef)AACHostReportKey(t,@"classification"),(__bridge CFPropertyListRef)classification,domain);
+  NSArray *old=CFBridgingRelease(CFPreferencesCopyAppValue((__bridge CFStringRef)AACHostReportHostsKey,domain));
+  NSMutableArray *hosts=[NSMutableArray new];
+  if([old isKindOfClass:NSArray.class])for(id entry in old)if([entry isKindOfClass:NSString.class]&&[entry length])[hosts addObject:entry];
+  if(![hosts containsObject:t])[hosts addObject:t];
+  CFPreferencesSetAppValue((__bridge CFStringRef)AACHostReportHostsKey,(__bridge CFPropertyListRef)hosts.copy,domain);
+  BOOL synced=CFPreferencesAppSynchronize(domain);
+  result[@"domain"]=AACHostReportDomain;result[@"tag"]=t;result[@"synced"]=@(synced);
+  result[@"summaryBytes"]=@(summaryText.length);result[@"logBytes"]=@(logText.length);
+  result[@"totalBytes"]=@(summaryText.length+logText.length);result[@"keys"]=leaves.copy;
+  result[@"boundBytes"]=@(AACHostReportMaxBytes);
+ }@catch(NSException *e){
+  result[@"synced"]=@NO;result[@"exception"]=e.reason?:@"未知异常";
+ }
+ return result;
+}
+/* 1.15.0: publish immediately and then every AACHostReportIntervalSeconds with a freshly
+   computed summary, so a host that spends a long time in a call still keeps its report fresh.
+   The block is retained by the timer's event handler; the timer is retained by the static. */
+static dispatch_source_t AACHostReportTimer=nil;
+static inline void AACHostReportEnablePeriodic(NSString *tag,NSString *(^summaryBlock)(void)){
+ @try{
+  AACHostReportPublish(tag,summaryBlock?summaryBlock():@"（无摘要）",nil);
+  if(AACHostReportTimer)return;
+  dispatch_source_t timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
+  if(!timer){AACSharedAppend(tag,@"host report timer creation failed; only the immediate publication happened");return;}
+  dispatch_source_set_timer(timer,dispatch_time(DISPATCH_TIME_NOW,(int64_t)(AACHostReportIntervalSeconds*NSEC_PER_SEC)),(uint64_t)(AACHostReportIntervalSeconds*NSEC_PER_SEC),5ull*NSEC_PER_SEC);
+  dispatch_source_set_event_handler(timer,^{
+   @try{NSDictionary *r=AACHostReportPublish(tag,summaryBlock?summaryBlock():@"（无摘要）",nil);
+    AACSharedRemember([NSString stringWithFormat:@"[%@] %@ host report re-published: domain=%@ synced=%@ summaryBytes=%@ logBytes=%@ totalBytes=%@ boundBytes=%@ keys=%@\n",NSDate.date,tag,r[@"domain"],r[@"synced"],r[@"summaryBytes"],r[@"logBytes"],r[@"totalBytes"],r[@"boundBytes"],r[@"keys"]]);
+   }@catch(NSException *e){}
+  });
+  AACHostReportTimer=timer;
+  dispatch_resume(timer);
+  AACSharedAppend(tag,[NSString stringWithFormat:@"host report periodic publication started every %.0f seconds, bounded at %lu characters per host (domain=%@)",AACHostReportIntervalSeconds,(unsigned long)AACHostReportMaxBytes,AACHostReportDomain]);
+ }@catch(NSException *e){AACSharedAppend(tag,[@"host report publication exception: " stringByAppendingString:e.reason?:@"unknown"]);}
+}
+/* Settings-side read-back. Reports the domain name, the real plist paths of that domain and
+   the readability of each one HERE, then every key/value that this process can actually read.
+   It never claims cross-process visibility: an empty read is reported as such, with the
+   honest alternatives. */
+static inline NSString *AACHostReportDump(void){
+ NSMutableString *s=[NSMutableString string];
+ @try{
+  NSFileManager *fm=[NSFileManager defaultManager];
+  [s appendFormat:@"# 宿主跨进程上报域（本插件自有域，不是任何 Apple 域）：%@\n",AACHostReportDomain];
+  [s appendFormat:@"# 每宿主键前缀：%@<tag>.  键：summary, log, updated, pid, role, answerPaths, actionMethods, accessorMethods, classification, display（按实际写入的键为准）\n",AACHostReportKeyPrefix];
+  [s appendFormat:@"# 每宿主载荷上限：%lu 字符（summary+最近日志行），超出即截断并写入标记 %@\n",(unsigned long)AACHostReportMaxBytes,AACHostReportTruncatedMarker];
+  for(NSString *path in AACHostReportPlistPaths()){
+   BOOL isDir=NO;BOOL exists=[fm fileExistsAtPath:path isDirectory:&isDir];
+   NSDictionary *attributes=[fm attributesOfItemAtPath:path error:nil];
+   unsigned long long size=[attributes[NSFileSize] isKindOfClass:NSNumber.class]?[attributes[NSFileSize] unsignedLongLongValue]:0;
+   [s appendFormat:@"# 域文件真实路径：%@ —— 本进程：%@%@\n",path,exists?@"存在":@"不存在/不可见",exists?[NSString stringWithFormat:@"，可读=%@，%llu 字节",[fm isReadableFileAtPath:path]?@"是":@"否",size]:@""];
+  }
+  CFStringRef domain=(__bridge CFStringRef)AACHostReportDomain;
+  CFPreferencesAppSynchronize(domain);
+  NSDictionary *all=CFBridgingRelease(CFPreferencesCopyMultiple(NULL,domain,kCFPreferencesCurrentUser,kCFPreferencesAnyHost));
+  NSUInteger count=[all isKindOfClass:NSDictionary.class]?all.count:0;
+  [s appendFormat:@"\n# 本进程从该域实际读到的键数：%lu\n",(unsigned long)count];
+  for(NSString *key in [[all isKindOfClass:NSDictionary.class]?all.allKeys:@[] sortedArrayUsingSelector:@selector(compare:)]){
+   id value=all[key];
+   if([key hasPrefix:AACHostReportKeyPrefix]){
+    if([value isKindOfClass:NSString.class]){
+     [s appendFormat:@"\n--- %@（%lu 字符）---\n%@\n",key,(unsigned long)[(NSString *)value length],value];
+    }else{
+     [s appendFormat:@"\n--- %@ ---\n%@\n",key,value];
+    }
+   }else{
+    [s appendFormat:@"\n%@ = %@\n",key,value];
+   }
+  }
+  if(!count)[s appendString:@"\n（本进程读不到任何键：该域可能从未被写入，也可能写入发生在另一个进程且对本进程不可见——跨进程可见性未被本版本验证，这里不因此断言任何宿主未注入。）\n"];
+  NSArray *hosts=nil;
+  if([all isKindOfClass:NSDictionary.class])hosts=all[AACHostReportHostsKey];
+  [s appendFormat:@"\n# 已上报宿主 tag（%@）：%@\n",AACHostReportHostsKey,[hosts isKindOfClass:NSArray.class]&&[(NSArray *)hosts count]?[hosts componentsJoinedByString:@", "]:@"本进程未读到"];
+  for(NSString *tag in AACHostReportTags()){
+   NSMutableString *broken=[NSMutableString string];
+   if([all isKindOfClass:NSDictionary.class]){
+    for(NSString *leaf in @[@"summary",@"log",@"updated",@"role",@"answerPaths",@"classification",@"display",@"pid"]){
+     NSString *key=AACHostReportKey(tag,leaf);
+     id value=all[key];
+     if(!value)continue;
+     if([value isKindOfClass:NSString.class])[broken appendFormat:@"\n  %@: %lu 字符%@",leaf,(unsigned long)[(NSString *)value length],[leaf isEqualToString:@"summary"]?[NSString stringWithFormat:@"\n%@",value]:@""];
+     else [broken appendFormat:@"\n  %@ = %@",leaf,value];
+    }
+   }
+   [s appendFormat:@"\n[%@] %@\n",tag,broken.length?broken:@"本进程未读到该宿主的任何键（≠ 该宿主未注入）"];
+  }
+ }@catch(NSException *e){[s appendFormat:@"读取失败：%@\n",e.reason?:@"未知异常"];}
+ return s;
+}
+/* Structured, honest per-host summary for the Settings/export list: how many keys this process
+   can actually read for each host, and the real plist path of the domain. */
+static inline NSArray *AACHostReportEntries(void){
+ NSMutableArray *out=[NSMutableArray new];
+ @try{
+  CFStringRef domain=(__bridge CFStringRef)AACHostReportDomain;
+  CFPreferencesAppSynchronize(domain);
+  NSDictionary *all=CFBridgingRelease(CFPreferencesCopyMultiple(NULL,domain,kCFPreferencesCurrentUser,kCFPreferencesAnyHost));
+  NSFileManager *fm=[NSFileManager defaultManager];
+  NSString *path=AACHostReportPlistPaths().firstObject;
+  NSDictionary *attributes=[fm attributesOfItemAtPath:path error:nil];
+  unsigned long long size=[attributes[NSFileSize] isKindOfClass:NSNumber.class]?[attributes[NSFileSize] unsignedLongLongValue]:0;
+  BOOL exists=[fm fileExistsAtPath:path];
+  [out addObject:@{@"label":[NSString stringWithFormat:@"域 %@（真实 plist 路径）",AACHostReportDomain],@"path":path,@"exists":@(exists),@"readable":@(exists&&[fm isReadableFileAtPath:path]),@"size":@(size),@"note":exists?@"域文件在本进程可见":@"域文件在本进程不可见（跨进程可见性未验证，不据此断言）"}];
+  for(NSString *tag in AACHostReportTags()){
+   NSUInteger keys=0;NSUInteger bytes=0;
+   if([all isKindOfClass:NSDictionary.class]){
+    for(NSString *key in all.allKeys)if([key hasPrefix:AACHostReportKey(tag,@"")]){keys++;id v=all[key];if([v isKindOfClass:NSString.class])bytes+=[(NSString *)v length];}
+   }
+   [out addObject:@{@"label":[NSString stringWithFormat:@"上报 %@（%lu 个键）",tag,(unsigned long)keys],@"path":[NSString stringWithFormat:@"CFPreferences 键（不是文件路径）：%@",AACHostReportKey(tag,@"summary")],@"exists":@(keys>0),@"readable":@(keys>0),@"size":@(bytes),@"note":keys?@"本进程可读到该宿主的键":@"本进程读不到该宿主的键（≠ 该宿主未注入）"}];
+  }
+ }@catch(NSException *e){[out addObject:@{@"label":@"上报域读取异常",@"path":AACHostReportDomain,@"exists":@NO,@"readable":@NO,@"size":@0,@"note":e.reason?:@"未知异常"}];}
+ return out;
 }

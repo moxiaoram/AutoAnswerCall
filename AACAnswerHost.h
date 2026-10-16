@@ -61,6 +61,37 @@
    this host. Every decision carries a durable reason string in AACSBRoleReason / Root
    reason= so the shared log states exactly why a host is OWNER or OBSERVER. */
 
+/* 1.15.0 DEVICE EVIDENCE (the user's real 1.14.0 SpringBoard shared log, 2026-10-16, quoted
+   verbatim because it is the authoritative record):
+     - 14:19:05 discovery: matchedClasses=150 hookedMethods=4 invokable=5 rejected=0 role=OWNER.
+     - the 4 HOOKED methods are ALL accessors, not answer actions:
+       -[INAnswerCallIntentResponse answeredCall] (0args+object),
+       -[_INPBAnswerCallIntentResponse hasAnsweredCall] (0args+BOOL),
+       -[_INPBAnswerCallIntentResponse answeredCall] (0args+object),
+       -[TPInComingCallUISnapshotViewController acceptButton] (0args+object).
+     - the 5 INVOKABLE candidates are setters/unrelated:
+       -[CXCallControllerHost listener:shouldAcceptNewConnection:],
+       -[INAnswerCallIntentResponse setAnsweredCall:],
+       -[_INPBAnswerCallIntentResponse setAnsweredCall:],
+       -[TUCallNotificationManager answeringMachineStreamTokenChangedForCall:],
+       -[TPInComingCallUISnapshotViewController setAcceptButton:].
+     - a real incoming call (UUID A8059645-...) was detected at 14:20:03; at 14:20:04 the host
+       demoted itself because InCallService broadcast an ownership claim, then at 14:20:21 the
+       takeover path submitted=yes, but immediately after:
+         hierarchy re-scan for the incoming-call UI object: windows=21 visited=1771 found=0
+         LOG-ONLY primary path in SpringBoard: no captured/rescanned UI object could answer.
+       The secondary public transaction failed with CallKit error 1 = unentitled (Apple: the app
+       lacks the entitlement; the tweak is not a CallKit provider). The call ended unanswered at
+       14:20:27.
+     - CONCLUSION: SpringBoard holds no real answer action, and no instance of the hooked classes
+       existed during the call (the snapshot view controller is not the live incoming-call UI).
+       InCallService DOES run the tweak and claimed ownership, but its own discovery/log files
+       live in its own container and are invisible to the Settings process, so we never saw what
+       it found.
+   1.15.0 RULE: answerPaths counts ACTION methods only (property accessors do not count, see
+   AACSBClassifySelector in AACSpringBoard.h), so a host whose only candidates are accessors is
+   LOG-ONLY here — never OWNER. InCallService stays the preferred owner; SpringBoard can only own
+   the answer if it really discovers an ACTION method. */
 typedef NS_ENUM(NSInteger,AACAnswerRole){
  AACAnswerRoleLogOnly=0, /* this host cannot answer at all in this build */
  AACAnswerRoleObserver=1,
@@ -243,8 +274,15 @@ static inline AACAnswerRole AACAnswerHostRoleForTag(NSString *tag,NSUInteger ans
   return AACAnswerRoleLogOnly;
  }
  if(answerPaths==0){
-  if(reason)*reason=[NSString stringWithFormat:@"%@ 发现的可挂钩/可调用接听路径=0：观察并记录，但退化为仅日志，不执行接听",host[@"display"]];
-  return AACAnswerRoleObserver;
+  /* 1.15.0 TASK 2: an accessor-only host is LOG-ONLY, never OWNER and not even OBSERVER-of-a-
+     shared-answer: it has no ACTION method, so nothing it could submit can act. The 1.14.0
+     device run reported role=OWNER from exactly this situation (matchedClasses=150 hookedMethods=4
+     invokable=5 rejected=0 role=OWNER, where all four hooked methods were property ACCESSORS:
+     -[INAnswerCallIntentResponse answeredCall], -[_INPBAnswerCallIntentResponse hasAnsweredCall],
+     -[_INPBAnswerCallIntentResponse answeredCall], -[TPInComingCallUISnapshotViewController
+     acceptButton]), and the takeover then submitted=yes into a host with nothing to act on. */
+  if(reason)*reason=[NSString stringWithFormat:@"%@ 的 ACTION 接听路径=0（1.15.0 起属性访问器 ACCESSOR 不计入 answerPaths）：本宿主仅日志 LOG-ONLY，不执行接听、不参与归属、也不会被接管逻辑当作可提交宿主",host[@"display"]];
+  return AACAnswerRoleLogOnly;
  }
  /* 1.14.0: only an EXPLICIT, fresh, higher-priority ownership claim demotes us. */
  for(NSDictionary *peer in AACAnswerHostsHigherPriority(tag)){
