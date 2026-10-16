@@ -72,8 +72,8 @@ print('dylib runtime discovery strings found: %d/%d'
       % (len(required_discovery) - len(missing_discovery), len(required_discovery)))
 if missing_discovery:
     sys.exit('artifact dylib missing discovery/hook strings: %r' % (missing_discovery,))
-# 1.12.0: per-host probe/pong/discovery names, the single-owner role table and the decoded
-# CallKit error meanings must exist in the dylib.
+# 1.12.0/1.13.0: per-host probe/pong/discovery names, the single-owner role table, the
+# per-method hook outcomes and the CORRECTED CallKit error meanings must exist in the dylib.
 required_host = ('com.autoanswer.call.probe.incall', 'com.autoanswer.call.pong.incall',
                  'aac-incall.discovery.txt',
                  'com.autoanswer.call.probe.springboard', 'com.autoanswer.call.pong.springboard',
@@ -87,7 +87,7 @@ required_host = ('com.autoanswer.call.probe.incall', 'com.autoanswer.call.pong.i
                  # 1.13.0: the corrected mapping — code 1 is unentitled, not unknownCallUUID
                  'code 1 = unentitled', 'code 4 = unknownCallUUID')
 missing_host = [item for item in required_host if not present(dylib, item)]
-print('dylib 1.12.0 host-table/single-owner strings found: %d/%d'
+print('dylib 1.13.0 host-table/single-owner/hook-strategy strings found: %d/%d'
       % (len(required_host) - len(missing_host), len(required_host)))
 if missing_host:
     sys.exit('artifact dylib missing host-table/single-owner strings: %r' % (missing_host,))
