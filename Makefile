@@ -8,7 +8,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME := AutoAnswerCall
 AutoAnswerCall_FILES := Tweak.x
 AutoAnswerCall_CFLAGS := -fobjc-arc
-PACKAGE_VERSION := 1.5.0
+PACKAGE_VERSION := 1.6.0
 AutoAnswerCall_FRAMEWORKS := Foundation UIKit AVFoundation CallKit
 
 include $(THEOS_MAKE_PATH)/tweak.mk

@@ -17,6 +17,7 @@ static BOOL AACWhitelisted(id call) {
  for(NSString *item in [list componentsSeparatedByString:@","]) { NSString *x=[item stringByReplacingOccurrencesOfString:@" " withString:@""]; if(x.length&&[number containsString:x])return YES; }
  return NO;
 }
+static void AACRecord(NSString *number, NSString *result) { NSUserDefaults *d=[[NSUserDefaults alloc] initWithSuiteName:@"com.autoanswer.call"]; NSDateFormatter *f=[NSDateFormatter new]; f.dateFormat=@"yyyy-MM-dd HH:mm:ss"; NSString *line=[NSString stringWithFormat:@"%@ 号码：%@ 结果：%@\n",[f stringFromDate:NSDate.date],number.length?number:@"未知",result]; NSString *old=[d stringForKey:@"CallRecords"]?:@""; NSString *all=[old stringByAppendingString:line]; if(all.length>12000)all=[all substringFromIndex:all.length-12000]; [d setObject:all forKey:@"CallRecords"]; [d synchronize]; AACLog(line); }
 static void AACPlayAudio(void) {
  NSDictionary *prefs=AACPrefs(); if(![prefs[@"PlayAudio"] boolValue]) { AACLog(@"音频播放已关闭"); return; }
  NSString *path=prefs[@"AudioPath"]; if(!path.length) path=[AACSharedDir() stringByAppendingPathComponent:@"answer-audio"]; if(!path.length || ![[NSFileManager defaultManager] fileExistsAtPath:path]) { AACLog(@"音频文件不存在"); return; } NSURL *url=[NSURL fileURLWithPath:path]; if(![[NSFileManager defaultManager] fileExistsAtPath:path])return;
@@ -25,14 +26,14 @@ static void AACPlayAudio(void) {
 %hook CTCall
 - (void)setCallState:(id)state {
  %orig;
- if(!AACEnabled()){AACLog(@"自动接听已关闭");return;} if(!AACIncomingState(state)){AACLog(@"状态未匹配");return;} if(AACWhitelisted(self)){AACLog(@"命中白名单，跳过接听");return;}
- AACLog(@"检测到符合条件的来电"); dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(AACDelay()*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
-  if(!AACEnabled())return; Class cls=objc_getClass("IOBluetoothHandsFreeDevice"); if(!cls){AACLog(@"蓝牙接听类不存在");return;} id i=nil; SEL shared=@selector(sharedInstance); if([cls respondsToSelector:shared])i=((id(*)(id,SEL))objc_msgSend)((id)cls,shared); SEL accept=@selector(acceptCall); if(i&&[i respondsToSelector:accept]){AACLog(@"调用 acceptCall");((void(*)(id,SEL))objc_msgSend)(i,accept); dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.5*NSEC_PER_SEC)),dispatch_get_main_queue(),^{AACPlayAudio();});}
+ if(!AACEnabled()){AACRecord(nil,@"未启用");return;} if(!AACIncomingState(state)){AACRecord(nil,@"状态不匹配");return;} if(AACWhitelisted(self)){AACRecord(nil,@"命中白名单，跳过");return;}
+ AACRecord(nil,@"检测到来电，等待延迟"); dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(AACDelay()*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+  if(!AACEnabled()){AACRecord(nil,@"延迟后已关闭");return;} Class cls=objc_getClass("IOBluetoothHandsFreeDevice"); if(!cls){AACRecord(nil,@"接听类不存在");return;} id i=nil; SEL shared=@selector(sharedInstance); if([cls respondsToSelector:shared])i=((id(*)(id,SEL))objc_msgSend)((id)cls,shared); SEL accept=@selector(acceptCall); if(i&&[i respondsToSelector:accept]){AACRecord(nil,@"调用 acceptCall");((void(*)(id,SEL))objc_msgSend)(i,accept); dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.5*NSEC_PER_SEC)),dispatch_get_main_queue(),^{AACPlayAudio();});}
  });
 }
 %end
 %hook CXCallObserver
-- (void)callChanged:(id)callUpdate {
+- (void)callObserver:(id)observer callChanged:(id)callUpdate {
  %orig;
  AACLog([NSString stringWithFormat:@"CXCallObserver回调，update类型=%@",NSStringFromClass([callUpdate class])]);
  @try {
