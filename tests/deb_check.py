@@ -1,4 +1,5 @@
-"""Verify the built deb ships the four configured bundle ids, every host module, the 1.16.0 chunked
+"""Verify the built deb ships the four configured bundle ids, every host module, the 1.17.0 live-button
+discovery/tap path (primary strategy) plus the 1.16.0 chunked
 Darwin notification-name message transport (plus the request-on-demand name), the 1.15.0 candidate
 classification (ACTION vs ACCESSOR; only ACTION counts as an answer path), the shared cross-process
 host-report domain (own CFPreferences domain, per-host bounded keys), the 1.14.0 ownership rule
@@ -138,8 +139,8 @@ print('dylib 1.15.0 host-report/classification strings found: %d/%d'
       % (len(required_115) - len(missing_115), len(required_115)))
 if missing_115:
     sys.exit('artifact dylib missing 1.15.0 host-report/classification strings: %r' % (missing_115,))
-required_ownership = ('Loaded 1.16.0 answer host',
-                      'AutoAnswerCall 1.16.0 answer-host runtime discovery run',
+required_ownership = ('Loaded 1.17.0 answer host',
+                      'AutoAnswerCall 1.17.0 answer-host runtime discovery run',
                       'takeover after idle higher-priority owner',
                       'takeover cancelled by plugin stop generation',
                       'takeover not needed: a connection was observed',
@@ -249,3 +250,63 @@ print('artifact bundle id check passed (filter has exactly the four configured i
       'type thunks + bounded NSInvocation candidates) with per-method outcome reporting, the '
       'corrected CallKit error mapping, the run-log export/share surface, and hardcodes no '
       'private class name)')
+
+# ---- 1.17.0 TASK 1/TASK 2: the live-button discovery + simulated tap path must be IN the artifact --
+# Device evidence that drove it (the user's 1.16.0 chunked read-back): all three hosts injected,
+# all three role=LOG-ONLY / answerPaths=0, because the real answer is a UI button whose response
+# goes through sendActionsForControlEvents: and whose method names never contain answer/accept.
+required_117 = ('# ===== BUTTON \u5019\u9009\uff081.17.0 \u6d3b\u4f53\u5c42\u7ea7\u53d1\u73b0 + \u6a21\u62df\u70b9\u51fb\uff1b\u4e0e\u540c\u6587\u4ef6\u91cc ACTION/ACCESSOR \u65b9\u6cd5\u5206\u7c7b\u76f8\u4e92\u72ec\u7acb\uff09 =====',
+                '# BUTTON_SCAN phase=%@ run=%lu nodesVisited=%lu candidates=%lu blacklisted=%lu live=%lu',
+                'BUTTON_CANDIDATE class=%@ id=%@ label=%@ value=%@ title=%@ frame=%@ tint=%@ bg=%@ green=%.2f redDominant=%@ leftPrimary=%@ siblingControls=%lu signal=%@ matched=%@ blacklisted=%@ tappable=%@',
+                '# BUTTON_CHOSEN %@',
+                '# BUTTON_TAP uuid=%@ host=%@ mechanism=%@ detail=%@ tapCount=%lu',
+                '# BUTTON_CONNECTED uuid=%@ connected=%@',
+                '# BUTTON_CONNECTED_OBSERVED connected=%@ uuid=%@',
+                'BUTTON_SIGNAL_PRIORITY',
+                'BUTTON_BLACKLIST',
+                'BUTTON_BOUNDS',
+                'accessibilityIdentifier',
+                'accessibilityLabel',
+                'backgroundImageForState:',
+                'sendActionsForControlEvents:UIControlEventTouchUpInside',
+                'sendActionsForControlEvents:UIControlEventTouchUpInside|UIControlEventTouchDown',
+                '(3) allTargets + actionsForTarget:forControlEvent: \u2192 NSInvocation\uff08\u9ed8\u8ba4\u53c2\u6570\uff09',
+                'com.autoanswer.call.buttontap.',
+                'greenLeftPrimary(\u5f31\u4fe1\u53f7)',
+                '\u62d2\u7edd/\u6302\u65ad\u9ed1\u540d\u5355',
+                '\u8be5\u901a\u8bdd UUID \u5df2\u7ecf\u7531\u672c\u5bbf\u4e3b\u70b9\u51fb\u8fc7\u4e00\u6b21',
+                '\u5df2\u89c2\u5bdf\u5230\u66f4\u9ad8\u4f18\u5148\u7ea7\u5bbf\u4e3b %@ \u771f\u7684\u70b9\u51fb\u8fc7\u63a5\u542c\u6309\u94ae',
+                'button path invoked; host=%@ mechanism=%@ detail=%@',
+                'button path: \u672c\u6b21\u6765\u7535\u91cc\u6ca1\u6709\u53d1\u73b0\u4efb\u4f55\u53ef\u70b9\u51fb\u7684\u63a5\u542c\u6309\u94ae\u5019\u9009',
+                'button tap not needed: a connection was already observed',
+                'button tap cancelled by plugin stop generation',
+                'button tap dropped: the call already ended',
+                'buttontap \u89c2\u5bdf\u6ce8\u518c\u5931\u8d25',
+                '\u63a5\u542c\u4e3b\u7b56\u7565\uff081.17.0\uff09\uff1d\u6d3b\u4f53\u6309\u94ae\u53d1\u73b0\uff0b\u6a21\u62df\u70b9\u51fb',
+                '\u672c\u5bbf\u4e3b\u53d1\u73b0 %lu \u4e2a\u53ef\u70b9\u51fb\u7684\u63a5\u542c\u6309\u94ae\u5019\u9009',
+                '保留但已知不足')
+missing_117 = [item for item in required_117 if not present(dylib, item)]
+print('dylib 1.17.0 button-discovery strings found: %d/%d'
+      % (len(required_117) - len(missing_117), len(required_117)))
+if missing_117:
+    sys.exit('artifact dylib missing 1.17.0 button-discovery strings: %r' % (missing_117,))
+# The button path may not tab anything destructive, and the retained method-name path must be
+# labelled insufficient (never presented as the plan).
+for literal in ('\u4fdd\u7559\u4f46\u5df2\u77e5\u4e0d\u8db3', '\u662f\u4e3b\u7b56\u7565'):
+    if not present(dylib, literal):
+        sys.exit('artifact dylib must label method-name keyword discovery as insufficient (%r)' % literal)
+# The Settings bundle must carry the new button page text (plist + binary) and the explicit note
+# that keyword discovery is retained but known insufficient, with the button path primary.
+root_plist = bundle_dir / 'Root.plist'
+if not root_plist.is_file():
+    sys.exit('artifact missing the staged Root.plist')
+root_text = root_plist.read_text(errors='replace')
+for literal in ('\u63a5\u542c\u6309\u94ae\u53d1\u73b0\uff081.17.0\uff0c\u4e3b\u7b56\u7565\uff09',
+                '\u65b9\u6cd5\u540d\u5173\u952e\u5b57\u53d1\u73b0\uff08ACTION/ACCESSOR \u5206\u7c7b\uff09\u4fdd\u7559\uff0c\u4f46\u5df2\u77e5\u4e0d\u8db3',
+                '\u6309\u94ae\u8def\u5f84\u662f\u4e3b\u7b56\u7565',
+                'accessibilityIdentifier'):
+    if literal not in root_text:
+        sys.exit('artifact Root.plist missing the 1.17.0 button page text %r' % literal)
+for literal in ('\u6d3b\u4f53\u6309\u94ae\u53d1\u73b0', '\u63a5\u542c\u6309\u94ae\u53d1\u73b0'):
+    if not present(settings, literal):
+        sys.exit('settings binary missing 1.17.0 button-discovery text %r' % literal)

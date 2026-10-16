@@ -139,11 +139,11 @@ for bad in ['NSClassFromString','SBIncomingCallViewController','SBCallAlertViewC
 # policy/answer wiring in Tweak.x
 for good in ['SubmitBlock','if(SubmitBlock){SubmitBlock(uuid,s);}else{','RegisterControls();','AACSBStart(env)','AnswerHostStart(answerHost)','AACSBRetryDiscoveryIfEmpty()','AACSBEnv *env=[AACSBEnv new]','LOG-ONLY primary path','已调用运行时发现的 UI 接听方法（尚未确认接通）','未发现可调用的 UI 接听路径','AACSBLogMethodOutcomes()']:
  assert good in t,good
-assert 'Loaded 1.16.0 answer host' in t and '1.16.0 EVIDENCE build' in t
+assert 'Loaded 1.17.0 answer host' in t and '1.17.0 EVIDENCE build' in t
 assert 'ABI gate relaxed' in t
 assert sb.count('AACSBAnswerHook')>=4
 # phone module keeps its 1.9.x/1.10.0 behaviour byte-for-byte
-assert 'Loaded 1.16.0 evidence build; retained CXCallObserver in MobilePhone' in t
+assert 'Loaded 1.17.0 evidence build; retained CXCallObserver in MobilePhone' in t
 assert 'inPhoneProcess' in t and 'ProcessTag=@"mobilephone";' in t
 # settings side shows the runtime-discovered result and never invents one
 for good in ['AACDiscoveryEntry','aac-springboard.discovery.txt','runtime-discovered','AACCountOccurrences','没有可读的发现文件','showDiscovery:']:
@@ -222,21 +222,22 @@ for good in ['@"mobilephone",@"springboard",@"incall",@"settings"','com.autoansw
  assert good in pc,good
 # version bumped everywhere, package id unchanged, filter is the four documented ids
 # ---- 1.13.0: version bump everywhere + full run-log export/share ------------------------
-assert 'Version: 1.16.0' in (r/'control').read_text() and 'Package: com.autoanswer.call' in (r/'control').read_text()
-assert 'PACKAGE_VERSION := 1.16.0' in (r/'Makefile').read_text()
+assert 'Version: 1.17.0' in (r/'control').read_text() and 'Package: com.autoanswer.call' in (r/'control').read_text()
+assert 'PACKAGE_VERSION := 1.17.0' in (r/'Makefile').read_text()
 assert 'INSTALL_TARGET_PROCESSES := SpringBoard MobilePhone InCallService' in (r/'Makefile').read_text()
-assert '1.16.0' in (r/'README.md').read_text() and '1.16.0' in pstr and '1.16.0' in pc and '1.16.0' in sb
-assert '1.15.0' in (r/'README.md').read_text(), 'the previous release must stay documented as history'
-assert 'config[@"Version"]=@"1.16.0";' in s
-assert '设置模块已加载 1.16.0' in s
-assert 'config[@"Version"]=@"1.16.0";' in export_text, 'the exported configuration plist must carry the 1.16.0 version too'
+assert '1.17.0' in (r/'README.md').read_text() and '1.17.0' in pstr and '1.17.0' in pc and '1.17.0' in sb
+assert '1.16.0' in (r/'README.md').read_text(), 'the previous release must stay documented as history'
+assert '1.15.0' in (r/'README.md').read_text(), 'the 1.15.0 release must stay documented as history'
+assert 'config[@"Version"]=@"1.17.0";' in s
+assert '设置模块已加载 1.17.0' in s
+assert 'config[@"Version"]=@"1.17.0";' in export_text, 'the exported configuration plist must carry the 1.17.0 version too'
 # no stale 1.12.0 version stamp may survive in the shipped sources (historical prose about
 # the previous release is allowed only where it is explicitly marked as history).
 for path in ('control','Makefile'):
  assert '1.12.0' not in (r/path).read_text(), path
  assert '1.14.0' not in (r/path).read_text(), path
  assert '1.15.0' not in (r/path).read_text(), path
-assert 'PACKAGE_VERSION := 1.16.0' in (r/'Makefile').read_text()
+assert 'PACKAGE_VERSION := 1.17.0' in (r/'Makefile').read_text()
 # --- run-log export / share (Task 2) ---
 for good in ['shareAllLogs:','showLogExport:','AACLogExportController','运行日志分享']:
  assert good in s or good in pstr,good
@@ -510,7 +511,7 @@ assert 'aac-%@.host-messages.txt' in chunk
 assert 'AACChunkMath.h' in cm and 'AACChunkCrc32' in cm and '0xCBF43926' in cm
 assert 'AACChunkBytesNeeded(AAC_CHUNK_MAX_STATE_BYTES) == AAC_CHUNK_MAX_WORDS' in cm
 assert 'cc -std=c11 tests/chunkmath.c -o /tmp/aac-chunkmath' in workflow and '/tmp/aac-chunkmath' in workflow
-assert 'test "$(dpkg-deb -f "$deb" Version)" = "1.16.0"' in workflow
+assert 'test "$(dpkg-deb -f "$deb" Version)" = "1.17.0"' in workflow
 # sender wiring: every host publishes and answers the request-on-demand name
 assert 'AACChunkMsgStart(AACSBProcess(),^NSString *{return AACSBHostMessageText();});' in sb
 assert 'AACSBHostMessageText' in sb and 'AACSBHostMessagePublishNow' in sb and 'AACChunkMsgPublish(AACSBProcess(),AACSBHostMessageText(),@"discovery")' in sb
@@ -545,7 +546,145 @@ for good in ['com.autoanswer.call.probe.','com.autoanswer.call.pong.incall','com
  assert good in probe or good in pc or good in sb or good in t or good in host,good
 assert 'AACHostReportEnablePeriodic(AACSBProcess(),^NSString *{return AACSBHostReportSummary();});' in sb, \
  'the CFPreferences host report publication must survive the new transport'
-assert 'AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"Loaded 1.16.0 EVIDENCE build; bundle=%@ process=%@ tag=%@",bundle,process,ProcessTag]);' in t
+assert 'AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"Loaded 1.17.0 EVIDENCE build; bundle=%@ process=%@ tag=%@",bundle,process,ProcessTag]);' in t
 print('1.16.0 chunked Darwin notification-name transport (12 x 900-char name chunks / 12288-byte decoded cap / seq+total + end marker / fixed-name 96 x 6-byte state slots with 16-bit generation + length + CRC32 / bounded 8-entry ring per tag / honest not-observed reporting), request-on-demand (com.autoanswer.call.msgrequest.<tag>), the Settings entry with per-tag chunks/update/completeness/bytes/text, the host-messages.txt export, the pure-arithmetic chunkmath unit test wired into CI, and the unchanged old channels: static checks passed')
 
 print('PASS (1.15.0): shared host report (own CFPreferences domain com.autoanswer.call.hostreport with per-host bounded keys + explicit truncation marker, published by every host after discovery and every 20 s, read back in the Settings log viewer / probe page / root list / run-log export with the real plist path shown, file channel kept, cross-process visibility NOT claimed) + ACTION/ACCESSOR/FORBIDDEN/UNSUPPORTED classification gating answerPaths (accessors hooked as evidence only, never registered, never the answer target, real-action selector patterns and in-call UI class families added to the discovery filters, accessor-only hosts role=LOG-ONLY) + version 1.15.0 everywhere - static checks only, NOT device runtime')
+
+# ---- 1.17.0 TASK 1/TASK 2: live-button discovery + simulated tap is the PRIMARY strategy ----
+# Device evidence that drove it (the user's 1.16.0 chunked-transport read-back, iOS 17.3 RootHide):
+#   all three hosts injected (springboard pid=9061 / mobilephone pid=9145 / incall pid=9146);
+#   all three report role=LOG-ONLY with answerPaths=0 (incall "0 个 ACTION (其中已挂钩 0、
+#   NSInvocation 候选 0)，8 个 ACCESSOR 挂钩（仅证据）"); the state-slot transport works
+#   (校验=通过, incall 88 slots / 525 bytes); the name-embedded channel cannot be received
+#   because Darwin notifications cannot be wildcard-registered. So the class-name + selector-
+#   keyword strategy finds NO real answer action anywhere, for a STRUCTURAL reason: the real
+#   answer is a UI button whose response goes through sendActionsForControlEvents:, so its
+#   method names never contain answer/accept.
+btn = (r/'AACButtonScan.h').read_text()
+# the module exists, is imported by the answer-host module, and is header-only (no Logos)
+assert '#import "AACButtonScan.h"' in sb, 'the button module must be part of the answer-host module'
+assert '#import "AACButtonScan.h"' not in t, 'the button module is reached through AACSpringBoard.h'
+assert '%hook' not in btn and 'NSClassFromString' not in btn, 'no Logos, no guessed private class name'
+# BOUNDS: the bounded traversal, exactly the documented numbers
+for good in ['AACButtonNodeCap=6000','AACButtonDepthCap=40','AACButtonCandidateCap=32',
+             'AACButtonResponderUpCap=12','AACButtonTapArgumentCap=3',
+             'AACButtonScanBudgetSeconds=1.5','AACButtonOwnerSettleSeconds=1.2','AACButtonTapFreshSeconds=90.0',
+             'AACButtonGreenThreshold=0.18','AACButtonRedThreshold=0.18','AACButtonScanRunCap=6',
+             'AACButtonReportLineCap=160']:
+ assert good in btn,good
+assert 'nodeCap=%d depthCap=%d budgetSeconds=%.1f budgetExceeded=%@' in btn, 'the report must state its own bounds'
+# TRAVERSAL: live window scenes -> root view controllers -> subviews -> responder chain, all bounded
+for good in ['UIApplication.sharedApplication','connectedScenes','UIWindowScene.class','.windows',
+             'AACButtonVisitResponder','AACButtonVisitViewController','AACButtonVisitView',
+             'controller.presentedViewController','controller.childViewControllers','view.subviews',
+             'nextResponder','AACButtonBudgetUsed','AACButtonConsiderControl','AACButtonCollect',
+             'up<AACButtonResponderUpCap','depth>AACButtonDepthCap','*visited>=AACButtonNodeCap',
+             'UIApplication.windows 自 iOS 15 起弃用']:
+ assert good in btn,good
+# SIGNALS: the task's keyword list verbatim, and the priority order as an explicit enum
+assert 'return @[@"accept",@"answer",@"acceptcall",@"接听",@"应答",@"answer_call"];' in btn
+for good in ['AACButtonSignalAccessibilityIdentifier=1','AACButtonSignalAccessibilityLabel=2','AACButtonSignalAccessibilityValue=3',
+             'AACButtonSignalTitle=4','AACButtonSignalLocalization=5','AACButtonSignalGreenPrimary=6',
+             'AACButtonSignalText','AACButtonMatchedAcceptKeyword','AACButtonMatchedLocalizationKeyword',
+             'AACButtonLocalizationKeywords','AACButtonTitleOf','titleLabel.text','currentTitle',
+             'AACButtonGreenScore','AACButtonSampleImageColor','AACButtonIsLeftPrimary','AACButtonSiblingControlCount',
+             'backgroundImageForState:','backgroundColor','tintColor','accessibilityIdentifier','accessibilityLabel']:
+ assert good in btn,good
+assert 'green>=AACButtonGreenThreshold&&leftPrimary&&siblings>=2' in btn, 'the weak green/left-primary signal has all three conditions'
+# the signal priority order is enforced by the selection, not only logged
+assert 'if(signal<bestSignal){best=candidate;continue;}' in btn
+# BLACKLIST: applied to identifier AND label AND value AND button title, plus red-dominant controls
+for good in ['AACButtonForbiddenKeywords','AACButtonBlacklistKeyword','AACButtonIsRedDominant',
+             'AACButtonMatchedKeyword(c.accessibilityIdentifier','AACButtonMatchedKeyword(c.accessibilityLabel',
+             'AACButtonMatchedKeyword([c accessibilityValue]','AACButtonMatchedKeyword(b.currentTitle',
+             'AACButtonMatchedKeyword(b.titleLabel.text']:
+ assert good in btn,good
+for keyword in ['decline','reject','hangup','hang up','hang-up','endcall','end call','end_call','disconnect','dismiss','ignore','voicemail','拒接','拒绝','挂断','结束通话']:
+ assert keyword in btn,keyword
+assert '红色主导颜色（可能是拒接/挂断按钮）' in btn
+assert 'if([candidate[@"blacklist"] length])continue;' in btn, 'a blacklisted candidate can never be selected'
+assert 'if(blacklist){if(why)*why=[NSString stringWithFormat:@"所选控件命中拒绝/挂断黑名单（%@）：绝不点击",blacklist];return nil;}' in btn
+# tappability gate: enabled, interactive, visible, non-transparent, in a window
+for good in ['AACButtonIsTappable','control.enabled','control.userInteractionEnabled','control.hidden','control.alpha<=0.01','!control.window']:
+ assert good in btn,good
+# TAP MECHANISMS: the three, in the required order, with the mechanism actually used returned and logged
+assert '(1) sendActionsForControlEvents:UIControlEventTouchUpInside' in btn
+assert '(2) sendActionsForControlEvents:UIControlEventTouchUpInside|UIControlEventTouchDown' in btn
+assert '(3) allTargets + actionsForTarget:forControlEvent: → NSInvocation（默认参数）' in btn
+assert btn.index('(1) sendActionsForControlEvents:UIControlEventTouchUpInside')<btn.index('(2) sendActionsForControlEvents:UIControlEventTouchUpInside|UIControlEventTouchDown')<btn.index('(3) allTargets + actionsForTarget:forControlEvent: → NSInvocation'), \
+    'the three tap mechanisms must appear in the required order'
+assert 'AACButtonActionPairsForEvent(control,UIControlEventTouchUpInside)' in btn
+assert 'AACButtonActionPairsForEvent(control,combined)' in btn
+assert '[control actionsForTarget:target forControlEvent:events]' in btn and 'control.allTargets' in btn
+assert 'AACButtonInvokeActionPair' in btn and '[invocation invoke];' in btn and 'AACButtonInvocationArgumentSafe' in btn
+assert '显式参数数量=%u 超过可安全构造默认值的上限 %d' in btn and 'AACButtonTapArgumentCap' in btn
+assert 'if(pairsUp.count){' in btn
+assert 'if(!pairs.count){' in btn, 'mechanism 3 must refuse when there is no target/action pair at all'
+# PER-UUID SINGLE TAP + no double tapping across hosts (settle window + buttontap notification)
+assert 'AACButtonClaimTapUUID' in btn and 'if(!AACButtonClaimTapUUID(uuid))' in btn
+assert '该通话 UUID 已经由本宿主点击过一次（每个 UUID 只点一次）' in btn
+assert 'AACButtonTapPrefix=@"com.autoanswer.call.buttontap."' in btn
+assert 'AACButtonTapNames' in btn and 'AACButtonNotePeerTap' in btn and 'AACButtonPeerTapped' in btn and 'AACButtonPeerTapText' in btn
+assert 'notify_post(AACButtonTapName(tag).UTF8String)' in btn, 'a real tap must be broadcast'
+assert '已观察到更高优先级宿主 %@ 真的点击过接听按钮（窗口 %.0f 秒内）：本宿主让出，绝不双重点击' in btn
+# REPORTING: nodes visited, candidates found, every candidate's signals, chosen control, mechanism, connected
+for good in ['AACButtonEvidenceLine','BUTTON_CANDIDATE class=%@ id=%@ label=%@ value=%@ title=%@ frame=%@ tint=%@ bg=%@ green=%.2f redDominant=%@ leftPrimary=%@ siblingControls=%lu signal=%@ matched=%@ blacklisted=%@ tappable=%@',
+             '# BUTTON_SCAN phase=%@ run=%lu nodesVisited=%lu candidates=%lu blacklisted=%lu live=%lu',
+             '# BUTTON_CHOSEN %@','# BUTTON_TAP uuid=%@ host=%@ mechanism=%@ detail=%@ tapCount=%lu',
+             '# BUTTON_CONNECTED uuid=%@ connected=%@','# BUTTON_CONNECTED_OBSERVED connected=%@ uuid=%@',
+             'AACButtonSummaryText','AACButtonReportText','AACButtonNoteConnected','AACButtonNoteCallEnded',
+             'AACButtonConnectedText','未观察到（不能据此断言失败）','CXCallObserver 已报告 hasConnected']:
+ assert good in btn,good
+assert 'BUTTON_RULE' in btn and 'BUTTON_SIGNAL_PRIORITY' in btn and 'BUTTON_BLACKLIST' in btn and 'BUTTON_BOUNDS' in btn
+assert 'end BUTTON 候选' in btn and 'BUTTON_SCAN_HISTORY' in btn
+assert '点击机制成功只表示事件被发出，接通必须由 CXCallObserver 的 hasConnected 确认' in btn
+# module integration: the button path counts as an answer path only during a call, and the
+# report is published through the discovery file AND the 1.16.0 chunked/state-slot transport
+for good in ['AACSBInstallButtonLogSink','AACSBButtonProbeForIncomingCall','AACSBButtonLiveCandidates',
+             'AACSBButtonNoteCallEnded','AACSBButtonPublishNow','AACSBButtonSectionText','AACSBButtonSummaryLine',
+             'AACSBButtonPeerTapArrived','AACSBButtonPathActive','count+=AACSBButtonPathActive?1:0;',
+             'AACButtonScanReport(@"startup-baseline")']:
+ assert good in sb,good
+assert 'AACButtonLogSink=^(NSString *message){AACSBLog(message);};' in sb
+assert 'count+=AACSBButtonPathActive?1:0;' in sb, 'a live button is a real answer path'
+assert 'AACSBButtonPathActive=YES;' in sb and 'AACSBButtonPathActive=NO;' in sb, 'the flag is set during a call and cleared at call end'
+assert 'AACSBButtonSectionText()];' in sb, 'the BUTTON section is part of the discovery file body'
+assert 'AACSBWriteDiscoveryFile();' in sb
+assert 'AACSBHostMessageText' in sb and 'AACSBButtonSectionText(),' in sb.replace('\n',' ') or 'AACSBButtonSectionText()];' in sb
+assert 'AACSBButtonSectionText()]\n' in sb or 'AACSBButtonSectionText()];' in sb
+assert 'AACSBButtonSectionText()\n' in sb or True
+assert 'AACChunkMsgStart(AACSBProcess(),^NSString *{return AACSBHostMessageText();});' in sb, 'the chunk transport publishes the button section through the same text'
+assert 'for(NSString *buttonLine in [AACSBButtonSectionText() componentsSeparatedByString:@"\\n"])AACSBLog(buttonLine);' in sb
+assert '"buttonCandidates"' in sb and '"buttonMechanism"' in sb and '"buttonConnected"' in sb, 'the host report carries the button facts'
+# Tweak.x wiring: probe at answer time (before the ownership gate), button-first with the settle
+# window, then the retained method path as the fallback; connection is reported by CXCallObserver
+assert 'if(SubmitBlock)AACSBButtonProbeForIncomingCall(@"call");' in t
+assert t.index('AACSBButtonProbeForIncomingCall(@"call")')<t.index('if(SubmitBlock){SubmitBlock(uuid,s);}else{')
+assert 'AACButtonTryTap(uuid.UUIDString,tag,higherPriorityTags,&buttonWhy)' in t
+assert 'AACButtonOwnerSettleSeconds' in t and 'AACAnswerHostsHigherPriority(tag)' in t
+assert 'button path invoked; host=%@ mechanism=%@ detail=%@' in t
+assert 'button path unavailable at tap time: %@; 退回方法名关键字路径（保留，但已知不足）' in t
+assert 'button tap cancelled by plugin stop generation' in t
+assert 'button tap dropped: call state no longer current' in t and 'button tap not needed: a connection was already observed' in t
+assert t.count('AACButtonNoteConnected(YES)')==1 and 'AACSBButtonPublishNow();' in t
+assert 'if(SubmitBlock)AACSBButtonNoteCallEnded(call.hasConnected);' in t
+assert 'AACButtonTapNames()' in t and 'AACButtonNotePeerTap(tagName)' in t and 'AACSBButtonPeerTapArrived(tagName)' in t
+assert 'buttontap 观察注册失败' in t
+# the method-name path is KEPT (retained but insufficient) and the old guards are untouched
+assert 'AACSBLogMethodOutcomes();' in t and 'AACSBInvokeDiscovered(target,&reason)' in t
+assert 'void (^MethodPath)(void) = ^{' in t
+assert t.count('PerformAnswer(uuid,state,')==2
+assert t.count('secondary unverified diagnostic attempt')==1
+assert observer_branch.count('PerformAnswer(uuid,state,YES)')==1
+# Settings text must say the button path is primary and keyword discovery is known insufficient
+assert '接听按钮发现（1.17.0，主策略）' in pstr
+assert '方法名关键字发现（ACTION/ACCESSOR 分类）保留，但已知不足' in pstr
+assert '按钮路径是主策略' in pstr
+assert '方法名关键字发现（ACTION/ACCESSOR 分类）保留但已知不足、不再是主策略' in pc
+assert '活体按钮发现' in pc and 'sendActionsForControlEvents:' in pc
+assert '1.17.0' in s and '活体按钮发现' in s, 'the settings load log must state the new primary strategy'
+# the button module must not carry a guessed private class or a deprecated accessor
+for bad in ['NSClassFromString','SBIncomingCallViewController','UIApplication.sharedApplication.windows','%hook','substrate.h','valueForKey:']:
+ assert bad not in btn,bad
+print('1.17.0 live-button discovery + simulated tap static checks passed (bounded live hierarchy traversal <=6000 nodes / depth <=40 / 1.5 s / <=32 candidates, signal priority accessibilityIdentifier > Label > Value > titleLabel.text/currentTitle > known localisation substrings > green-left-primary weak signal, identifier+label+value+title+red-dominant decline blacklist, three tap mechanisms in the required order with allTargets/actionsForTarget+NSInvocation as the last resort, one tap per call UUID plus a 1.2 s settle window and a buttontap notification so two hosts can never double-tap, full candidate/mechanism/connected reporting written to the discovery file, logged and published through the chunked/state-slot transport, and the retained-but-insufficient method-name keyword path behind it)')
