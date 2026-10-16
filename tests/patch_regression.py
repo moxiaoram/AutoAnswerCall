@@ -14,7 +14,7 @@ checks={
  'reject malformed header length':'提交头长度 %lu 非法' in s,
  'reject concurrent header change':'confirmState!=hdrState' in s,
  'verify payload channel and host tag':'信封 tag/channel 与所读取的宿主状态槽不匹配' in s,
- 'verify envelope piece count':'piecesField.unsignedIntegerValue!=expectedPieces' in s,
+ 'verify envelope piece count':'(unsigned)piecesField.integerValue!=expectedPieces' in s,
  'avoid duplicate ring entries':'if(![last[@"gen"] isEqual:@(gen)]' in s,
  'do not sum rounds indefinitely':'if(seq==1){[store[@"seqs"] removeAllObjects]' in s,
  'import selection warnings are not import failures':'NSMutableArray *warnings=[NSMutableArray new]' in a and 'warnings addObject:' in a,
