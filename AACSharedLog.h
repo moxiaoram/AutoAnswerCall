@@ -1,5 +1,5 @@
 #import <Foundation/Foundation.h>
-/* Shared-log EVIDENCE channel (1.10.0).
+/* Shared-log EVIDENCE channel (1.11.0): also carries the per-node discovery text file.
    Every injected process (MobilePhone, SpringBoard) and the Settings process use this
    header. No cross-process writable path is verified on RootHide, so this file does
    NOT claim one: it tries a list of real absolute candidate paths in order, keeps the
@@ -139,7 +139,7 @@ static inline NSArray *AACSharedViewerEntries(NSArray *processes){
   BOOL writable=exists&&isDir&&[fm isWritableFileAtPath:dir];
   [out addObject:@{@"label":candidate[@"label"],@"kind":@"dir",@"path":dir,@"exists":@(exists&&isDir),@"writable":@(writable),@"readable":@(exists&&isDir),@"size":@0,@"note":(exists&&isDir)?@"目录存在":@"目录不存在"}];
   for(NSString *process in processes){
-   for(NSString *suffix in @[@"log",@"txt"]){
+   for(NSString *suffix in @[@"log",@"txt",@"discovery.txt"]){
     NSString *path=[dir stringByAppendingPathComponent:AACSharedFileLeaf(process,suffix)];
     BOOL file=NO;[fm fileExistsAtPath:path isDirectory:&file];
     NSDictionary *attributes=[fm attributesOfItemAtPath:path error:nil];

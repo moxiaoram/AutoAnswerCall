@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <notify.h>
 #import "AACSharedLog.h"
-/* Per-process Darwin probe (1.10.0, evidence only).
+/* Per-process Darwin probe (1.11.0, evidence only).
    Darwin notifications carry no payload, so each process uses its OWN notification
    name (com.autoanswer.call.probe.<process>) and additionally writes a companion
    record into an own-domain CFPreferences key whose cross-process visibility is NOT

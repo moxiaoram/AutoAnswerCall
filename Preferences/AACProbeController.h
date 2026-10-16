@@ -3,7 +3,7 @@
 #import <notify.h>
 #import "../AACSharedLog.h"
 #import "AACLogViewerController.h"
-/* 进程探测 / 环境清单 (1.10.0, evidence only).
+/* 进程探测 / 环境清单 (1.11.0, evidence only).
    Darwin notifications carry no payload, so this page registers one observer per
    process notification name and timestamps arrivals. Nothing on this page claims that
    the phone module was injected, that answering works, or that any cross-process path
@@ -21,6 +21,18 @@ static inline NSArray *AACProbeWatchedProcesses(void){return @[@"mobilephone",@"
 /* Must match AACProbePrefix in ../AACProbe.h; kept as a literal so the Settings
    translation unit does not need the injected-process header. */
 static inline NSString *AACProbeNameText(NSString *process){return [@"com.autoanswer.call.probe." stringByAppendingString:process];}
+/* The SpringBoard module writes its runtime-discovered class/method list to
+   aac-springboard.discovery.txt. This page only READS that file; if it is unreadable the
+   page says so instead of showing an invented result. */
+static inline NSDictionary *AACDiscoveryEntry(void){
+ for(NSDictionary *entry in AACSharedViewerEntries(@[@"springboard"]))if([entry[@"kind"] isEqualToString:@"file"]&&[entry[@"process"] isEqualToString:@"springboard"]&&[entry[@"path"] hasSuffix:@"aac-springboard.discovery.txt"])return entry;
+ return nil;
+}
+static inline NSUInteger AACCountOccurrences(NSString *needle,NSString *haystack){
+ if(!needle.length||!haystack.length)return 0;NSUInteger count=0,start=0;
+ while(start<haystack.length){NSRange r=[haystack rangeOfString:needle options:0 range:NSMakeRange(start,haystack.length-start)];if(r.location==NSNotFound)break;count++;start=r.location+r.length;}
+ return count;
+}
 @implementation AACProbeController
 - (instancetype)initWithStyle:(UITableViewStyle)style{
  if((self=[super initWithStyle:style])){
@@ -43,6 +55,10 @@ static inline NSString *AACProbeNameText(NSString *process){return [@"com.autoan
  /* Legacy 1.9.x ping/pong probe is kept so the old behaviour is unchanged. */
  int pong=0;
  if(notify_register_dispatch("com.autoanswer.call.pong",&pong,dispatch_get_main_queue(),^(int t){[weakSelf record:@"mobilephone-legacy-pong"];})==NOTIFY_STATUS_OK)[self.tokens addObject:@(pong)];
+ /* 1.11.0: the SpringBoard module answers the same ping with its own pong name, so this
+    page can show which host actually responded without pretending it was the phone app. */
+ int sbPong=0;
+ if(notify_register_dispatch("com.autoanswer.call.pong.springboard",&sbPong,dispatch_get_main_queue(),^(int t){[weakSelf record:@"springboard-pong"];})==NOTIFY_STATUS_OK)[self.tokens addObject:@(sbPong)];
  [self.tableView reloadData];
 }
 - (void)dealloc{for(NSNumber *token in _tokens)notify_cancel(token.intValue);}
@@ -83,18 +99,21 @@ static inline NSString *AACProbeNameText(NSString *process){return [@"com.autoan
  if(section==0)return AACProbeWatchedProcesses().count+1;
  if(section==1)return 2;
  if(section==2)return AACSharedViewerEntries(@[@"mobilephone",@"springboard",@"settings"]).count;
+ if(section==3)return 2;
  return 1;
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section{
  if(section==0)return [NSString stringWithFormat:@"本页打开后收到的进程通知（%@ 起）",[self timeText:self.opened]];
  if(section==1)return @"模块伴随记录与回环测试";
  if(section==2)return @"共享日志候选路径（逐路径结果）";
+ if(section==3)return @"SpringBoard 运行时发现/挂钩结果（runtime-discovered，非硬编码）";
  return @"说明";
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section{
  if(section==0)return @"每个进程使用独立通知名 com.autoanswer.call.probe.<进程>；Darwin 通知无载荷，所以这里只按名称区分进程。未到达只表示本页没观察到，不等于该进程未注入。";
  if(section==2)return @"这是设置进程自己的读写结果；另一个进程中同一路径是否可写必须看该进程写入的日志，不能由此推断跨进程可见。";
- if(section==3)return @"本页不能证明接听可用；1.10.0 只采集注入与日志通道证据，未做设备验证。";
+ if(section==3)return @"这是 SpringBoard 模块在设备上枚举 objc_getClassList 得到的真实类/方法名，构建不保证这些私有类在 iOS 17.3 存在。若显示 0 个已挂钩方法，接听路径在当前设备上只能退化为仅日志，插件不会谎报接听成功。";
+ if(section==4)return @"本页不能证明接听可用；1.11.0 的 SpringBoard 接听路径未在设备验证，依赖运行时到底存在哪个私有 UI 类。";
  return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath{
@@ -106,9 +125,9 @@ static inline NSString *AACProbeNameText(NSString *process){return [@"com.autoan
    cell.detailTextLabel.text=dates.count?[NSString stringWithFormat:@"到达 %lu 次；最近 %@",(unsigned long)dates.count,[self timeText:dates.lastObject]]:@"本次未观察到到达；不代表该进程未注入";
    cell.accessoryType=dates.count?UITableViewCellAccessoryCheckmark:UITableViewCellAccessoryNone;
   }else{
-   NSArray *legacy=self.arrivals[@"mobilephone-legacy-pong"];
-   cell.textLabel.text=@"旧版 ping/pong（com.autoanswer.call.pong）";
-   cell.detailTextLabel.text=legacy.count?[NSString stringWithFormat:@"到达 %lu 次；最近 %@",(unsigned long)legacy.count,[self timeText:legacy.lastObject]]:@"本次未观察到 pong；可能未注入、进程休眠或通知不可达";
+   NSArray *legacy=self.arrivals[@"mobilephone-legacy-pong"];NSArray *sbArrivals=self.arrivals[@"springboard-pong"];
+   cell.textLabel.text=@"ping 应答：电话旧通道 / SpringBoard 1.11.0";
+   cell.detailTextLabel.text=[NSString stringWithFormat:@"MobilePhone pong=%lu 次；SpringBoard pong=%lu 次；最近 %@（未到达只表示本页未观察到，不等于该进程未注入）",(unsigned long)legacy.count,(unsigned long)sbArrivals.count,sbArrivals.count?[self timeText:sbArrivals.lastObject]:(legacy.count?[self timeText:legacy.lastObject]:@"无")];
   }
  }else if(indexPath.section==1){
   if(indexPath.row==0){cell.textLabel.text=@"本机回环测试（发送并等待自身通知）";cell.detailTextLabel.text=self.loopbackStatus;}
@@ -120,6 +139,18 @@ static inline NSString *AACProbeNameText(NSString *process){return [@"com.autoan
   if([entry[@"kind"] isEqualToString:@"dir"])cell.detailTextLabel.text=[NSString stringWithFormat:@"目录：%@；本进程可写=%@\n%@",exists?@"存在":@"不存在",[entry[@"writable"] boolValue]?@"是":@"否",entry[@"path"]];
   else cell.detailTextLabel.text=[NSString stringWithFormat:@"%@；可读=%@；%llu 字节\n%@",exists?@"文件存在":@"未创建",readable?@"是":@"否",[entry[@"size"] unsignedLongLongValue],entry[@"path"]];
   cell.accessoryType=readable?UITableViewCellAccessoryDisclosureIndicator:UITableViewCellAccessoryNone;
+ }else if(indexPath.section==3){
+  NSDictionary *entry=AACDiscoveryEntry();NSError *error=nil;NSString *text=entry?AACSharedReadFile(entry[@"path"],&error):nil;
+  NSUInteger hooked=AACCountOccurrences(@"  HOOKED ",text);
+  if(indexPath.row==0){
+   cell.textLabel.text=@"发现摘要（runtime-discovered）";
+   if(!text.length)cell.detailTextLabel.text=@"没有可读的发现文件 aac-springboard.discovery.txt：SpringBoard 模块可能未注入或尚未枚举；这不代表接听可用。";
+   else cell.detailTextLabel.text=[NSString stringWithFormat:@"已挂钩方法=%lu；发现文件 %llu 字节\n%@",(unsigned long)hooked,[entry[@"size"] unsignedLongLongValue],entry[@"path"]];
+  }else{
+   cell.textLabel.text=@"打开完整发现清单（类/方法/跳过原因）";
+   cell.detailTextLabel.text=text.length?@"点击查看 SpringBoard 实际枚举到的类与已挂钩方法，以及每个被安全跳过的方法名与原因。":@"暂无可读内容";
+   cell.accessoryType=text.length?UITableViewCellAccessoryDisclosureIndicator:UITableViewCellAccessoryNone;
+  }
  }else{
   cell.textLabel.text=@"点击一行可重新探测；这里不会伪造成功状态";
   cell.detailTextLabel.text=@"未观察到到达时，请结合共享日志查看器与电话诊断判断，不要据此推断接听可用。";
@@ -128,7 +159,8 @@ static inline NSString *AACProbeNameText(NSString *process){return [@"com.autoan
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath{
  [tableView deselectRowAtIndexPath:indexPath animated:YES];
- if(indexPath.section==0||indexPath.section==3){[self refresh];return;}
+ if(indexPath.section==0||indexPath.section==4){[self refresh];return;}
+ if(indexPath.section==3){if(indexPath.row==0){[self.tableView reloadData];return;}NSDictionary *found=AACDiscoveryEntry();NSError *error=nil;NSString *text=found?AACSharedReadFile(found[@"path"],&error):nil;AACLogText(@"SpringBoard 运行时发现清单",text?:[NSString stringWithFormat:@"读取失败或文件不存在：%@",error.localizedDescription?:@"aac-springboard.discovery.txt 未创建"],self.navigationController);return;}
  if(indexPath.section==1){if(indexPath.row==0)[self loopback];else AACLogText(@"伴随键记录",AACSharedProbeCompanionDump(),self.navigationController);return;}
  NSDictionary *entry=AACSharedViewerEntries(@[@"mobilephone",@"springboard",@"settings"])[indexPath.row];
  if(![entry[@"readable"] boolValue])return;

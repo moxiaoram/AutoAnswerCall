@@ -73,4 +73,41 @@ for text in (shared,probe,inv):
  assert 'com.apple.' not in text
  assert 'AXSettings' not in text
 assert 'com.autoanswer.call.sharelog' in shared and 'com.autoanswer.call.probe' in shared
-print('PASS: transactions, mode2 exclusions, finite seconds, stop generations, bounded multiselect import, library schema/migration/delete guards, native accessor ABI guards, 1.10.0 evidence channel (two-bundle filter, per-process probe, bounded SB inventory, per-path log reporting) - static checks only, NOT device runtime')
+
+# ---- 1.11.0: SpringBoard runtime discovery + dynamic hook answer path ----
+sb=(r/'AACSpringBoard.h').read_text()
+pstr=(r/'Preferences/Resources/Root.plist').read_text()
+for good in ['objc_getClassList','class_copyMethodList','method_getImplementation','method_setImplementation','method_getNumberOfArguments','method_getReturnType','AACSBAnswerHook','AACSBOriginalFor','AACSBInvoking','AACSBDepth','AACSBWeakTarget','AACSBStrongTarget','AACSBRescan','AACSBInvokeDiscovered','AACSBHookedIMPs','AACSBHookCap=24','AACSBClassCap=400','AACSBSelectorCap=12','AACSBRetryDiscoveryIfEmpty','AACSBWriteDiscoveryFile','AACSBStart','runtime-discovered','discovery.txt','仅日志','AACSBRecord','AACSBSelectorMatches']:
+ assert good in sb,good
+# candidate classes are discovered from the real runtime; the keyword list must stay broad
+for good in ['IncomingCall','CallAlert','CallToAction','CallPresentation','InCall','SBInCall','LockScreenCall','AnswerCall','CallController','CallUI','answer','accept','pickup']:
+ assert good in sb,good
+# ABI is proven before hooking: exactly (self,_cmd) and a void return, so the fixed-signature
+# interposer is safe; nothing else is ever hooked.
+assert "if(arguments!=2){" in sb and "if(returnType[0]!='v'){" in sb
+# never hook the same method/IMP twice
+assert 'AACSBHookedKeys' in sb and 'AACSBHookedIMPs' in sb and '绝不重复挂钩' in sb
+# recursion guard + original IMP per (class,selector) + direct original-IMP invocation
+assert 'AACSBInvoking' in sb and 'AACSBOriginalFor' in sb and 'recursion guard' in sb
+# the answer path may not depend on any hardcoded private class name
+for bad in ['NSClassFromString','SBIncomingCallViewController','SBCallAlertViewController','IncomingCallViewController','SBInCallPresentationManager','SBLockScreenCallController','%hook','substrate.h','MSHookMessageEx']:
+ assert bad not in sb,bad
+# policy/answer wiring in Tweak.x
+for good in ['SubmitBlock','if(SubmitBlock){SubmitBlock(uuid,s);}else{','RegisterControls();','AACSBStart(env)','SpringBoardStart(ProcessTag)','AACSBRetryDiscoveryIfEmpty()','AACSBEnv *env=[AACSBEnv new]','com.autoanswer.call.pong.springboard','LOG-ONLY primary path','已调用运行时发现的 UI 接听方法（尚未确认接通）','未发现可调用的 UI 接听路径']:
+ assert good in t,good
+assert sb.count('AACSBAnswerHook')>=4
+# phone module keeps its 1.9.x/1.10.0 behaviour byte-for-byte
+assert 'Loaded 1.11.0 evidence build; retained CXCallObserver in MobilePhone' in t
+assert 'inPhoneProcess' in t and 'ProcessTag=@"mobilephone";' in t
+# settings side shows the runtime-discovered result and never invents one
+for good in ['AACDiscoveryEntry','aac-springboard.discovery.txt','runtime-discovered','AACCountOccurrences','没有可读的发现文件','showDiscovery:']:
+ assert good in pc or good in s or good in pstr,good
+assert 'showDiscovery:' in pstr and 'showDiscovery:' in s
+# version bumped everywhere, package id unchanged, filter untouched
+assert 'Version: 1.11.0' in (r/'control').read_text() and 'Package: com.autoanswer.call' in (r/'control').read_text()
+assert 'PACKAGE_VERSION := 1.11.0' in (r/'Makefile').read_text()
+assert 'SpringBoard MobilePhone' in (r/'Makefile').read_text()
+assert '1.11.0' in (r/'README.md').read_text() and '1.11.0' in pstr
+assert 'config[@"Version"]=@"1.11.0";' in s
+
+print('PASS: transactions, mode2 exclusions, finite seconds, stop generations, bounded multiselect import, library schema/migration/delete guards, native accessor ABI guards, 1.10.0 evidence channel (two-bundle filter, per-process probe, bounded SB inventory, per-path log reporting) plus 1.11.0 SpringBoard runtime discovery (broad candidate classes, ABI-proven dynamic hooks, per-method original IMP, recursion guard, weak capture + hierarchy re-scan, explicit log-only fallback) - static checks only, NOT device runtime')
