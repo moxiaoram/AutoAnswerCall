@@ -116,12 +116,7 @@ for forbidden in (b'SBIncomingCallViewController', b'SBCallAlertViewController',
 # classification that gates the answer-path count, must all be IN the artifact.
 required_115 = ('com.autoanswer.call.hostreport',
                 'Host.',
-                '/var/mobile/Library/Preferences',
-                '/var/jb/var/mobile/Library/Preferences',
                 '\u2026<truncated>',
-                'host-report.txt',
-                '\u5bbf\u4e3b\u8de8\u8fdb\u7a0b\u4e0a\u62a5\u8bfb\u56de',
-                'CFPreferences \u952e\uff08\u4e0d\u662f\u6587\u4ef6\u8def\u5f84\uff09',
                 'domain=%@ keys=%@ synced=%@ summaryBytes=%@',
                 'countsAsPath=no', 'countsAsPath=yes',
                 'classification=ACTION', 'classification=ACCESSOR', 'classification=FORBIDDEN', 'classification=UNSUPPORTED',
@@ -136,6 +131,7 @@ required_115 = ('com.autoanswer.call.hostreport',
                 'log-only: %@ \u6ca1\u6709\u4efb\u4f55 ACTION \u63a5\u542c\u8def\u5f84',
                 'no takeover scheduled: \u672c\u5bbf\u4e3b\u662f LOG-ONLY',
                 'ACTION \u63a5\u542c\u8def\u5f84=0')
+
 missing_115 = [item for item in required_115 if not present(dylib, item)]
 print('dylib 1.15.0 host-report/classification strings found: %d/%d'
       % (len(required_115) - len(missing_115), len(required_115)))
@@ -187,7 +183,9 @@ required_settings = ('AACProbeController', 'AACSharedLogController',
                      'com.autoanswer.call.pong.incall', 'com.autoanswer.call.pong.springboard',
                      'runtime-discovered', 'InCallService',
                      'com.autoanswer.call.hostreport', 'host-report.txt', 'showHostReport:',
-                     '/var/mobile/Library/Preferences', '\u5bbf\u4e3b\u8de8\u8fdb\u7a0b\u4e0a\u62a5\u8bfb\u56de',
+                     '/var/mobile/Library/Preferences', '/var/jb/var/mobile/Library/Preferences',
+                     '\u5bbf\u4e3b\u8de8\u8fdb\u7a0b\u4e0a\u62a5\u8bfb\u56de',
+                     'CFPreferences \u952e\uff08\u4e0d\u662f\u6587\u4ef6\u8def\u5f84\uff09',
                      # 1.13.0 run-log export / share surface
                      'AACLogExportController', 'AutoAnswerCall-export-',
                      'settings.log', 'configuration.plist', 'call-records.txt',
