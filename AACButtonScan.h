@@ -345,9 +345,7 @@ static void AACButtonConsiderControl(id object,NSMutableArray *candidates,NSMuta
  if(![object isKindOfClass:UIControl.class])return;
  *visited+=1;
  if(*visited>=AACButtonNodeCap)return;
- key:;
- uintptr_t key=(uintptr_t)object;
- NSNumber *boxed=@(key);
+ NSNumber *boxed=@((unsigned long)(uintptr_t)object);
  if([seen containsObject:boxed])return;
  [seen addObject:boxed];
  if(candidates.count>=AACButtonCandidateCap)return;
@@ -693,6 +691,8 @@ static inline NSString *AACButtonReportText(void){
  [lines addObject:[NSString stringWithFormat:@"# BUTTON_BLACKLIST %@（黑名单作用于 accessibilityIdentifier / accessibilityLabel / accessibilityValue / 按钮标题，并且颜色为红色主导的控件一律列入；黑名单候选只记录，绝不点击）",[AACButtonForbiddenKeywords() componentsJoinedByString:@","]]];
  [lines addObject:[NSString stringWithFormat:@"# BUTTON_BOUNDS nodeCap=%d depthCap=%d budgetSeconds=%.1f responderUpCap=%d candidateCap=%d tapArgumentCap=%d settleSeconds=%.1f",AACButtonNodeCap,AACButtonDepthCap,AACButtonScanBudgetSeconds,AACButtonResponderUpCap,AACButtonCandidateCap,AACButtonTapArgumentCap,AACButtonOwnerSettleSeconds]];
  [lines addObject:[NSString stringWithFormat:@"# BUTTON_TOTAL %@",AACButtonSummaryText()]];
+ [lines addObject:[NSString stringWithFormat:@"# BUTTON_BUDGET exceeded=%@（时间预算 %.1f 秒；超限即安全停止，未处理的部分不在本报告内）",AACButtonBudgetExceeded?@"yes":@"no",AACButtonScanBudgetSeconds]];
+ [lines addObject:[NSString stringWithFormat:@"# BUTTON_LAST_CHOSEN %@",AACButtonLastChosenControl?[NSString stringWithFormat:@"-%@（弱引用，可能已被释放）",NSStringFromClass(object_getClass(AACButtonLastChosenControl))]:@"(none)"]];
  [lines addObject:[NSString stringWithFormat:@"# BUTTON_PEER_TAPS %@",AACButtonPeerTapText()]];
  @try{for(NSString *line in AACButtonScanHistory)[lines addObject:[@"# BUTTON_SCAN_HISTORY " stringByAppendingString:line]];}@catch(NSException *e){}
  @try{
