@@ -128,6 +128,14 @@ static inline NSDictionary *AACChunkMsgVerifyEnvelope(NSData *envelopeData){
   result[@"channel"]=fields[@"channel"]?:@"unknown";
   result[@"tag"]=fields[@"tag"]?:@"unknown";
   result[@"kind"]=fields[@"kind"]?:@"unknown";
+  if(![@[@"name",@"state"] containsObject:result[@"channel"]]){result[@"reason"]=@"缺少合法的信封 channel";return result;}
+  NSString *piecesField=fields[@"pieces"];
+  NSString *bytesText=fields[@"bytes"];
+  NSCharacterSet *nonDigits=[[NSCharacterSet decimalDigitCharacterSet] invertedSet];
+  if(!piecesField.length||!bytesText.length||
+     [piecesField rangeOfCharacterFromSet:nonDigits].location!=NSNotFound||
+     [bytesText rangeOfCharacterFromSet:nonDigits].location!=NSNotFound||
+     piecesField.length>4||bytesText.length>10){result[@"reason"]=@"信封 pieces/bytes 字段缺失或非法";return result;}
   NSData *bodyData=[body dataUsingEncoding:NSUTF8StringEncoding];
   unsigned crc=AACChunkCrc32(bodyData.bytes,(unsigned)bodyData.length);
   NSString *expectedCrc=fields[@"crc32"];
@@ -139,6 +147,9 @@ static inline NSDictionary *AACChunkMsgVerifyEnvelope(NSData *envelopeData){
   result[@"actualCrc32"]=actualCrc;
   result[@"text"]=body;
   if(!expectedCrc.length){result[@"reason"]=@"信封头缺少 crc32";return result;}
+  unsigned expectedPieces=[result[@"channel"] isEqualToString:@"state"]?
+    AACChunkBytesNeeded((unsigned)bodyData.length):AACChunkCount((unsigned)AACChunkMsgBase64UrlEncode(bodyData).length);
+  if(piecesField.unsignedIntegerValue!=expectedPieces){result[@"reason"]=@"信封 pieces 与有效载荷不一致";return result;}
   if([result[@"declaredBytes"] unsignedLongLongValue]!=bodyData.length){result[@"reason"]=[NSString stringWithFormat:@"长度不一致：信封声明 %@ 字节，实际 %lu 字节",fields[@"bytes"],(unsigned long)bodyData.length];return result;}
   if(![[expectedCrc lowercaseString] isEqualToString:actualCrc]){result[@"reason"]=[NSString stringWithFormat:@"CRC32 不一致：信封声明 %@，实际 %@",expectedCrc,actualCrc];return result;}
   result[@"truncated"]=@([fields[@"truncated"] isEqualToString:@"yes"]);
@@ -148,14 +159,43 @@ static inline NSDictionary *AACChunkMsgVerifyEnvelope(NSData *envelopeData){
  return result;
 }
 /* 把消息文本按上限截断并显式加标记（绝不静默截断）。 */
+/* 以 UTF-8 字节为准，连同省略标记一起计入上限；按组合字符截断，避免拆开 emoji/代理对。 */
 static inline NSString *AACChunkMsgBound(NSString *text,NSUInteger cap,BOOL *truncated){
  NSString *body=[text isKindOfClass:NSString.class]?text:@"";
- if(body.length<=cap){if(truncated)*truncated=NO;return body;}
- // 按 UTF-8 字节安全截断：逐个缩短直到编码后不超过 cap。
- NSMutableString *cut=[body mutableCopy];
- while(cut.length&&[[cut dataUsingEncoding:NSUTF8StringEncoding] length]>cap)[cut deleteCharactersInRange:NSMakeRange(cut.length-1,1)];
+ NSData *all=[body dataUsingEncoding:NSUTF8StringEncoding];
+ if(all.length<=cap){if(truncated)*truncated=NO;return body;}
  if(truncated)*truncated=YES;
- return [cut stringByAppendingString:AACChunkMsgTruncatedMarker];
+ NSUInteger markerBytes=[AACChunkMsgTruncatedMarker lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+ if(cap<markerBytes)return @""; /* 调用者必须给出足够大的上限才能承载标记。 */
+ NSUInteger payloadBudget=cap-markerBytes;
+ __block NSUInteger used=0;
+ __block NSUInteger end=0;
+ [body enumerateSubstringsInRange:NSMakeRange(0,body.length)
+                            options:NSStringEnumerationByComposedCharacterSequences
+                         usingBlock:^(NSString *part,NSRange range,NSRange enclosingRange,BOOL *stop){
+  NSUInteger bytes=[part lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+  if(bytes>payloadBudget-used){*stop=YES;return;}
+  used+=bytes;end=NSMaxRange(range);
+ }];
+ return [[body substringToIndex:end] stringByAppendingString:AACChunkMsgTruncatedMarker];
+}
+/* Envelope MUST fit in full. Never silently chop the CRC-protected envelope at send time. */
+static inline NSData *AACChunkMsgFittedEnvelope(NSString *channel,NSString *tag,NSString *kind,
+                                               NSString *text,NSUInteger maxBytes,BOOL *truncated){
+ NSUInteger budget=maxBytes;
+ for(NSUInteger attempt=0;attempt<12;attempt++){
+  BOOL cut=NO;
+  NSString *bounded=AACChunkMsgBound(text,budget,&cut);
+  NSData *payload=[bounded dataUsingEncoding:NSUTF8StringEncoding];
+  NSString *header=AACChunkMsgEnvelope(channel,tag,kind,payload,cut);
+  NSData *whole=[[header stringByAppendingFormat:@"\n%@",bounded] dataUsingEncoding:NSUTF8StringEncoding];
+  if(whole.length<=maxBytes){if(truncated)*truncated=cut;return whole;}
+  NSUInteger overflow=whole.length-maxBytes;
+  if(budget<=overflow+8)break;
+  budget-=overflow+8;
+ }
+ if(truncated)*truncated=YES;
+ return nil; /* A caller must report this failure instead of posting an invalid frame. */
 }
 /* ---------------- 发送端：真正的 notify_post / notify_set_state 状态码 ---------------- */
 static inline NSMutableDictionary *AACChunkMsgChannelResult(void){
@@ -176,11 +216,14 @@ static inline NSDictionary *AACChunkMsgPublishNameChannel(NSString *tag,NSString
  NSMutableDictionary *channel=AACChunkMsgChannelResult();
  @try{
   BOOL truncated=NO;
-  NSUInteger payloadCap=AACChunkMsgNameChannelMaxBytes>200?AACChunkMsgNameChannelMaxBytes-200:64;
-  NSString *bounded=AACChunkMsgBound(text,payloadCap,&truncated);
-  NSData *payload=[bounded dataUsingEncoding:NSUTF8StringEncoding];
-  NSString *envelope=[AACChunkMsgEnvelope(@"name",tag,kind,payload,truncated) stringByAppendingFormat:@"\n%@",bounded];
-  NSString *encoded=AACChunkMsgBase64UrlEncode([envelope dataUsingEncoding:NSUTF8StringEncoding]);
+  NSData *envelopeData=AACChunkMsgFittedEnvelope(@"name",tag,kind,text,AACChunkMsgNameChannelMaxBytes,&truncated);
+  if(!envelopeData){channel[@"error"]=@"名内载荷信封超过硬上限，已拒绝发送";return channel;}
+  NSString *encoded=AACChunkMsgBase64UrlEncode(envelopeData);
+  NSDictionary *message=AACChunkMsgVerifyEnvelope(envelopeData);
+  if(![message[@"ok"] boolValue]){channel[@"error"]=@"名内载荷信封自身校验失败，已拒绝发送";return channel;}
+  NSData *payload=[message[@"text"] dataUsingEncoding:NSUTF8StringEncoding];
+  NSString *envelope=[[NSString alloc] initWithData:envelopeData encoding:NSUTF8StringEncoding];
+  if(encoded.length>AACChunkMsgMaxChunks*AACChunkMsgEncodedBytes){channel[@"error"]=@"编码消息超过分片上限，已拒绝发送";return channel;}
   NSUInteger total=AACChunkCount((unsigned)encoded.length);
   channel[@"channel"]=@"name";
   channel[@"chunkCount"]=@(total);
@@ -231,23 +274,35 @@ static inline NSDictionary *AACChunkMsgPublishStateChannel(NSString *tag,NSStrin
  NSMutableDictionary *channel=AACChunkMsgChannelResult();
  @try{
   BOOL truncated=NO;
-  NSUInteger payloadCap=AACChunkMsgMaxStateBytes>200?AACChunkMsgMaxStateBytes-200:64;
-  NSString *bounded=AACChunkMsgBound(text,payloadCap,&truncated);
-  NSData *payload=[bounded dataUsingEncoding:NSUTF8StringEncoding];
-  NSString *envelope=[AACChunkMsgEnvelope(@"state",tag,kind,payload,truncated) stringByAppendingFormat:@"\n%@",bounded];
-  NSData *envelopeData=[envelope dataUsingEncoding:NSUTF8StringEncoding];
-  NSUInteger capped=envelopeData.length>AACChunkMsgMaxStateBytes?AACChunkMsgMaxStateBytes:envelopeData.length;
+  NSData *envelopeData=AACChunkMsgFittedEnvelope(@"state",tag,kind,text,AACChunkMsgMaxStateBytes,&truncated);
+  if(!envelopeData||!envelopeData.length||envelopeData.length>AACChunkMsgMaxStateBytes){
+   channel[@"error"]=@"状态槽信封无法完整装入 576 字节，已拒绝发送（不会发布无效 CRC）";
+   return channel;
+  }
+  /* Commit slot is invalidated BEFORE payload writes. If a slot fails, a partially updated
+     frame must not remain visible under the previous committed generation. */
+  NSString *headerName=AACChunkMsgHeaderName(tag);
+  int headerToken=AACChunkMsgCheckToken(headerName);
+  if(!headerToken){channel[@"error"]=@"状态槽提交名注册失败，未发送";return channel;}
+  uint32_t invalidateStatus=notify_set_state(headerToken,0ull);
+  if(invalidateStatus!=NOTIFY_STATUS_OK){
+   channel[@"error"]=[NSString stringWithFormat:@"状态槽提交名失效化失败（%u），未发送",invalidateStatus];
+   return channel;
+  }
   unsigned gen=AACChunkMsgNextGeneration();
+  NSUInteger capped=envelopeData.length; /* never truncate a signed envelope */
   unsigned words=AACChunkBytesNeeded((unsigned)capped);
+  NSDictionary *message=AACChunkMsgVerifyEnvelope(envelopeData);
   channel[@"channel"]=@"state";
   channel[@"generation"]=@(gen);
-  channel[@"payloadBytes"]=@(payload.length);
+  channel[@"payloadBytes"]=@([[message[@"text"] dataUsingEncoding:NSUTF8StringEncoding] length]);
   channel[@"envelopeBytes"]=@(capped);
   channel[@"wordCount"]=@(words);
   channel[@"boundBytes"]=@(AACChunkMsgMaxStateBytes);
   channel[@"truncated"]=@(truncated);
-  if(words==0){channel[@"note"]=@"消息为空：不发任何槽";return channel;}
+  if(![message[@"ok"] boolValue]){channel[@"error"]=@"发送前信封校验失败";return channel;}
   const unsigned char *bytes=envelopeData.bytes;
+  BOOL allWritten=YES;
   for(NSUInteger index=0;index<words;index++){
    unsigned char word[AAC_CHUNK_WORD_BYTES];
    NSUInteger offset=index*AACChunkMsgWordBytes;
@@ -255,26 +310,24 @@ static inline NSDictionary *AACChunkMsgPublishStateChannel(NSString *tag,NSStrin
    NSString *name=AACChunkMsgWordName(tag,index);
    int token=AACChunkMsgCheckToken(name);
    if(!token){
+    allWritten=NO;
     channel[@"failed"]=@([channel[@"failed"] unsignedIntegerValue]+1);
-    @try{[(NSMutableArray *)channel[@"errors"] addObject:[NSString stringWithFormat:@"%@ → notify_register_check 失败",name]];}@catch(NSException *e){}
+    [(NSMutableArray *)channel[@"errors"] addObject:[NSString stringWithFormat:@"%@ → notify_register_check 失败",name]];
     continue;
    }
-   AACChunkMsgCountPost(channel,name,notify_set_state(token,AACChunkPackState(gen,word)));
+   uint32_t status=notify_set_state(token,AACChunkPackState(gen,word));
+   AACChunkMsgCountPost(channel,name,status);
+   if(status!=NOTIFY_STATUS_OK)allWritten=NO;
   }
-  /* hdr 最后写：它的状态是提交点（代次 + 已写字节数）。 */
-  {
-   unsigned char word[AAC_CHUNK_WORD_BYTES];
-   NSString *name=AACChunkMsgHeaderName(tag);
-   int token=AACChunkMsgCheckToken(name);
-   for(NSUInteger i=0;i<AACChunkMsgWordBytes;i++)word[i]=(unsigned char)((capped >> (8u*(AACChunkMsgWordBytes-1u-i))) & 0xFFu);
-   if(!token){
-    channel[@"failed"]=@([channel[@"failed"] unsignedIntegerValue]+1);
-    @try{[(NSMutableArray *)channel[@"errors"] addObject:[NSString stringWithFormat:@"%@ → notify_register_check 失败",name]];}@catch(NSException *e){}
-   }else{
-    AACChunkMsgCountPost(channel,name,notify_set_state(token,AACChunkPackState(gen,word)));
-    channel[@"headerCommitted"]=@(AACChunkPackState(gen,word));
-   }
-  }
+  if(!allWritten){channel[@"error"]=@"一个或多个状态槽未写成功，提交名保持无效，拒绝发布不完整消息";return channel;}
+  /* Header is committed only after every payload slot succeeded. */
+  unsigned char word[AAC_CHUNK_WORD_BYTES];
+  for(NSUInteger i=0;i<AACChunkMsgWordBytes;i++)word[i]=(unsigned char)((capped >> (8u*(AACChunkMsgWordBytes-1u-i))) & 0xFFu);
+  uint64_t commit=AACChunkPackState(gen,word);
+  uint32_t commitStatus=notify_set_state(headerToken,commit);
+  AACChunkMsgCountPost(channel,headerName,commitStatus);
+  if(commitStatus==NOTIFY_STATUS_OK)channel[@"headerCommitted"]=@(commit);
+  else channel[@"error"]=@"写入提交名失败，本次消息不可用";
  }@catch(NSException *e){channel[@"exception"]=e.reason?:@"未知异常";}
  return channel;
 }
@@ -370,6 +423,9 @@ static inline NSArray *AACChunkMsgObserveStart(void){
      NSMutableDictionary *store=AACChunkMsgTagStore(tag);
      uint32_t status=notify_register_dispatch(AACChunkMsgStructName(tag,seq,total).UTF8String,&token,dispatch_get_main_queue(),^(int t){
       @try{
+       /* A new first chunk begins a fresh observed round: do not accumulate old seq bits.
+          Notification names have no message id, so this is coverage only, not CRC proof. */
+       if(seq==1){[store[@"seqs"] removeAllObjects];store[@"endSeen"]=@NO;store[@"total"]=@(total);}
        [store[@"seqs"] addObject:@(seq)];
        NSNumber *announced=store[@"total"];
        if(!announced||announced.unsignedIntegerValue<total)store[@"total"]=@(total);
@@ -416,13 +472,13 @@ static inline void AACChunkMsgRefreshTag(NSString *tag){
  @try{
   NSString *hdrName=AACChunkMsgHeaderName(tag);
   int hdrToken=AACChunkMsgCheckToken(hdrName);
-  if(!hdrToken){store[@"stateNote"]=[NSString stringWithFormat:@"%@ 的 notify_register_check 失败：状态槽通道在本进程不可读",hdrName];return;}
+  if(!hdrToken){store[@"stateVerified"]=@NO;store[@"stateComplete"]=@NO;store[@"stateText"]=nil;store[@"stateNote"]=[NSString stringWithFormat:@"%@ 的 notify_register_check 失败：状态槽通道在本进程不可读",hdrName];return;}
   uint64_t hdrState=0;
   uint32_t hdrStatus=notify_get_state(hdrToken,&hdrState);
-  if(hdrStatus!=NOTIFY_STATUS_OK){store[@"stateNote"]=[NSString stringWithFormat:@"notify_get_state(%@) 返回 %u",hdrName,hdrStatus];return;}
+  if(hdrStatus!=NOTIFY_STATUS_OK){store[@"stateVerified"]=@NO;store[@"stateComplete"]=@NO;store[@"stateText"]=nil;store[@"stateNote"]=[NSString stringWithFormat:@"notify_get_state(%@) 返回 %u",hdrName,hdrStatus];return;}
   unsigned gen=(unsigned)((hdrState & AAC_CHUNK_GEN_MASK) >> AAC_CHUNK_GEN_SHIFT);
   if(gen==0){
-   store[@"stateGen"]=@0;
+   store[@"stateGen"]=@0;store[@"stateVerified"]=@NO;store[@"stateComplete"]=@NO;store[@"stateText"]=nil;store[@"stateBytes"]=@0;
    store[@"stateNote"]=@"状态槽提交名的状态为 0：本进程从未读到任何提交（= 没有观察到该宿主的状态槽消息，不等于该宿主未注入）";
    return;
   }
@@ -430,7 +486,10 @@ static inline void AACChunkMsgRefreshTag(NSString *tag){
   AACChunkUnpackState(hdrState,header);
   NSUInteger declared=0;
   for(NSUInteger i=0;i<AACChunkMsgWordBytes;i++)declared=(declared<<8)|(NSUInteger)header[i];
-  if(declared==0||declared>AACChunkMsgMaxStateBytes)declared=AACChunkMsgMaxStateBytes;
+  if(declared==0||declared>AACChunkMsgMaxStateBytes){
+   store[@"stateComplete"]=@NO;store[@"stateVerified"]=@NO;store[@"stateText"]=nil;
+   store[@"stateNote"]=[NSString stringWithFormat:@"提交头长度 %lu 非法，已拒绝读取",(unsigned long)declared];return;
+  }
   NSUInteger words=AACChunkBytesNeeded((unsigned)declared);
   NSMutableData *data=[NSMutableData data];
   NSUInteger missing=0,newer=0;
@@ -459,13 +518,26 @@ static inline void AACChunkMsgRefreshTag(NSString *tag){
   store[@"stateWordsNewer"]=@(newer);
   store[@"stateUpdated"]=NSDate.date;
   if(missing){
+   store[@"stateVerified"]=@NO;
    store[@"stateComplete"]=@NO;
    store[@"stateText"]=nil;
    store[@"stateNote"]=[NSString stringWithFormat:@"状态槽通道不完整：需要 %lu 槽，缺 %lu 槽（其中 %lu 槽属于更新的代次，说明发送方正在写新消息）；不做任何内容猜测",(unsigned long)words,(unsigned long)missing,(unsigned long)newer];
    return;
   }
   if(data.length>declared)[data setLength:declared];
+  uint64_t confirmState=0;
+  if(notify_get_state(hdrToken,&confirmState)!=NOTIFY_STATUS_OK||confirmState!=hdrState){
+   store[@"stateComplete"]=@NO;store[@"stateVerified"]=@NO;store[@"stateText"]=nil;
+   store[@"stateNote"]=@"读取过程中提交头改变，拒绝混合不同代次的数据；请刷新重试";
+   return;
+  }
   NSDictionary *verified=AACChunkMsgVerifyEnvelope(data);
+  if([verified[@"ok"] boolValue] &&
+     (![verified[@"tag"] isEqualToString:AACChunkMsgSanitizeTag(tag)]||
+      ![verified[@"channel"] isEqualToString:@"state"])){
+   store[@"stateComplete"]=@NO;store[@"stateVerified"]=@NO;store[@"stateText"]=nil;
+   store[@"stateNote"]=@"信封 tag/channel 与所读取的宿主状态槽不匹配，拒绝重组";return;
+  }
   store[@"stateComplete"]=@YES;
   store[@"stateVerified"]=verified[@"ok"];
   store[@"stateReason"]=verified[@"reason"];
@@ -485,7 +557,9 @@ static inline void AACChunkMsgRefreshTag(NSString *tag){
   store[@"stateNote"]=[NSString stringWithFormat:@"代次 %u 完整：%lu 槽、%lu 字节、CRC32 %@ 与信封头一致（%@）",gen,(unsigned long)words,(unsigned long)data.length,verified[@"actualCrc32"],verified[@"reason"]];
   @try{
    NSMutableArray *ring=store[@"ring"];
-   [ring addObject:@{@"utc":NSDate.date,@"gen":@(gen),@"bytes":@(data.length),@"crc32":verified[@"actualCrc32"]?:@"",@"text":text?:@""}];
+   NSDictionary *last=ring.lastObject;
+   if(![last[@"gen"] isEqual:@(gen)]||![last[@"crc32"] isEqual:verified[@"actualCrc32"]])
+    [ring addObject:@{@"utc":NSDate.date,@"gen":@(gen),@"bytes":@(data.length),@"crc32":verified[@"actualCrc32"]?:@"",@"text":text?:@""}];
    while(ring.count>AACChunkMsgRingPerTag)[ring removeObjectAtIndex:0];
   }@catch(NSException *e){}
   if(![text isEqualToString:previous?:@""]){
@@ -528,13 +602,13 @@ static inline NSDictionary *AACChunkMsgTagReport(NSString *tag){
 }
 /* 名内载荷通道只能观察到结构，必须如实说明，不能假装解出了内容。 */
 static inline NSString *AACChunkMsgNameChannelNote(void){
- return @"名内载荷通道的片内容写在通知名里，接收方无法预先注册任意名字（Darwin 通知不支持通配）：本页只能给出到达片数/总片数、结束标记、最近更新时间与完整性；解码字节只有在片内容可读时才不为 0。要看内容请用固定名字的状态槽通道。";
+ return @"名内载荷通道的片内容写在通知名里，且各片没有唯一消息标识（无法证明同批），接收方无法预先注册任意名字（Darwin 通知不支持通配）：本页只能给出到达片数/总片数、结束标记、最近更新时间与完整性；解码字节只有在片内容可读时才不为 0。要看内容请用固定名字的状态槽通道。";
 }
 static inline NSString *AACChunkMsgTagSummaryText(NSString *tag){
  NSDictionary *report=AACChunkMsgTagReport(tag);
  NSMutableString *text=[NSMutableString string];
  [text appendFormat:@"[%@]\n  名内载荷通道：到达 %@/%@ 片；结束标记=%@（总片数 %@）；最近更新=%@；完整性=%@；解码字节=%@（上限 12288 字节；片内容不可预先注册）\n",
-                      tag,report[@"chunksReceived"],report[@"chunksTotal"],([report[@"endSeen"] boolValue]?@"已收到":@"未收到"),report[@"endTotal"],report[@"nameUpdated"],([report[@"nameComplete"] boolValue]?@"完整":@"不完整"),@(0)];
+                      tag,report[@"chunksReceived"],report[@"chunksTotal"],([report[@"endSeen"] boolValue]?@"已收到":@"未收到"),report[@"endTotal"],report[@"nameUpdated"],([report[@"nameComplete"] boolValue]?@"序号齐全（无法证明同批）":@"序号未齐"),@(0)];
  [text appendFormat:@"  状态槽通道：代次=%@；需要 %@ 槽（每槽 %lu 字节，声明 %@ 字节）；缺 %@ 槽；完整=%@；校验通过=%@；字节=%@\n  说明：%@\n",
                       report[@"statesGen"],report[@"stateWordsNeeded"],(unsigned long)AACChunkMsgWordBytes,report[@"stateDeclaredBytes"],report[@"stateWordsMissing"],([report[@"stateComplete"] boolValue]?@"是":@"否"),([report[@"stateVerified"] boolValue]?@"是":@"否"),report[@"stateBytes"],report[@"stateNote"]];
  [text appendFormat:@"  落盘：%@（已写入=%@；%@；环形缓冲最近 %lu 条）\n",report[@"filePath"],([report[@"fileWritten"] boolValue]?@"是":@"否"),report[@"fileError"],(unsigned long)[(NSArray *)report[@"ring"] count]];
