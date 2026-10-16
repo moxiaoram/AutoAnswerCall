@@ -58,7 +58,7 @@ assert 'com.autoanswer.call.probe.' in pc and 'probe.mobilephone' not in pc  # s
 # SpringBoard runtime inventory: real enumeration, bounded, no hooks
 for good in ['objc_getClassList','class_copyMethodList','IncomingCall','CallAlert','CallToAction','CallController','InCallService','AnswerCall','CallPresentation','SBLockScreen','answer','accept','pick','dial','connect','AACInventoryMaxClasses=400','AACInventoryMaxSelectors=40','no hooks installed']:
  assert good in inv,good
-assert 'AACSharedInventoryCapBytes=200000' in shared
+assert 'AACSharedInventoryCapBytes=200000' in inv
 assert 'AACRunInventory' in t and 'AACRunInventory(ProcessTag)' in t
 assert '%hook' not in inv and '%hook' not in probe and '%hook' not in shared
 # settings entry points and honest labels

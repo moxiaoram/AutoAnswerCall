@@ -13,9 +13,8 @@ static NSString * const AACProbeCompanionDomain=@"com.autoanswer.call.probe";
 static NSUInteger const AACSharedLogMaxBytes=240000;
 static NSUInteger const AACSharedLogKeepBytes=120000;
 static NSUInteger const AACSharedPrefsLogLimit=24000;
-static NSUInteger const AACSharedInventoryCapBytes=200000;
 
-static NSArray *AACSharedLogCandidateDirs(void){
+static inline NSArray *AACSharedLogCandidateDirs(void){
  NSMutableArray *out=[NSMutableArray new];
  NSString *container=[NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory,NSUserDomainMask,YES).firstObject?:@"" stringByAppendingPathComponent:@"AutoAnswerCall"];
  NSString *temp=[NSTemporaryDirectory()?:@"" stringByAppendingPathComponent:@"AutoAnswerCall"];
@@ -26,23 +25,23 @@ static NSArray *AACSharedLogCandidateDirs(void){
   @[@"nstemporary",temp],
   @[@"tmp",@"/tmp/AutoAnswerCall"]
  ];
- for(NSArray *pair in pairs){if(![pair[1] isKindOfClass:NSString.class]||!pair[1].length)continue;[out addObject:@{@"label":pair[0],@"dir":pair[1]}];}
+ for(NSArray *pair in pairs){if(![pair[1] isKindOfClass:NSString.class]||![pair[1] length])continue;[out addObject:@{@"label":pair[0],@"dir":pair[1]}];}
  return out;
 }
-static NSString *AACSharedFileLeaf(NSString *process,NSString *suffix){
+static inline NSString *AACSharedFileLeaf(NSString *process,NSString *suffix){
  NSString *p=[process isKindOfClass:NSString.class]&&process.length?process:@"unknown";
  p=[p stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
  suffix=[suffix isKindOfClass:NSString.class]&&suffix.length?suffix:@"log";
  return [NSString stringWithFormat:@"aac-%@.%@",p,suffix];
 }
-static NSString *AACSharedLine(NSString *s,NSUInteger cap){
+static inline NSString *AACSharedLine(NSString *s,NSUInteger cap){
  if(![s isKindOfClass:NSString.class])return @"";
  return s.length>cap?[[s substringToIndex:cap] stringByAppendingString:@"…<truncated>"]:s;
 }
 /* Per-process resolution state. Header-only, so each translation unit keeps its own copy. */
 static NSMutableDictionary *AACSharedChosen=nil;
 static NSMutableSet *AACSharedFailed=nil;
-static NSDictionary *AACSharedResolve(NSString *process,BOOL reset){
+static inline NSDictionary *AACSharedResolve(NSString *process,BOOL reset){
  @try{
   if(!AACSharedChosen)AACSharedChosen=[NSMutableDictionary new];
   if(!AACSharedFailed)AACSharedFailed=[NSMutableSet new];
@@ -57,14 +56,14 @@ static NSDictionary *AACSharedResolve(NSString *process,BOOL reset){
    if(exists&&isDir)ok=[fm isWritableFileAtPath:dir];
    else ok=[fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&e];
    if(!ok)why=e.localizedDescription?:(exists?@"目录不可写":@"目录不可创建");
-   if(!ok){[AACSharedFailed addObject:key];continue;}
+   if(!ok){NSLog(@"[AutoAnswerCall] shared log candidate %@ unusable in %@: %@",candidate[@"label"],process,why?:@"unknown");[AACSharedFailed addObject:key];continue;}
    NSDictionary *chosen=@{@"label":candidate[@"label"],@"dir":dir,@"path":[dir stringByAppendingPathComponent:AACSharedFileLeaf(process,@"log")]};
    AACSharedChosen[process]=chosen;return chosen;
   }
  }@catch(NSException *e){NSLog(@"[AutoAnswerCall] shared log resolve exception: %@",e.reason?:@"unknown");}
  return nil;
 }
-static BOOL AACSharedPrefsAppend(NSString *process,NSString *line){
+static inline BOOL AACSharedPrefsAppend(NSString *process,NSString *line){
  @try{
   CFStringRef domain=(__bridge CFStringRef)AACSharedLogDomain;
   CFStringRef key=(__bridge CFStringRef)[@"Log." stringByAppendingString:process];
@@ -82,7 +81,7 @@ static BOOL AACSharedPrefsAppend(NSString *process,NSString *line){
 }
 /* Appends one line. Returns YES only when it was written to a file path (or, failing
    that, to the preferences fallback). Every line is also sent to NSLog. */
-static BOOL AACSharedAppend(NSString *process,NSString *message){
+static inline BOOL AACSharedAppend(NSString *process,NSString *message){
  NSString *text=[NSString stringWithFormat:@"[%@] %@ %@\n",NSDate.date,process?:@"unknown",AACSharedLine(message,2000)];
  NSLog(@"[AutoAnswerCall][%@] %@",process?:@"unknown",AACSharedLine(message,2000));
  NSString *failure=nil;
@@ -115,7 +114,7 @@ static BOOL AACSharedAppend(NSString *process,NSString *message){
  return fallback;
 }
 /* Creates/overwrites a named file inside the resolved shared directory. */
-static BOOL AACSharedWriteNamed(NSString *process,NSString *suffix,NSString *text,NSError **error){
+static inline BOOL AACSharedWriteNamed(NSString *process,NSString *suffix,NSString *text,NSError **error){
  @try{
   NSDictionary *chosen=AACSharedResolve(process,NO);
   NSString *dir=chosen[@"dir"];
@@ -125,13 +124,13 @@ static BOOL AACSharedWriteNamed(NSString *process,NSString *suffix,NSString *tex
  }@catch(NSException *e){if(error)*error=[NSError errorWithDomain:@"AACSharedLog" code:3 userInfo:@{NSLocalizedDescriptionKey:e.reason?:@"命名写入异常"}];}
  return NO;
 }
-static NSString *AACSharedReadFile(NSString *path,NSError **error){
+static inline NSString *AACSharedReadFile(NSString *path,NSError **error){
  if(![path isKindOfClass:NSString.class]||!path.length)return nil;
  return [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:error];
 }
 /* Per-candidate evidence for the Settings log viewer: existence/writability of every
    directory and every known file. Nothing here asserts that another process can see it. */
-static NSArray *AACSharedViewerEntries(NSArray *processes){
+static inline NSArray *AACSharedViewerEntries(NSArray *processes){
  NSMutableArray *out=[NSMutableArray new];
  NSFileManager *fm=[NSFileManager defaultManager];
  for(NSDictionary *candidate in AACSharedLogCandidateDirs()){
@@ -152,7 +151,7 @@ static NSArray *AACSharedViewerEntries(NSArray *processes){
  [out addObject:@{@"label":[NSString stringWithFormat:@"CFPreferences %@",AACSharedLogDomain],@"kind":@"prefs",@"path":AACSharedLogDomain,@"exists":@YES,@"writable":@NO,@"readable":@YES,@"size":@0,@"note":@"最后手段回退域；跨进程可见性不保证"}];
  return out;
 }
-static NSString *AACSharedPrefsDump(void){
+static inline NSString *AACSharedPrefsDump(void){
  NSMutableString *s=[NSMutableString string];
  @try{
   CFStringRef domain=(__bridge CFStringRef)AACSharedLogDomain;
@@ -168,7 +167,7 @@ static NSString *AACSharedPrefsDump(void){
  }@catch(NSException *e){[s appendFormat:@"读取失败：%@\n",e.reason?:@"未知异常"];}
  return s;
 }
-static NSString *AACSharedProbeCompanionDump(void){
+static inline NSString *AACSharedProbeCompanionDump(void){
  NSMutableString *s=[NSMutableString string];
  @try{
   CFStringRef domain=(__bridge CFStringRef)AACProbeCompanionDomain;

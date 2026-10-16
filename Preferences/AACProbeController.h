@@ -17,10 +17,10 @@
 @property(nonatomic) int loopbackToken;
 @property(nonatomic) BOOL observingLoopback;
 @end
-static NSArray *AACProbeWatchedProcesses(void){return @[@"mobilephone",@"springboard",@"settings"];}
+static inline NSArray *AACProbeWatchedProcesses(void){return @[@"mobilephone",@"springboard",@"settings"];}
 /* Must match AACProbePrefix in ../AACProbe.h; kept as a literal so the Settings
    translation unit does not need the injected-process header. */
-static NSString *AACProbeNameText(NSString *process){return [@"com.autoanswer.call.probe." stringByAppendingString:process];}
+static inline NSString *AACProbeNameText(NSString *process){return [@"com.autoanswer.call.probe." stringByAppendingString:process];}
 @implementation AACProbeController
 - (instancetype)initWithStyle:(UITableViewStyle)style{
  if((self=[super initWithStyle:style])){

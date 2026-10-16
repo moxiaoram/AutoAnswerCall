@@ -9,13 +9,14 @@
    degrades to a log line. */
 static NSUInteger const AACInventoryMaxClasses=400;
 static NSUInteger const AACInventoryMaxSelectors=40;
+static NSUInteger const AACSharedInventoryCapBytes=200000;
 
-static NSArray *AACInventoryClassKeywords(void){
+static inline NSArray *AACInventoryClassKeywords(void){
  return @[@"IncomingCall",@"CallAlert",@"CallToAction",@"CallController",@"InCallService",@"AnswerCall",@"CallPresentation"];
 }
-static NSArray *AACInventorySelectorKeywords(void){return @[@"answer",@"accept",@"pick",@"dial",@"connect"];}
+static inline NSArray *AACInventorySelectorKeywords(void){return @[@"answer",@"accept",@"pick",@"dial",@"connect"];}
 
-static BOOL AACInventoryMatchClass(NSString *name){
+static inline BOOL AACInventoryMatchClass(NSString *name){
  for(NSString *keyword in AACInventoryClassKeywords())if([name rangeOfString:keyword].location!=NSNotFound)return YES;
  /* Lockscreen call-related names: SBLockScreen* combined with call/answer. */
  if([name hasPrefix:@"SBLockScreen"]){
@@ -24,12 +25,12 @@ static BOOL AACInventoryMatchClass(NSString *name){
  }
  return NO;
 }
-static NSString *AACInventorySafe(NSString *s,NSUInteger cap){
+static inline NSString *AACInventorySafe(NSString *s,NSUInteger cap){
  if(![s isKindOfClass:NSString.class])return @"";
  NSString *clean=[s stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
  return clean.length>cap?[clean substringToIndex:cap]:clean;
 }
-static NSString *AACInventoryScan(NSString *process){
+static inline NSString *AACInventoryScan(NSString *process){
  NSMutableString *out=[NSMutableString string];
  [out appendFormat:@"# AutoAnswerCall runtime inventory (evidence only; no hooks installed)\n# process=%@ pid=%d date=%@\n# filters: classes containing %@ or SBLockScreen + call/answer\n# selector filter: %@\n",process,getpid(),NSDate.date,[AACInventoryClassKeywords() componentsJoinedByString:@", "],[AACInventorySelectorKeywords() componentsJoinedByString:@"/"]];
  int total=objc_getClassList(NULL,0);
@@ -73,7 +74,7 @@ static NSString *AACInventoryScan(NSString *process){
 }
 /* Writes the full inventory to a bounded file in the resolved shared directory and
    appends a bounded digest to the shared log channel. No behaviour change. */
-static void AACRunInventory(NSString *process){
+static inline void AACRunInventory(NSString *process){
  @try{
   NSString *text=AACInventoryScan(process);
   NSError *error=nil;

@@ -11,11 +11,11 @@ static NSString * const AACProbePrefix=@"com.autoanswer.call.probe.";
 static NSTimeInterval const AACProbeInterval=20.0;
 static dispatch_source_t AACProbeTimer=nil; /* retained so the timer survives */
 
-static NSString *AACProbeName(NSString *process){
+static inline NSString *AACProbeName(NSString *process){
  NSString *p=[process isKindOfClass:NSString.class]&&process.length?process:@"unknown";
  return [AACProbePrefix stringByAppendingString:p];
 }
-static uint32_t AACProbePost(NSString *process){
+static inline uint32_t AACProbePost(NSString *process){
  uint32_t status=NOTIFY_STATUS_FAILED;
  @try{
   NSString *name=AACProbeName(process);
@@ -32,7 +32,7 @@ static uint32_t AACProbePost(NSString *process){
  return status;
 }
 /* Posts once immediately, then repeats every ~20 seconds. */
-static void AACProbeStart(NSString *process){
+static inline void AACProbeStart(NSString *process){
  AACProbePost(process);
  @try{
   dispatch_source_t timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());

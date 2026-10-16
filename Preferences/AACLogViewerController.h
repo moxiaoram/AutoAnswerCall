@@ -5,7 +5,7 @@
    Tries every candidate path in order, shows whichever one is actually readable and
    clearly labels which path succeeded. It never merges contents and never claims that
    a file written by another process is visible here. */
-static void AACLogText(NSString *title,NSString *text,UINavigationController *navigation){
+static inline void AACLogText(NSString *title,NSString *text,UINavigationController *navigation){
  UIViewController *controller=[UIViewController new];UITextView *view=[UITextView new];
  view.text=[text isKindOfClass:NSString.class]?text:@"（无内容）";view.editable=NO;
  view.font=[UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightRegular];
@@ -14,7 +14,7 @@ static void AACLogText(NSString *title,NSString *text,UINavigationController *na
  if(navigation)[navigation pushViewController:controller animated:YES];
 }
 /* First readable file for a process among the candidates; the winning label is kept. */
-static NSDictionary *AACSharedFirstReadable(NSString *process){
+static inline NSDictionary *AACSharedFirstReadable(NSString *process){
  NSFileManager *manager=[NSFileManager defaultManager];
  for(NSDictionary *candidate in AACSharedLogCandidateDirs()){
   NSString *path=[candidate[@"dir"] stringByAppendingPathComponent:AACSharedFileLeaf(process,@"log")];
@@ -29,7 +29,7 @@ static NSDictionary *AACSharedFirstReadable(NSString *process){
 @property(nonatomic,strong) NSDictionary<NSString *,NSDictionary *> *resolved;
 @end
 @implementation AACSharedLogController
-static NSArray *AACLogViewerProcesses(void){return @[@"mobilephone",@"springboard",@"settings"];}
+static inline NSArray *AACLogViewerProcesses(void){return @[@"mobilephone",@"springboard",@"settings"];}
 - (instancetype)initWithStyle:(UITableViewStyle)style{
  if((self=[super initWithStyle:style])){_entries=@[];_resolved=@{};}
  return self;
