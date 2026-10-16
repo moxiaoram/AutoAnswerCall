@@ -21,6 +21,7 @@ static void Record(NSUUID *uuid,NSMutableDictionary *state,NSString *status,NSDi
  if(!AACWriteRecords(Records))NSLog(@"[AutoAnswerCall] record preferences write failed; Settings visibility not confirmed");
 }
 static NSUInteger StopGeneration;
+static NSString *ProcessTag=@"unknown";
 static void Log(NSString *s);
 /* Stop latch and configuration validity are phone-side state, not derived
    from unverified cross-process preference visibility. */
@@ -36,7 +37,13 @@ static NSDictionary *Prefs(void){
  return p?:@{};
 }
 static void Log(NSString *s){
- NSString *line=[NSString stringWithFormat:@"[%@] PHONE %@\n",NSDate.date,s]; NSLog(@"[AutoAnswerCall] %@",s);
+ /* 1.10.0: every line goes to the shared evidence channel, which also NSLogs it and
+    never throws. Which path was chosen is itself logged there. */
+ AACSharedAppend(ProcessTag,s);
+ if(![ProcessTag isEqualToString:@"mobilephone"])return;
+ /* Phone-side structured diagnostics: own CFPreferences domain; cross-sandbox
+    visibility of this domain is not claimed anywhere. */
+ NSString *line=[NSString stringWithFormat:@"[%@] PHONE %@\n",NSDate.date,s];
  CFPreferencesAppSynchronize((__bridge CFStringRef)PhoneDomain);
  NSString *old=CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("Log"),(__bridge CFStringRef)PhoneDomain))?:@"";
  NSString *all=[old stringByAppendingString:line]; if(all.length>24000)all=[all substringFromIndex:all.length-24000];
@@ -116,16 +123,33 @@ static void Changed(CXCall *call){
 - (void)callObserver:(CXCallObserver *)observer callChanged:(CXCall *)call{Changed(call);}
 @end
 %ctor {
- NSLog(@"[AutoAnswerCall] dylib constructor reached; bundle=%@ process=%@",NSBundle.mainBundle.bundleIdentifier,NSProcessInfo.processInfo.processName);
- /* The filter already scopes injection to the phone app. Accept the official
-    lowercase bundle id, the historical wrong-case variant, or the process name so a
-    single identifier mismatch cannot silently disable the whole phone module. */
  NSString *bundle=NSBundle.mainBundle.bundleIdentifier?:@"";
  NSString *process=NSProcessInfo.processInfo.processName?:@"";
+ /* 1.10.0 injects into BOTH SpringBoard and MobilePhone (see AutoAnswerCall.plist).
+    Both ids below are official and case-sensitive. The historical wrong-case phone id
+    stays only as a runtime compatibility fallback; it is never written to the filter. */
  BOOL inPhoneProcess=[bundle isEqualToString:@"com.apple.mobilephone"]||[bundle isEqualToString:@"com.apple.MobilePhone"]||[process isEqualToString:@"MobilePhone"];
- if(inPhoneProcess){dispatch_async(dispatch_get_main_queue(),^{
+ BOOL inSpringBoardProcess=[bundle.lowercaseString isEqualToString:@"com.apple.springboard"]||[process isEqualToString:@"SpringBoard"];
+ if(inPhoneProcess)ProcessTag=@"mobilephone";else if(inSpringBoardProcess)ProcessTag=@"springboard";
+ else ProcessTag=[@"other-" stringByAppendingString:(bundle.length?bundle:process)];
+ NSLog(@"[AutoAnswerCall] dylib constructor reached; bundle=%@ process=%@ tag=%@",bundle,process,ProcessTag);
+ if(!inPhoneProcess&&!inSpringBoardProcess){
+  /* The filter is supposed to scope injection to the two bundles; anything else is
+     reported as evidence instead of guessing which module should run. */
+  AACSharedAppend(ProcessTag,@"unexpected process: no module logic runs; filter scoping may be wrong");
+  return;
+ }
+ dispatch_async(dispatch_get_main_queue(),^{
+  AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"Loaded 1.10.0 EVIDENCE build; bundle=%@ process=%@ tag=%@",bundle,process,ProcessTag]);
+  AACProbeStart(ProcessTag);
+  if(inSpringBoardProcess){
+   AACSharedAppend(ProcessTag,@"SpringBoard module: runtime inventory only; no hooks installed and no answer behaviour changed");
+   dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{AACRunInventory(ProcessTag);});
+   return;
+  }
+  if(inPhoneProcess){
   Records=AACReadRecords(NULL,NULL);States=[NSMutableDictionary new];Controller=[CXCallController new];Observer=[CXCallObserver new];RetainedDelegate=[AACDelegate new];[Observer setDelegate:RetainedDelegate queue:dispatch_get_main_queue()];
-  Log(@"Loaded 1.9.3; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed");
+  Log(@"Loaded 1.10.0 evidence build; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed");
   int token=0;notify_register_dispatch("com.autoanswer.call.ping",&token,dispatch_get_main_queue(),^(int t){Log(@"Ping acknowledged in MobilePhone");NSDictionary *actual=Prefs();Log([NSString stringWithFormat:@"Configuration observed: keys=%lu enabledPresent=%d mode=%@ delay=%@ whitelistPresent=%d",(unsigned long)actual.count,actual[@"Enabled"]!=nil,actual[@"Mode"]?:@"missing",actual[@"Delay"]?:@"missing",actual[@"Whitelist"]!=nil]);notify_post("com.autoanswer.call.pong");});
   int resumeToken=0;uint32_t resumeStatus=notify_register_dispatch("com.autoanswer.call.resume",&resumeToken,dispatch_get_main_queue(),^(int t){Stopped=NO;Log(@"Explicit resume observed from settings; stop latch cleared");});if(resumeStatus!=NOTIFY_STATUS_OK)Log(@"Resume notification registration failed");
   int stopToken=0;uint32_t stopStatus=notify_register_dispatch("com.autoanswer.call.stop",&stopToken,dispatch_get_main_queue(),^(int t){StopGeneration++;Stopped=YES;for(NSMutableDictionary *s in States.allValues){if([s[@"scheduled"] boolValue]){s[@"scheduled"]=@NO;s[@"attempted"]=@YES;}}[Player stop];Log(@"Plugin stop observed; invalidated unsubmitted timers, existing transactions cannot be revoked; native system switch unaffected");});if(stopStatus!=NOTIFY_STATUS_OK)Log(@"Plugin stop notification registration failed; delayed preferences revalidation still applies");
@@ -141,5 +165,6 @@ static void Changed(CXCall *call){
      assume the call began earlier. */
   Log(@"Initial observer snapshot processed with a fresh full delay from the observation instant, not from the real ringing start");
   for(CXCall *c in Observer.calls.copy){if(!c.hasEnded&&!c.hasConnected&&!c.outgoing){Log(@"Snapshot incoming call scheduled from observation instant");Changed(c);}}
- });}
+  }
+ });
 }

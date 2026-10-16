@@ -171,9 +171,36 @@
 			<string>showCallRecords:</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSButtonCell</string>
-			<key>label</key><string>电话模块诊断（可能不可见）</string>
-			<key>action</key><string>showPhoneDiagnostics:</string>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>证据采集（1.10.0）</string>
+			<key>footerText</key>
+			<string>1.10.0 只采集证据：注入范围现为 com.apple.mobilephone 与 com.apple.springboard 两个官方标识；每个已加载模块在载入时及每约 20 秒发送一条按进程区分的 Darwin 通知（com.autoanswer.call.probe.&lt;进程&gt;），设置页据此列出哪些进程何时响应。SpringBoard 模块仅在运行时枚举真实的来电/接听相关类与方法名，不安装任何 hook、不改变任何接听行为。共享日志会按顺序尝试多个绝对候选路径（含 /var/jb 前缀、进程容器 Application Support、临时目录）并记录命中哪一个；跨进程可写/可读并未验证，失败时回退到自有 CFPreferences 域且不声称可见。本版本未在设备上安装或验证，不能说明自动接听可用。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>进程探测 / 环境清单</string>
+			<key>action</key>
+			<string>probeProcesses:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>共享日志查看器（逐候选路径尝试）</string>
+			<key>action</key>
+			<string>showSharedLogs:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>电话模块诊断（可能不可见）</string>
+			<key>action</key>
+			<string>showPhoneDiagnostics:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -203,7 +230,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>1.9.1：音频最大5MB，复制至设置沙盒；本地试听不代表电话进程能读取，也不会注入通话上行。MobilePhone 可能被挂起，未保证锁屏后台接听或蜂窝事务权限。</string>
+			<string>1.10.0：证据采集版。音频最大5MB且仍位于设置沙盒；本地试听不代表电话进程能读取，也不会注入通话上行。SpringBoard 模块只做运行时清单枚举，不安装 hook。共享日志路径与进程探测结果均为本机实际读数，未在设备安装验证，不构成自动接听可用的证据。</string>
 		</dict>
 	</array>
 </dict>
