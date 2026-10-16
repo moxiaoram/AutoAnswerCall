@@ -56,6 +56,11 @@
 			<key>action</key><string>stopPlugin:</string>
 		</dict>
 		<dict>
+			<key>cell</key><string>PSButtonCell</string>
+			<key>label</key><string>恢复插件策略（解除电话端停止锁存）</string>
+			<key>action</key><string>resumePlugin:</string>
+		</dict>
+		<dict>
 			<key>cell</key><string>PSGroupCell</string>
 			<key>label</key><string>来电等待 N 秒后请求接听</string>
 			<key>footerText</key><string>从电话模块收到首个符合条件的来电事件开始，等待下方 N 秒，再重新检查 Enabled、模式、通话状态和排除名单后请求接听。不是从实测铃声开始计时；观察器状态未知或无事件时不调度，不能推断此前已经响铃多久。没有 pong 不代表已验证接听。秒数仅控制方案2，不控制系统自动接听。</string>

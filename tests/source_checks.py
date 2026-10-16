@@ -8,13 +8,20 @@ for good in ['CXAnswerCallAction','requestTransaction:tx','callChanged:(CXCall *
 for good in ['asCopy:YES','NSFileCoordinator','startAccessingSecurityScopedResource','stopAccessingSecurityScopedResource','Limit+1','NSApplicationSupportDirectory','SETTINGS','PHONE']:
  assert good in s+t,good
 p=plistlib.loads((r/'Preferences/Resources/Root.plist').read_bytes());mode=next(i for i in p['items'] if i.get('key')=='Mode');assert mode['default']==2 and mode['cell']=='PSLinkListCell' and mode['validValues']==[1,2]
-assert 'com.apple.MobilePhone' in (r/'AutoAnswerCall.plist').read_text()
+# Apple Platform Deployment lists Phone as com.apple.mobilephone (case-sensitive).
+assert 'com.apple.mobilephone' in (r/'AutoAnswerCall.plist').read_text()
+assert 'isEqualToString:@"com.apple.mobilephone"' in t
+assert 'com.apple.MobilePhone' not in t+(r/'AutoAnswerCall.plist').read_text()
 delay=next(i for i in p['items'] if i.get('key')=='Delay');assert delay['cell']=='PSEditTextCell' and delay['get']=='readDelay:' and delay['set']=='setDelay:specifier:'
 assert 'PSSliderCell' not in str(p)
 for good in ['AACParseDelay(text.UTF8String','setBool:NO forKey:@"Enabled"','com.autoanswer.call.stop','allowsMultipleSelection=YES','NSUUID.UUID.UUIDString','dispatch_sync(dispatch_get_main_queue()','showAudioLibrary:']:
  assert good in s,good
-for good in ['generation!=StopGeneration','Initial observer snapshot is diagnostic only','NOT measured audible ringing','!live||!Allowed(live,Prefs())']:
+for good in ['generation!=StopGeneration','Initial observer snapshot processed with a fresh full delay','NOT measured audible ringing','!live||!Allowed(live,Prefs())','ConfigValid=(p!=nil && synced && p[@"ConfigVersion"]!=nil)','if(!ConfigValid){Log(@"Eligibility: configuration unreadable; refusing to schedule (fail closed)");return NO;}','if(Stopped){Log(@"Eligibility: plugin stop latched in phone process; awaiting explicit resume");return NO;}','com.autoanswer.call.resume','[States removeObjectForKey:uuid]','if(States[uuid]!=s){Log(@"Delayed answer dropped: call state no longer current");return;}']:
  assert good in t,good
+# The phone process must not infer enablement from an unreadable preference domain.
+assert 'return v?[v boolValue]:YES;}' not in t
+# Settings must publish the fail-closed marker and an explicit resume path.
+assert 'forKey:@"ConfigVersion"' in s and 'resumePlugin:' in s
 assert 'for(CXCall *call in Observer.calls)Changed(call)' not in t
 lib=(r/'Preferences/AACAudioLibrary.h').read_text()
 for good in ['audio-library.plist','SelectedAudioID','@"id"','@"path"','@"name"','@"size"','@"duration"','audio.plist','UITableViewCellAccessoryDetailButton','确认删除','isReadableFileAtPath','BOOL shared=NO','viewWillDisappear']:

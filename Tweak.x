@@ -21,7 +21,19 @@ static void Record(NSUUID *uuid,NSMutableDictionary *state,NSString *status,NSDi
  if(!AACWriteRecords(Records))NSLog(@"[AutoAnswerCall] record preferences write failed; Settings visibility not confirmed");
 }
 static NSUInteger StopGeneration;
-static NSDictionary *Prefs(void){CFPreferencesAppSynchronize((__bridge CFStringRef)Domain); return CFBridgingRelease(CFPreferencesCopyMultiple(NULL,(__bridge CFStringRef)Domain,kCFPreferencesCurrentUser,kCFPreferencesAnyHost))?:@{};}
+/* Stop latch and configuration validity are phone-side state, not derived
+   from unverified cross-process preference visibility. */
+static BOOL Stopped;
+static BOOL ConfigValid;
+static NSDictionary *Prefs(void){
+ BOOL synced=CFPreferencesAppSynchronize((__bridge CFStringRef)Domain);
+ NSDictionary *p=CFBridgingRelease(CFPreferencesCopyMultiple(NULL,(__bridge CFStringRef)Domain,kCFPreferencesCurrentUser,kCFPreferencesAnyHost));
+ /* Settings writes ConfigVersion on first load. Without it the domain is either
+    never configured or not visible here; both must fail closed, never default to enabled. */
+ ConfigValid=(p!=nil && synced && p[@"ConfigVersion"]!=nil);
+ if(!ConfigValid)Log([NSString stringWithFormat:@"CONFIG INVALID: synced=%d keys=%lu; automatic answering disabled until settings configuration is readable",synced,(unsigned long)(p.count?:0)]);
+ return p?:@{};
+}
 static void Log(NSString *s){
  NSString *line=[NSString stringWithFormat:@"[%@] PHONE %@\n",NSDate.date,s]; NSLog(@"[AutoAnswerCall] %@",s);
  CFPreferencesAppSynchronize((__bridge CFStringRef)PhoneDomain);
@@ -49,6 +61,8 @@ static BOOL Allowed(CXCall *call,NSDictionary *p){
   NSString *t=[entry stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]; if(!t.length)continue; NSString *n=Normal(t); if(!n)invalid=YES; if(n&&[n isEqualToString:number])excluded=YES;
  }
  BOOL ok=AACShouldRequest(enabled,(int)mode,call.outgoing,call.hasConnected,call.hasEnded,excluded,hasList&&!number)&&!invalid;
+ if(Stopped){Log(@"Eligibility: plugin stop latched in phone process; awaiting explicit resume");return NO;}
+ if(!ConfigValid){Log(@"Eligibility: configuration unreadable; refusing to schedule (fail closed)");return NO;}
  if(!ok)Log([NSString stringWithFormat:@"Eligibility: enabled=%d mode=%ld outgoing=%d connected=%d ended=%d excluded=%d unknownWithList=%d invalidList=%d",enabled,(long)mode,call.outgoing,call.hasConnected,call.hasEnded,excluded,hasList&&!number,invalid]);
  return ok;
 }
@@ -71,7 +85,7 @@ static void Changed(CXCall *call){
  if(!s){s=[NSMutableDictionary dictionaryWithDictionary:@{@"scheduled":@NO,@"pending":@NO,@"attempted":@NO,@"accepted":@NO}];States[uuid]=s;}
  s[@"outgoing"]=@(call.outgoing);NSString *caller=Number(call);if(caller.length)s[@"caller"]=caller;
  Log([NSString stringWithFormat:@"Call %@ outgoing=%d connected=%d ended=%d",uuid.UUIDString,call.outgoing,call.hasConnected,call.hasEnded]);
- if(call.hasEnded){AACCancelForObservedConnection(s);if(!call.hasConnected)s[@"connectedObserved"]=@NO;Record(uuid,s,@"通话已结束",(call.hasConnected?@{@"ended":@YES,@"connected":@YES}:@{@"ended":@YES}));s[@"pending"]=@NO;s[@"attempted"]=@YES;return;}
+ if(call.hasEnded){AACCancelForObservedConnection(s);if(!call.hasConnected)s[@"connectedObserved"]=@NO;Record(uuid,s,@"通话已结束",(call.hasConnected?@{@"ended":@YES,@"connected":@YES}:@{@"ended":@YES}));s[@"pending"]=@NO;s[@"attempted"]=@YES;[States removeObjectForKey:uuid];return;}
  if(call.hasConnected){ObserveConnection(uuid,s);return;}
  if([s[@"scheduled"] boolValue]||[s[@"attempted"] boolValue])return;
  if(!Allowed(call,Prefs())){Record(uuid,s,@"跳过：插件关闭、模式或排除策略不符合（见电话诊断）",nil);return;}
@@ -80,7 +94,8 @@ static void Changed(CXCall *call){
  Record(uuid,s,[NSString stringWithFormat:@"等待 %.15g 秒后重新检查",delay],nil);
  Log([NSString stringWithFormat:@"Scheduled %@ delay=%.15g seconds from first eligible observed incoming event, NOT measured audible ringing",uuid.UUIDString,delay]);
  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(delay*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
-  if(States[uuid]!=s||generation!=StopGeneration){Log(@"Delayed answer cancelled by plugin stop generation");Record(uuid,s,@"取消：插件已停止",nil);return;} s[@"scheduled"]=@NO; CXCall *live=Current(uuid);
+  if(generation!=StopGeneration){Log(@"Delayed answer cancelled by plugin stop generation");Record(uuid,s,@"取消：插件已停止",nil);return;}
+  if(States[uuid]!=s){Log(@"Delayed answer dropped: call state no longer current");return;} s[@"scheduled"]=@NO; CXCall *live=Current(uuid);
   if(live.hasConnected){ObserveConnection(uuid,s);return;}
   if(!AACMaySubmit(s,callGeneration,live!=nil,live.hasConnected,live.hasEnded)){Log(@"Delayed answer invalidated by UUID connection/end generation or absent call");return;}
   if(!live||!Allowed(live,Prefs())){Log(@"Delayed answer cancelled: call absent/state or settings changed");Record(uuid,s,@"取消：通话消失、状态或设置已改变",nil);return;}
@@ -92,7 +107,7 @@ static void Changed(CXCall *call){
    if(error){s[@"pending"]=@NO;Record(uuid,s,[NSString stringWithFormat:@"请求失败：%@/%ld %@",error.domain,(long)error.code,error.localizedDescription?:@""],@{@"failed":@YES});Log([NSString stringWithFormat:@"Answer transaction failed domain=%@ code=%ld detail=%@",error.domain,(long)error.code,error.localizedDescription?:@"No description"]);}
    else {s[@"accepted"]=@YES;Record(uuid,s,@"事务已接受；不代表连接",@{@"accepted":@YES});Log(@"Answer transaction accepted; this alone does not confirm connected");}
   });}];
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,15*NSEC_PER_SEC),dispatch_get_main_queue(),^{if([s[@"pending"] boolValue]){s[@"pending"]=@NO;Record(uuid,s,@"观察超时：未确认连接",@{@"timedOut":@YES});Log(@"Answer request observation timeout: no confirmed connection");}});
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,15*NSEC_PER_SEC),dispatch_get_main_queue(),^{if(States[uuid]!=s)return; if([s[@"pending"] boolValue]){s[@"pending"]=@NO;Record(uuid,s,@"观察超时：未确认连接",@{@"timedOut":@YES});Log(@"Answer request observation timeout: no confirmed connection");}});
  });
 }
 @interface AACDelegate : NSObject<CXCallObserverDelegate> @end
@@ -100,11 +115,13 @@ static void Changed(CXCall *call){
 - (void)callObserver:(CXCallObserver *)observer callChanged:(CXCall *)call{Changed(call);}
 @end
 %ctor {
- if([NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.MobilePhone"]){dispatch_async(dispatch_get_main_queue(),^{
+ NSLog(@"[AutoAnswerCall] dylib constructor reached; bundle=%@ process=%@",NSBundle.mainBundle.bundleIdentifier,NSProcessInfo.processInfo.processName);
+ if([NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.mobilephone"]){dispatch_async(dispatch_get_main_queue(),^{
   Records=AACReadRecords(NULL,NULL);States=[NSMutableDictionary new];Controller=[CXCallController new];Observer=[CXCallObserver new];RetainedDelegate=[AACDelegate new];[Observer setDelegate:RetainedDelegate queue:dispatch_get_main_queue()];
-  Log(@"Loaded 1.9.1; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed");
-  int token=0;notify_register_dispatch("com.autoanswer.call.ping",&token,dispatch_get_main_queue(),^(int t){Log(@"Ping acknowledged in MobilePhone");notify_post("com.autoanswer.call.pong");});
-  int stopToken=0;uint32_t stopStatus=notify_register_dispatch("com.autoanswer.call.stop",&stopToken,dispatch_get_main_queue(),^(int t){StopGeneration++;for(NSMutableDictionary *s in States.allValues){if([s[@"scheduled"] boolValue]){s[@"scheduled"]=@NO;s[@"attempted"]=@YES;}}[Player stop];Log(@"Plugin stop observed; invalidated unsubmitted timers, existing transactions cannot be revoked; native system switch unaffected");});if(stopStatus!=NOTIFY_STATUS_OK)Log(@"Plugin stop notification registration failed; delayed preferences revalidation still applies");
+  Log(@"Loaded 1.9.2; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed");
+  int token=0;notify_register_dispatch("com.autoanswer.call.ping",&token,dispatch_get_main_queue(),^(int t){Log(@"Ping acknowledged in MobilePhone");NSDictionary *actual=Prefs();Log([NSString stringWithFormat:@"Configuration observed: keys=%lu enabledPresent=%d mode=%@ delay=%@ whitelistPresent=%d",(unsigned long)actual.count,actual[@"Enabled"]!=nil,actual[@"Mode"]?:@"missing",actual[@"Delay"]?:@"missing",actual[@"Whitelist"]!=nil]);notify_post("com.autoanswer.call.pong");});
+  int resumeToken=0;uint32_t resumeStatus=notify_register_dispatch("com.autoanswer.call.resume",&resumeToken,dispatch_get_main_queue(),^(int t){Stopped=NO;Log(@"Explicit resume observed from settings; stop latch cleared");});if(resumeStatus!=NOTIFY_STATUS_OK)Log(@"Resume notification registration failed");
+  int stopToken=0;uint32_t stopStatus=notify_register_dispatch("com.autoanswer.call.stop",&stopToken,dispatch_get_main_queue(),^(int t){StopGeneration++;Stopped=YES;for(NSMutableDictionary *s in States.allValues){if([s[@"scheduled"] boolValue]){s[@"scheduled"]=@NO;s[@"attempted"]=@YES;}}[Player stop];Log(@"Plugin stop observed; invalidated unsubmitted timers, existing transactions cannot be revoked; native system switch unaffected");});if(stopStatus!=NOTIFY_STATUS_OK)Log(@"Plugin stop notification registration failed; delayed preferences revalidation still applies");
   int clearToken=0;uint32_t clearStatus=notify_register_dispatch("com.autoanswer.call.records.clear",&clearToken,dispatch_get_main_queue(),^(int t){
    /* Only MobilePhone owns deletion. Never trust a Settings-side empty read as acknowledgement. */
    for(NSMutableDictionary *state in States.allValues)state[@"recordsCleared"]=@YES;
@@ -112,6 +129,10 @@ static void Changed(CXCall *call){
    if(saved&&synced&&present&&!readback.count)notify_post("com.autoanswer.call.records.cleared");
    else notify_post("com.autoanswer.call.records.clearFailed");
   });if(clearStatus!=NOTIFY_STATUS_OK)Log(@"Phone record clear notification registration failed");
-  Log(@"Initial observer snapshot is diagnostic only, not a ringing-start event; no delay scheduled until a delegate event");
+  /* A ringing call that predates this process has no observed start event. Scheduling a
+     fresh full delay from the observation instant is the only defensible option; never
+     assume the call began earlier. */
+  Log(@"Initial observer snapshot processed with a fresh full delay from the observation instant, not from the real ringing start");
+  for(CXCall *c in Observer.calls.copy){if(!c.hasEnded&&!c.hasConnected&&!c.outgoing){Log(@"Snapshot incoming call scheduled from observation instant");Changed(c);}}
  });}
 }

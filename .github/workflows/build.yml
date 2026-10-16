@@ -54,6 +54,23 @@ jobs:
             dpkg-deb --contents "$deb" | rg -F 'AutoAnswerCall.dylib'
             dpkg-deb --contents "$deb" | rg -F 'AutoAnswerCallPrefs.bundle'
             dpkg-deb --contents "$deb" | rg -F 'autoanswer.call.plist'
+            # Apple Platform Deployment lists Phone as com.apple.mobilephone (case-sensitive).
+            rm -rf /tmp/aac-debcheck && mkdir -p /tmp/aac-debcheck
+            dpkg-deb -x "$deb" /tmp/aac-debcheck
+            python3 - <<'PY'
+import plistlib, pathlib, sys
+f = pathlib.Path('/tmp/aac-debcheck/Library/MobileSubstrate/DynamicLibraries/AutoAnswerCall.plist')
+bundles = plistlib.loads(f.read_bytes())['Filter']['Bundles']
+print('artifact filter bundles:', bundles)
+if bundles != ['com.apple.mobilephone']:
+    sys.exit('artifact filter bundle id is not the official com.apple.mobilephone')
+dylib = pathlib.Path('/tmp/aac-debcheck/Library/MobileSubstrate/DynamicLibraries/AutoAnswerCall.dylib').read_bytes()
+if b'com.apple.MobilePhone' in dylib:
+    sys.exit('artifact dylib still contains the wrong-case bundle id')
+if b'com.apple.mobilephone' not in dylib:
+    sys.exit('artifact dylib missing the official bundle id guard')
+print('artifact bundle id check passed')
+PY
           done
 
       - name: Upload build logs

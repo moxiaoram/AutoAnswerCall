@@ -1,6 +1,6 @@
 Package: com.autoanswer.call
 Name: AutoAnswerCall
-Version: 1.9.1
+Version: 1.9.2
 Architecture: iphoneos-arm64e
 Description: Configurable incoming-call auto answer tweak for RootHide
 Maintainer: dev
