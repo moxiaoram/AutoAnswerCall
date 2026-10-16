@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -32,11 +32,12 @@ jobs:
             # packing, slot count and the CRC-32 known vector. Really compiled and really run.
             cc -std=c11 tests/chunkmath.c -o /tmp/aac-chunkmath
             /tmp/aac-chunkmath
-            # 1.17.0: static checks for the live-button discovery + simulated tap path (bounded
+            # 1.17.1: static checks for the live-button discovery + simulated tap path (bounded
             # live hierarchy traversal, signal priority, option/red-blacklist applied to
             # identifiers and titles, the three tap mechanisms in order, the per-UUID single tap
             # and the non-double-tap settle window, and the candidate/mechanism/connected report).
             python3 tests/source_checks.py
+            python3 tests/repair_checks.py
             xcrun clang -fobjc-arc -framework Foundation -framework AVFoundation tests/library.m -o /tmp/aac-library
             /tmp/aac-library
             xcrun clang -fobjc-arc -framework Foundation tests/records.m -o /tmp/aac-records
@@ -60,7 +61,7 @@ jobs:
           for deb in "${debs[@]}"; do
             dpkg-deb --info "$deb"
             test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64e"
-            test "$(dpkg-deb -f "$deb" Version)" = "1.17.0"
+            test "$(dpkg-deb -f "$deb" Version)" = "1.17.1"
             dpkg-deb --contents "$deb" | rg -F 'AutoAnswerCall.dylib'
             dpkg-deb --contents "$deb" | rg -F 'AutoAnswerCallPrefs.bundle'
             dpkg-deb --contents "$deb" | rg -F 'autoanswer.call.plist'

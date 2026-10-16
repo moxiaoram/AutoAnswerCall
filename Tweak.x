@@ -140,12 +140,50 @@ static void ObserveConnection(NSUUID *uuid,NSMutableDictionary *s){
  Log(submitted?@"Connected after submission: answer ownership ambiguous; autoplay suppressed; imported files retained":@"Connected before submission (manual/system/other): UUID timers invalidated, autoplay suppressed; imported files retained");
  if(AACMayAutoplay(s))PlayLocal();
 }
+/* Subscribe to UUID-specific peer signals while THIS call is active. The old fixed
+   buttontap.<host> notification could poison the next call; it is deliberately ignored. */
+static void AACWatchPeerTaps(NSUUID *uuid,NSMutableDictionary *state){
+ if(!SubmitBlock||!uuid||state[@"peerTapTokens"])return;
+ NSMutableArray *tokens=[NSMutableArray new];
+ state[@"peerTapTokens"]=tokens;
+ for(NSString *peerTag in @[@"incall",@"springboard"]){
+  if([peerTag isEqualToString:ProcessTag])continue;
+  NSString *notification=AACButtonTapNameForCall(peerTag,uuid.UUIDString);
+  if(!notification.length)continue;
+  int token=0;
+  uint32_t result=notify_register_dispatch(notification.UTF8String,&token,dispatch_get_main_queue(),^(int t){
+   AACButtonNotePeerTap(peerTag,uuid.UUIDString);
+   AACSBButtonPeerTapArrived(peerTag);
+   Log([NSString stringWithFormat:@"UUID-specific peer tap observed: host=%@ uuid=%@",peerTag,uuid.UUIDString]);
+  });
+  if(result==NOTIFY_STATUS_OK)[tokens addObject:@(token)];
+  else Log([NSString stringWithFormat:@"buttontap UUID observer registration failed host=%@ uuid=%@ result=%u",peerTag,uuid.UUIDString,result]);
+ }
+}
+static void AACUnwatchPeerTaps(NSUUID *uuid,NSMutableDictionary *state){
+ for(NSNumber *token in state[@"peerTapTokens"])notify_cancel(token.intValue);
+ [state removeObjectForKey:@"peerTapTokens"];
+ AACButtonForgetCall(uuid.UUIDString);
+}
 static void Changed(CXCall *call){
  NSUUID *uuid=call.UUID; if(!uuid)return; NSMutableDictionary *s=States[uuid];
  if(!s){s=[NSMutableDictionary dictionaryWithDictionary:@{@"scheduled":@NO,@"pending":@NO,@"attempted":@NO,@"accepted":@NO}];States[uuid]=s;}
  s[@"outgoing"]=@(call.outgoing);NSString *caller=Number(call);if(caller.length)s[@"caller"]=caller;
+ if(!call.outgoing&&!call.hasEnded)AACWatchPeerTaps(uuid,s);
  Log([NSString stringWithFormat:@"Call %@ outgoing=%d connected=%d ended=%d",uuid.UUIDString,call.outgoing,call.hasConnected,call.hasEnded]);
- if(call.hasEnded){AACCancelForObservedConnection(s);if(!call.hasConnected)s[@"connectedObserved"]=@NO;Record(uuid,s,@"通话已结束",(call.hasConnected?@{@"ended":@YES,@"connected":@YES}:@{@"ended":@YES}));s[@"pending"]=@NO;s[@"attempted"]=@YES;if(SubmitBlock)AACSBButtonNoteCallEnded(call.hasConnected);[States removeObjectForKey:uuid];return;}
+ if(call.hasEnded){
+  AACCancelForObservedConnection(s);
+  if(!call.hasConnected)s[@"connectedObserved"]=@NO;
+  NSString *endedStatus=call.hasConnected?@"通话已结束（观察到过连接，归因不明）":
+    ([s[@"buttonTapped"] boolValue]?@"通话已结束：已发送按钮事件，但未观察到连接":
+    ([s[@"submitted"] boolValue]?@"通话已结束：已尝试接听请求，但未观察到连接":
+    ([s[@"attempted"] boolValue]?@"通话已结束：已进入尝试流程，但没有有效接听动作":@"通话已结束：未开始接听流程（检查配置与宿主日志）")));
+  Record(uuid,s,endedStatus,(call.hasConnected?@{@"ended":@YES,@"connected":@YES}:@{@"ended":@YES,@"attempted":@([s[@"attempted"] boolValue])}));
+  s[@"pending"]=@NO;s[@"attempted"]=@YES;
+  if(SubmitBlock)AACSBButtonNoteCallEnded(call.hasConnected);
+  AACUnwatchPeerTaps(uuid,s);
+  [States removeObjectForKey:uuid];return;
+ }
  if(call.hasConnected){ObserveConnection(uuid,s);return;}
  if([s[@"scheduled"] boolValue]||[s[@"attempted"] boolValue])return;
  if(!Allowed(call,Prefs())){Record(uuid,s,@"跳过：插件关闭、模式或排除策略不符合（见共享日志：Eligibility 行）",nil);return;}
@@ -220,7 +258,7 @@ static void RegisterControls(void){
 static void AnswerHostStart(NSDictionary *host){
  NSString *tag=host[@"tag"],*display=host[@"display"],*pong=host[@"pong"];
  Records=AACReadRecords(NULL,NULL);States=[NSMutableDictionary new];Controller=[CXCallController new];Observer=[CXCallObserver new];RetainedDelegate=[AACDelegate new];[Observer setDelegate:RetainedDelegate queue:dispatch_get_main_queue()];
- Log([NSString stringWithFormat:@"Loaded 1.17.0 answer host: %@ (tag=%@ probe=%@ pong=%@ discovery=%@); retained its own CXCallObserver in %@; runtime discovery of the real incoming-call UI starts now (ABI gate relaxed: zero-arg any-return -> MSHookMessageEx hook, arg-taking -> NSInvocation candidate)",display,tag,host[@"probe"],pong,host[@"discovery"],display]);
+ Log([NSString stringWithFormat:@"Loaded 1.17.1 answer host: %@ (tag=%@ probe=%@ pong=%@ discovery=%@); retained its own CXCallObserver in %@; runtime discovery of the real incoming-call UI starts now (ABI gate relaxed: zero-arg any-return -> MSHookMessageEx hook, arg-taking -> NSInvocation candidate)",display,tag,host[@"probe"],pong,host[@"discovery"],display]);
  Log([NSString stringWithFormat:@"接听归属角色表：%@；每个宿主都观察并记录，但只有一个宿主提交接听（InCallService 优先，其次 SpringBoard，否则仅日志）",AACAnswerRoleTableText()]);
  /* 1.16.0 TASK 1/TASK 2: the chunked Darwin message transport is started by AACSBStart (it owns
     the discovery summary text); this log line only states that it is part of every answer host. */
@@ -252,14 +290,9 @@ static void AnswerHostStart(NSDictionary *host){
   });
   if(claimStatus!=NOTIFY_STATUS_OK)Log([NSString stringWithFormat:@"owner-claim observer registration failed for %@ (status=%u)",claimName,claimStatus]);
  }
- /* 1.17.0 TASK 1: 观察其它宿主的「真的点击了接听按钮」通知。这是低优先级宿主在结算窗口后让出的
-    依据，也是「绝不双重点击」的机制。注册失败就直说：那样就无法据此让出，日志里会写明。 */
- for(NSString *tapName in AACButtonTapNames()){
-  int tapToken=0;uint32_t tapStatus=notify_register_dispatch(tapName.UTF8String,&tapToken,dispatch_get_main_queue(),^(int t){
-   for(NSString *tagName in @[@"incall",@"springboard"])if([AACButtonTapName(tagName) isEqualToString:tapName]){AACButtonNotePeerTap(tagName);AACSBButtonPeerTapArrived(tagName);return;}
-  });
-  if(tapStatus!=NOTIFY_STATUS_OK)Log([NSString stringWithFormat:@"buttontap 观察注册失败：%@（status=%u）：本宿主无法据此让出，可能与其他宿主双重点击（已在日志写明）",tapName,tapStatus]);
- }
+ /* UUID-specific buttontap registrations are managed per active call by AACWatchPeerTaps.
+    The former fixed-name registration is intentionally removed to prevent stale peer events
+    from suppressing a different call. */
  /* 1.17.0 TASK 1/TASK 2: 按钮路径是主策略。 */
  Log([NSString stringWithFormat:@"接听主策略（1.17.0）＝活体按钮发现＋模拟点击：%@；信号优先级 accessibilityIdentifier(%@) > accessibilityLabel(%@) > accessibilityValue(%@) > 标题(%@) > 本地化子串(%@) > 绿色左侧主按钮(%@)；黑名单作用于标识/标签/值/标题，红色主导控件一并列入，黑名单候选绝不点击",AACButtonRuleText(),AACButtonSignalText(AACButtonSignalAccessibilityIdentifier),AACButtonSignalText(AACButtonSignalAccessibilityLabel),AACButtonSignalText(AACButtonSignalAccessibilityValue),AACButtonSignalText(AACButtonSignalTitle),AACButtonSignalText(AACButtonSignalLocalization),AACButtonSignalText(AACButtonSignalGreenPrimary)]);
  int pingToken=0;uint32_t pingStatus=notify_register_dispatch("com.autoanswer.call.ping",&pingToken,dispatch_get_main_queue(),^(int t){Log([NSString stringWithFormat:@"Legacy Darwin ping observed in %@; answering on %@",display,pong]);uint32_t posted=notify_post(pong.UTF8String);if(posted!=NOTIFY_STATUS_OK)Log([NSString stringWithFormat:@"pong post failed status=%u",posted]);});
@@ -329,6 +362,10 @@ static void AnswerHostStart(NSDictionary *host){
     if(!liveCall){Log(@"button tap dropped: the call UUID is no longer observed");return;}
     if(liveCall.hasConnected){Log(@"button tap not needed: a connection was already observed");return;}
     if(liveCall.hasEnded){Log(@"button tap dropped: the call already ended");return;}
+    if(!Allowed(liveCall,Prefs())){
+     Log(@"button tap cancelled: current preferences or exclusion rule no longer permits answering");
+     Record(uuid,state,@"取消按钮尝试：设置或排除规则已变化",nil);return;
+    }
     NSString *buttonWhy=nil;
     NSString *mechanism=AACButtonTryTap(uuid.UUIDString,tag,higherPriorityTags,&buttonWhy);
     if(mechanism){
@@ -436,7 +473,7 @@ static void AnswerHostStart(NSDictionary *host){
   return;
  }
  dispatch_async(dispatch_get_main_queue(),^{
-  AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"Loaded 1.17.0 EVIDENCE build; bundle=%@ process=%@ tag=%@",bundle,process,ProcessTag]);
+  AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"Loaded 1.17.1 EVIDENCE build; bundle=%@ process=%@ tag=%@",bundle,process,ProcessTag]);
   AACProbeStart(ProcessTag);
   if(inAnswerHostProcess){
    AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"%@ answer host 1.17.0: runtime discovery + MSHookMessageEx hook + NSInvocation candidate answer path shared with SpringBoard (names discovered at runtime, never hardcoded; only ACTION methods count as answer paths, property ACCESSORS are evidence only; log-only when no ACTION path exists; every candidate method, its ACTION/ACCESSOR/FORBIDDEN/UNSUPPORTED classification and its outcome are written to the discovery file and published through the shared host-report domain)",answerHost[@"display"]]);
@@ -446,7 +483,7 @@ static void AnswerHostStart(NSDictionary *host){
   }
   if(inPhoneProcess){
   Records=AACReadRecords(NULL,NULL);States=[NSMutableDictionary new];Controller=[CXCallController new];Observer=[CXCallObserver new];RetainedDelegate=[AACDelegate new];[Observer setDelegate:RetainedDelegate queue:dispatch_get_main_queue()];
-  Log(@"Loaded 1.17.0 evidence build; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed (this module is unchanged from 1.10.0)");
+  Log(@"Loaded 1.17.1 evidence build; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed (this module is unchanged from 1.10.0)");
   /* 1.16.0 TASK 1: 电话模块也通过分片消息通道上报自己的真实读数（结论仍是 1.10.0 行为不变）。 */
   AACChunkMsgStart(@"mobilephone",^NSString *{
    NSDictionary *actual=Prefs();
