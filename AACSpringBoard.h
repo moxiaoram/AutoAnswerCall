@@ -29,6 +29,7 @@ static NSUInteger const AACSBMaxDiscoverRuns=3;
 @property(nonatomic,copy) void (^log)(NSString *message);
 @property(nonatomic,copy) void (^record)(NSString *status,NSDictionary *flags);
 @end
+@implementation AACSBEnv @end
 
 typedef struct { Class cls; SEL sel; IMP original; } AACSBHookRecord;
 static AACSBEnv *AACSBEnvShared=nil;
