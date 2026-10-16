@@ -106,7 +106,7 @@ static NSString *ErrorText(NSError *e,NSString *fallback){return e?[NSString str
  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.4*NSEC_PER_SEC)),dispatch_get_main_queue(),^{BOOL on=YES;NSString *error=nil;BOOL read=AACSystemRead(&on,&error);NSString *message=read&&!on?@"系统访问器回读为关闭。仅确认此进程访问器值，不保证跨进程缓存同步或电话实测。插件 Enabled 未修改。":(error?:@"写入后未回读到关闭；请手动检查原生开关。");[self log:message];[self alert:read&&!on?@"系统开关回读：关闭":@"系统关闭未确认" message:message];});
 }
 - (void)openSystemAutoAnswer:(PSSpecifier *)s{
- NSURL *u=[NSURL URLWithString:@"App-prefs:root=ACCESSIBILITY&path=TOUCH_REACHABILITY_TITLE/CALL_AUDIO_ROUTING/AutoAnswerCalls"];
+ NSURL *u=[NSURL URLWithString:@"prefs:root=ACCESSIBILITY&path=TOUCH_REACHABILITY_TITLE/CALL_AUDIO_ROUTING/callAudioRoutingAutoAnswer"];
  [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:^(BOOL ok){dispatch_async(dispatch_get_main_queue(),^{
   [self log:ok?@"系统接受打开 URL；不证明到达自动接听页面；系统开关未知/未修改":@"系统拒绝设置深链，请使用手动路径"];
   if(!ok)[self alert:@"无法打开原生页面" message:@"请手动前往：设置 → 辅助功能 → 触控 → 通话音频路由 → 自动接听通话。深链未在 iOS 17.3 设备验证，系统开关未修改。"];

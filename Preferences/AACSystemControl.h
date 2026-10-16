@@ -2,7 +2,8 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <dlfcn.h>
-/* Evidence: nst/iOS-Runtime-Headers, AXSettings.h (2018), exact declarations:
+/* Evidence: nst/iOS-Runtime-Headers, AXSettings.h (2018), Git blob
+ cb107875983b175cf4f614e79eeb98c7088b3bd5. Exact declarations:
  + (id)sharedInstance;
  - (bool)callAudioRoutingAutoAnswerEnabled;
  - (void)setCallAudioRoutingAutoAnswerEnabled:(bool)arg1;

@@ -15,7 +15,8 @@
  NSDictionary *saved=path?[NSDictionary dictionaryWithContentsOfFile:path]:nil;
  if(saved){
   if(![saved[@"Items"] isKindOfClass:NSArray.class]){self.failure=@"音频库文件格式无效；禁止覆盖，请先导出诊断";return self;}
-  for(id entry in saved[@"Items"]){if(![entry isKindOfClass:NSDictionary.class]||![entry[@"id"] isKindOfClass:NSString.class]||![entry[@"path"] isKindOfClass:NSString.class]||![entry[@"name"] isKindOfClass:NSString.class]){self.failure=@"音频库条目无效；禁止覆盖";return self;}[self.items addObject:entry];}
+  NSMutableSet *ids=[NSMutableSet new];
+  for(id entry in saved[@"Items"]){if(![entry isKindOfClass:NSDictionary.class]||![entry[@"id"] isKindOfClass:NSString.class]||![entry[@"id"] length]||[ids containsObject:entry[@"id"]]||![entry[@"path"] isKindOfClass:NSString.class]||![entry[@"path"] length]||![entry[@"name"] isKindOfClass:NSString.class]||![entry[@"size"] isKindOfClass:NSNumber.class]||![entry[@"duration"] isKindOfClass:NSNumber.class]){self.failure=@"音频库条目无效/重复；禁止覆盖";return self;}[ids addObject:entry[@"id"]];[self.items addObject:entry];}
   self.selected=[saved[@"SelectedAudioID"] isKindOfClass:NSString.class]?saved[@"SelectedAudioID"]:nil;
  }else if(path&&[[NSFileManager defaultManager] fileExistsAtPath:path]){self.failure=@"音频库不可读；禁止覆盖";}
  else{

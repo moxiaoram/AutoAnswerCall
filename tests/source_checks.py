@@ -25,4 +25,6 @@ for good in ['callAudioRoutingAutoAnswerEnabled','setCallAudioRoutingAutoAnswerE
  assert good in system,good
 assert 'CFPreferences' not in system and 'notify_post' not in system
 assert 'AACSystemRead' in s and 'AACSystemDisable' in s
+assert 'prefs:root=ACCESSIBILITY&path=TOUCH_REACHABILITY_TITLE/CALL_AUDIO_ROUTING/callAudioRoutingAutoAnswer' in s
+assert '/AutoAnswerCalls' not in s
 print('PASS: transactions, mode2 exclusions, finite seconds, stop generations, bounded multiselect import, library schema/migration/delete guards, native accessor ABI guards (static checks, NOT device runtime)')
