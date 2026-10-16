@@ -297,16 +297,20 @@ for literal in ('\u4fdd\u7559\u4f46\u5df2\u77e5\u4e0d\u8db3', '\u662f\u4e3b\u7b5
         sys.exit('artifact dylib must label method-name keyword discovery as insufficient (%r)' % literal)
 # The Settings bundle must carry the new button page text (plist + binary) and the explicit note
 # that keyword discovery is retained but known insufficient, with the button path primary.
+# The staged Root.plist is converted to a BINARY plist during staging, so it is parsed with
+# plistlib instead of being read as text.
+import plistlib
 root_plist = bundle_dir / 'Root.plist'
 if not root_plist.is_file():
     sys.exit('artifact missing the staged Root.plist')
-root_text = root_plist.read_text(errors='replace')
+_root = plistlib.loads(root_plist.read_bytes())
+root_text = '\n'.join([str(i.get('label', '')) + '\n' + str(i.get('footerText', '')) + '\n' + str(i.get('title', '')) for i in _root.get('items', [])])
 for literal in ('\u63a5\u542c\u6309\u94ae\u53d1\u73b0\uff081.17.0\uff0c\u4e3b\u7b56\u7565\uff09',
                 '\u65b9\u6cd5\u540d\u5173\u952e\u5b57\u53d1\u73b0\uff08ACTION/ACCESSOR \u5206\u7c7b\uff09\u4fdd\u7559\uff0c\u4f46\u5df2\u77e5\u4e0d\u8db3',
                 '\u6309\u94ae\u8def\u5f84\u662f\u4e3b\u7b56\u7565',
                 'accessibilityIdentifier'):
     if literal not in root_text:
         sys.exit('artifact Root.plist missing the 1.17.0 button page text %r' % literal)
-for literal in ('\u6d3b\u4f53\u6309\u94ae\u53d1\u73b0', '\u63a5\u542c\u6309\u94ae\u53d1\u73b0'):
+for literal in ('\u6d3b\u4f53\u6309\u94ae\u53d1\u73b0', 'sendActionsForControlEvents:', '\u65b9\u6cd5\u540d\u5173\u952e\u5b57\u53d1\u73b0'):
     if not present(settings, literal):
         sys.exit('settings binary missing 1.17.0 button-discovery text %r' % literal)
