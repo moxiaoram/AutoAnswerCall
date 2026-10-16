@@ -100,7 +100,7 @@
 			<key>default</key>
 			<false/>
 			<key>label</key>
-			<string>请求关联连接后本地播放（非上行）</string>
+			<string>本地播放意愿（连接归因不明时禁播）</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -161,9 +161,14 @@
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>电话模块诊断（可能不可见）</string>
+			<string>自动接听记录</string>
 			<key>action</key>
 			<string>showCallRecords:</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSButtonCell</string>
+			<key>label</key><string>电话模块诊断（可能不可见）</string>
+			<key>action</key><string>showPhoneDiagnostics:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -193,7 +198,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>1.9.0：音频最大5MB，复制至设置沙盒；本地试听不代表电话进程能读取，也不会注入通话上行。MobilePhone 可能被挂起，未保证锁屏后台接听或蜂窝事务权限。</string>
+			<string>1.9.1：音频最大5MB，复制至设置沙盒；本地试听不代表电话进程能读取，也不会注入通话上行。MobilePhone 可能被挂起，未保证锁屏后台接听或蜂窝事务权限。</string>
 		</dict>
 	</array>
 </dict>

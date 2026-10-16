@@ -1,8 +1,20 @@
-# AutoAnswerCall 1.9.0
+# AutoAnswerCall 1.9.1
 
-Package: com.autoanswer.call. BuildID is supplied in the delivery report using the compiled commit and successful CI run. No installation, live system-setting change, calls, or device runtime validation performed for 1.9.0.
+Package: com.autoanswer.call. BuildID is supplied in the delivery report using the compiled commit and successful CI run. No installation, live system-setting change, calls, or device runtime validation performed for 1.9.1.
 
-## 1.9 changes and explicit limits
+## 1.9.1 records and original icon
+
+Root settings now exposes 自动接听记录 as an independent UITableViewController with pull-to-refresh, refresh button, latest-first rows, detail event timestamps and destructive clear confirmation. 电话模块诊断 remains a separate text diagnostic entry. No Settings preview or audio test can create a call record.
+
+MobilePhone owns Records in CFPreferences domain com.autoanswer.call.phone. Each incoming CXCall UUID is the stable id; first-observed timestamp remains fixed, updated/result/status/events are upserted. At most 200 calls and 24 status changes per call are retained; repeated identical callbacks do not append an event. Outgoing calls are excluded. Scheduled, skipped, cancelled, submitted, accepted, failed (domain/code/detail), timeout, connected and ended are recorded from the actual state machine. Connected is observational and never proof of automatic attribution; transaction acceptance is never called connected. Number is only the ABI-checked optional getter result; otherwise the list explicitly shows unknown.
+
+Settings synchronizes and reads the phone domain; absent/inaccessible data, empty arrays and failed synchronization are described honestly. A fresh ping times out after 2 seconds with possible suspension/injection/notification explanations. Cross-process CFPreferences may remain unavailable or stale even with a pong. Clear never writes from Settings: it sends a Darwin request, MobilePhone writes an empty array and checks synchronize plus its own readback before acknowledging. Failure or 3-second timeout reports deletion unconfirmed. Existing active states are suppressed after clear to avoid callbacks restoring old records; new call UUIDs are recorded normally. Acknowledgement confirms only phone-process write/readback, not filesystem durability or Settings cache visibility. Concurrent clear requests have no per-request nonce and use a shared domain-wide acknowledgement; they are intended for one Settings UI at a time.
+
+Original icon.svg uses a blue gradient rounded square, curved white handset, clock and mint check dot; it does not reproduce the reference device/keypad artwork. Included PNGs are 8-bit RGBA, 29/58/87 px with transparent corners.
+
+CI also compiles tests/records.m against macOS Foundation for UUID upsert, duplicate suppression, timestamp stability, unknown caller, acceptance/connection distinction, callback ordering truth, sorting/bounds, plist roundtrip and invalid record rejection. This is a model test, not iOS UI or real calls.
+
+## 1.9 preserved behavior and explicit limits
 
 - Delay is now a PSEditTextCell with a custom finite ASCII decimal parser, range 0..60 seconds, no slider. Invalid edits preserve the old value. Readback uses a decimal numeric string. Delay starts at the first eligible observed incoming CallKit delegate event, NOT measured audible ringing and NOT a startup snapshot. At expiry the call is looked up again and Enabled/mode/state/exclusions are reread. Unknown/unobserved calls do not schedule work.
 - Stop plugin action writes Enabled=false and emits a plugin-only stop notification. Phone-side receipt increments a generation token to invalidate all unsubmitted old timers, and stops local playback. Notification delivery is not confirmed by posting. Already submitted transactions cannot be revoked. This action never changes the independent iOS native switch.
@@ -26,7 +38,7 @@ CXCall has no public number property. Optional phoneNumber/callerNumber selector
 
 Import uses UIDocumentPicker asCopy:YES, starts/stops security scope, coordinates reads on a background worker, and reads at most 5MB + 1 byte. Empty, oversized or unsupported files fail with source-read, destination-write or audio-decoder details. Successful files go into the actual Settings process Application Support/AutoAnswerCall directory, followed by an independent audio.plist. Local AVAudioPlayer preview retains the player and checks prepare/play return values. The settings diagnostic displays imported name, byte count and path. Export persistent configuration uses the share sheet to export configuration.plist.
 
-The selected AudioPath preference is also published as configuration. This does not grant MobilePhone access to the Settings sandbox. Phone-side local playback is optional, default off, and logs inaccessible/unsupported files. It only attempts local playback following an observed request-associated connection when transaction acceptance has already arrived. A callback ordering race can skip playback. No RootHide shared path is invented; no libroot headers were verified for runtime shared storage, so no fixed /var/jb is used. No audio bytes are pushed through CFPreferences. Local AVAudioPlayer is NOT call uplink injection and cannot promise the remote party hears it.
+The selected AudioPath preference is also published as configuration. This does not grant MobilePhone access to the Settings sandbox. Phone-side local playback is optional, default off, and logs inaccessible/unsupported files. In 1.9.1 every observed connection conservatively suppresses automatic local playback because this observer/transaction path cannot prove who answered. A connection before submission invalidates the UUID generation and prevents its timer from submitting; expiry also requeries connected/ended. Later transaction completion cannot clear the sticky suppression. Existing imported audio and Settings preview remain available; suppression never deletes audio files. Already-submitted transactions cannot be revoked, and a simultaneous human/system answer cannot be deterministically distinguished. No RootHide shared path is invented; no libroot headers were verified for runtime shared storage, so no fixed /var/jb is used. No audio bytes are pushed through CFPreferences. Local AVAudioPlayer is NOT call uplink injection and cannot promise the remote party hears it.
 
 ## Diagnostics
 

@@ -21,7 +21,7 @@ jobs:
       - name: Install build tools
         run: brew install ldid dpkg ripgrep
 
-      - name: Policy and library regression
+      - name: Policy, library and record regression
         run: |
           set -euxo pipefail
           {
@@ -30,6 +30,8 @@ jobs:
             python3 tests/source_checks.py
             xcrun clang -fobjc-arc -framework Foundation -framework AVFoundation tests/library.m -o /tmp/aac-library
             /tmp/aac-library
+            xcrun clang -fobjc-arc -framework Foundation tests/records.m -o /tmp/aac-records
+            /tmp/aac-records
           } 2>&1 | tee tests.log
 
       - name: Build RootHide arm64e package

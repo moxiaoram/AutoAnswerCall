@@ -5,6 +5,8 @@
 #import <objc/message.h>
 #import <notify.h>
 #import "AACPolicy.h"
+#import "AACRecords.h"
+#import "AACCallLifecycle.h"
 static NSString * const Domain=@"com.autoanswer.call";
 static NSString * const PhoneDomain=@"com.autoanswer.call.phone";
 static CXCallObserver *Observer;
@@ -12,6 +14,12 @@ static CXCallController *Controller;
 static id RetainedDelegate;
 static NSMutableDictionary<NSUUID *,NSMutableDictionary *> *States;
 static AVAudioPlayer *Player;
+static NSArray *Records;
+static void Record(NSUUID *uuid,NSMutableDictionary *state,NSString *status,NSDictionary *flags){
+ if([state[@"recordsCleared"] boolValue]||[state[@"outgoing"] boolValue])return;
+ Records=AACRecordUpdate(Records,uuid.UUIDString,state[@"caller"],status,flags,NSDate.date);
+ if(!AACWriteRecords(Records))NSLog(@"[AutoAnswerCall] record preferences write failed; Settings visibility not confirmed");
+}
 static NSUInteger StopGeneration;
 static NSDictionary *Prefs(void){CFPreferencesAppSynchronize((__bridge CFStringRef)Domain); return CFBridgingRelease(CFPreferencesCopyMultiple(NULL,(__bridge CFStringRef)Domain,kCFPreferencesCurrentUser,kCFPreferencesAnyHost))?:@{};}
 static void Log(NSString *s){
@@ -52,31 +60,39 @@ static void PlayLocal(void){
  if(!Player){Log([NSString stringWithFormat:@"Local audio source inaccessible/unsupported: %@",e.localizedDescription?:@"AVAudioPlayer returned nil"]);return;}
  if(![Player prepareToPlay]||![Player play])Log(@"Local audio playback returned NO; no uplink injection"); else Log(@"Local playback started only; no call uplink injection");
 }
+static void ObserveConnection(NSUUID *uuid,NSMutableDictionary *s){
+ BOOL submitted=[s[@"submitted"] boolValue];AACCancelForObservedConnection(s);
+ Record(uuid,s,submitted?@"观察到连接；请求与人工/系统接听归因不明，已抑制自动播放":@"请求提交前已连接：手动/系统/其他，已取消自动接听和自动播放",@{@"connected":@YES,@"beforeRequest":@(!submitted)});
+ Log(submitted?@"Connected after submission: answer ownership ambiguous; autoplay suppressed; imported files retained":@"Connected before submission (manual/system/other): UUID timers invalidated, autoplay suppressed; imported files retained");
+ if(AACMayAutoplay(s))PlayLocal();
+}
 static void Changed(CXCall *call){
  NSUUID *uuid=call.UUID; if(!uuid)return; NSMutableDictionary *s=States[uuid];
  if(!s){s=[NSMutableDictionary dictionaryWithDictionary:@{@"scheduled":@NO,@"pending":@NO,@"attempted":@NO,@"accepted":@NO}];States[uuid]=s;}
+ s[@"outgoing"]=@(call.outgoing);NSString *caller=Number(call);if(caller.length)s[@"caller"]=caller;
  Log([NSString stringWithFormat:@"Call %@ outgoing=%d connected=%d ended=%d",uuid.UUIDString,call.outgoing,call.hasConnected,call.hasEnded]);
- if(call.hasConnected){
-  if([s[@"pending"] boolValue]){Log(@"Observed connected while answer request pending; correlation only, manual/system answer cannot be excluded");s[@"pending"]=@NO;if([s[@"accepted"] boolValue])PlayLocal();}
-  else Log(@"Observed connected without pending request (manual/system/other); no automatic success claim");
-  s[@"attempted"]=@YES;return;
- }
- if(call.hasEnded){s[@"pending"]=@NO;s[@"attempted"]=@YES;return;}
- if([s[@"scheduled"] boolValue]||[s[@"attempted"] boolValue]||!Allowed(call,Prefs()))return;
+ if(call.hasEnded){AACCancelForObservedConnection(s);if(!call.hasConnected)s[@"connectedObserved"]=@NO;Record(uuid,s,@"通话已结束",(call.hasConnected?@{@"ended":@YES,@"connected":@YES}:@{@"ended":@YES}));s[@"pending"]=@NO;s[@"attempted"]=@YES;return;}
+ if(call.hasConnected){ObserveConnection(uuid,s);return;}
+ if([s[@"scheduled"] boolValue]||[s[@"attempted"] boolValue])return;
+ if(!Allowed(call,Prefs())){Record(uuid,s,@"跳过：插件关闭、模式或排除策略不符合（见电话诊断）",nil);return;}
  s[@"scheduled"]=@YES; NSDictionary *p=Prefs(); double delay=p[@"Delay"]?AACBoundDelay([p[@"Delay"] doubleValue]):0.5;
- NSUInteger generation=StopGeneration;
+ NSUInteger generation=StopGeneration;NSUInteger callGeneration=[s[@"callGeneration"] unsignedIntegerValue];
+ Record(uuid,s,[NSString stringWithFormat:@"等待 %.15g 秒后重新检查",delay],nil);
  Log([NSString stringWithFormat:@"Scheduled %@ delay=%.15g seconds from first eligible observed incoming event, NOT measured audible ringing",uuid.UUIDString,delay]);
  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(delay*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
-  if(States[uuid]!=s||generation!=StopGeneration){Log(@"Delayed answer cancelled by plugin stop generation");return;} s[@"scheduled"]=@NO; CXCall *live=Current(uuid);
-  if(!live||!Allowed(live,Prefs())){Log(@"Delayed answer cancelled: call absent/state or settings changed");return;}
-  s[@"attempted"]=@YES;s[@"pending"]=@YES;
+  if(States[uuid]!=s||generation!=StopGeneration){Log(@"Delayed answer cancelled by plugin stop generation");Record(uuid,s,@"取消：插件已停止",nil);return;} s[@"scheduled"]=@NO; CXCall *live=Current(uuid);
+  if(live.hasConnected){ObserveConnection(uuid,s);return;}
+  if(!AACMaySubmit(s,callGeneration,live!=nil,live.hasConnected,live.hasEnded)){Log(@"Delayed answer invalidated by UUID connection/end generation or absent call");return;}
+  if(!live||!Allowed(live,Prefs())){Log(@"Delayed answer cancelled: call absent/state or settings changed");Record(uuid,s,@"取消：通话消失、状态或设置已改变",nil);return;}
+  s[@"attempted"]=@YES;s[@"pending"]=@YES;s[@"submitted"]=@YES;
+  Record(uuid,s,@"已提交接听请求",@{@"submitted":@YES});
   CXAnswerCallAction *action=[[CXAnswerCallAction alloc] initWithCallUUID:uuid]; CXTransaction *tx=[[CXTransaction alloc] initWithAction:action];
   Log([NSString stringWithFormat:@"Submitting CXAnswerCallAction %@ (cellular authorization not guaranteed)",uuid.UUIDString]);
   [Controller requestTransaction:tx completion:^(NSError *error){dispatch_async(dispatch_get_main_queue(),^{
-   if(error){s[@"pending"]=@NO;Log([NSString stringWithFormat:@"Answer transaction failed domain=%@ code=%ld detail=%@",error.domain,(long)error.code,error.localizedDescription?:@"No description"]);}
-   else {s[@"accepted"]=@YES;Log(@"Answer transaction accepted; this alone does not confirm connected");}
+   if(error){s[@"pending"]=@NO;Record(uuid,s,[NSString stringWithFormat:@"请求失败：%@/%ld %@",error.domain,(long)error.code,error.localizedDescription?:@""],@{@"failed":@YES});Log([NSString stringWithFormat:@"Answer transaction failed domain=%@ code=%ld detail=%@",error.domain,(long)error.code,error.localizedDescription?:@"No description"]);}
+   else {s[@"accepted"]=@YES;Record(uuid,s,@"事务已接受；不代表连接",@{@"accepted":@YES});Log(@"Answer transaction accepted; this alone does not confirm connected");}
   });}];
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,15*NSEC_PER_SEC),dispatch_get_main_queue(),^{if([s[@"pending"] boolValue]){s[@"pending"]=@NO;Log(@"Answer request observation timeout: no confirmed connection");}});
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,15*NSEC_PER_SEC),dispatch_get_main_queue(),^{if([s[@"pending"] boolValue]){s[@"pending"]=@NO;Record(uuid,s,@"观察超时：未确认连接",@{@"timedOut":@YES});Log(@"Answer request observation timeout: no confirmed connection");}});
  });
 }
 @interface AACDelegate : NSObject<CXCallObserverDelegate> @end
@@ -85,10 +101,17 @@ static void Changed(CXCall *call){
 @end
 %ctor {
  if([NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.MobilePhone"]){dispatch_async(dispatch_get_main_queue(),^{
-  States=[NSMutableDictionary new];Controller=[CXCallController new];Observer=[CXCallObserver new];RetainedDelegate=[AACDelegate new];[Observer setDelegate:RetainedDelegate queue:dispatch_get_main_queue()];
-  Log(@"Loaded 1.9.0; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed");
+  Records=AACReadRecords(NULL,NULL);States=[NSMutableDictionary new];Controller=[CXCallController new];Observer=[CXCallObserver new];RetainedDelegate=[AACDelegate new];[Observer setDelegate:RetainedDelegate queue:dispatch_get_main_queue()];
+  Log(@"Loaded 1.9.1; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed");
   int token=0;notify_register_dispatch("com.autoanswer.call.ping",&token,dispatch_get_main_queue(),^(int t){Log(@"Ping acknowledged in MobilePhone");notify_post("com.autoanswer.call.pong");});
   int stopToken=0;uint32_t stopStatus=notify_register_dispatch("com.autoanswer.call.stop",&stopToken,dispatch_get_main_queue(),^(int t){StopGeneration++;for(NSMutableDictionary *s in States.allValues){if([s[@"scheduled"] boolValue]){s[@"scheduled"]=@NO;s[@"attempted"]=@YES;}}[Player stop];Log(@"Plugin stop observed; invalidated unsubmitted timers, existing transactions cannot be revoked; native system switch unaffected");});if(stopStatus!=NOTIFY_STATUS_OK)Log(@"Plugin stop notification registration failed; delayed preferences revalidation still applies");
+  int clearToken=0;uint32_t clearStatus=notify_register_dispatch("com.autoanswer.call.records.clear",&clearToken,dispatch_get_main_queue(),^(int t){
+   /* Only MobilePhone owns deletion. Never trust a Settings-side empty read as acknowledgement. */
+   for(NSMutableDictionary *state in States.allValues)state[@"recordsCleared"]=@YES;
+   Records=@[];BOOL saved=AACWriteRecords(Records);BOOL synced=NO,present=NO;NSArray *readback=AACReadRecords(&synced,&present);
+   if(saved&&synced&&present&&!readback.count)notify_post("com.autoanswer.call.records.cleared");
+   else notify_post("com.autoanswer.call.records.clearFailed");
+  });if(clearStatus!=NOTIFY_STATUS_OK)Log(@"Phone record clear notification registration failed");
   Log(@"Initial observer snapshot is diagnostic only, not a ringing-start event; no delay scheduled until a delegate event");
  });}
 }
