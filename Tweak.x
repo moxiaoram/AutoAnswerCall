@@ -7,6 +7,9 @@
 #import "AACPolicy.h"
 #import "AACRecords.h"
 #import "AACCallLifecycle.h"
+#import "AACSharedLog.h"
+#import "AACProbe.h"
+#import "AACInventory.h"
 static NSString * const Domain=@"com.autoanswer.call";
 static NSString * const PhoneDomain=@"com.autoanswer.call.phone";
 static CXCallObserver *Observer;
