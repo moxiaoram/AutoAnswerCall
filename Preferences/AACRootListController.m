@@ -14,6 +14,7 @@ static NSString *ErrorText(NSError *e,NSString *fallback){return e?[NSString str
 #import "AACAudioLibrary.h"
 #import "AACRecordsController.h"
 #import "AACLogViewerController.h"
+#import "AACLogExportController.h"
 #import "AACProbeController.h"
 @interface AACRootListController : PSListController<UIDocumentPickerDelegate>
 @property(nonatomic) BOOL importing;
@@ -38,7 +39,7 @@ static NSString *ErrorText(NSError *e,NSString *fallback){return e?[NSString str
  /* ConfigVersion is the phone side fail-closed marker: it must exist before
     automatic answering is allowed at all. */
  NSUserDefaults *vd=Defaults();if(![vd objectForKey:@"ConfigVersion"]){[vd setObject:@1 forKey:@"ConfigVersion"];[vd synchronize];}
-AACAudioLibrary *library=AACAudioLibrary.shared;if(library.failure)[self log:library.failure];[self log:@"设置模块已加载 1.12.0（InCallService/SpringBoard 双宿主运行时发现版）；不代表任何宿主模块已加载"];NSDictionary *sharedChosen=AACSharedResolve(@"settings",NO);[self log:[NSString stringWithFormat:@"共享日志路径：%@（%@）；无候选可写时回退 CFPreferences，跨进程可见性不保证",sharedChosen[@"path"]?:@"没有可写候选",sharedChosen[@"label"]?:@"无"]]; __weak typeof(self) w=self;int token=0;uint32_t status=notify_register_dispatch("com.autoanswer.call.pong",&token,dispatch_get_main_queue(),^(int t){w.pong=NSDate.date;[w log:@"收到 MobilePhone Darwin pong；仅证明当时存活，不证明接听能力；本机证据显示电话进程从未应答，接听宿主为 InCallService（优先）/SpringBoard"];});if(status==NOTIFY_STATUS_OK){self.pongToken=token;self.observing=YES;}else [self log:[NSString stringWithFormat:@"pong registration failed %u",status]];}
+AACAudioLibrary *library=AACAudioLibrary.shared;if(library.failure)[self log:library.failure];[self log:@"设置模块已加载 1.13.0（双宿主运行时发现 + 放开挂钩 ABI 门槛 + 全部运行日志分享版）；不代表任何宿主模块已加载"];NSDictionary *sharedChosen=AACSharedResolve(@"settings",NO);[self log:[NSString stringWithFormat:@"共享日志路径：%@（%@）；无候选可写时回退 CFPreferences，跨进程可见性不保证",sharedChosen[@"path"]?:@"没有可写候选",sharedChosen[@"label"]?:@"无"]]; __weak typeof(self) w=self;int token=0;uint32_t status=notify_register_dispatch("com.autoanswer.call.pong",&token,dispatch_get_main_queue(),^(int t){w.pong=NSDate.date;[w log:@"收到 MobilePhone Darwin pong；仅证明当时存活，不证明接听能力；本机证据显示电话进程从未应答，接听宿主为 InCallService（优先）/SpringBoard"];});if(status==NOTIFY_STATUS_OK){self.pongToken=token;self.observing=YES;}else [self log:[NSString stringWithFormat:@"pong registration failed %u",status]];}
 - (void)dealloc{if(_observing)notify_cancel(_pongToken);}
 - (void)pickAudio:(PSSpecifier *)s{if(self.importing)return;AACAudioLibrary *lib=AACAudioLibrary.shared;if(lib.failure){[self alert:@"音频库不可写" message:lib.failure];return;}UIDocumentPickerViewController *p=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[[UTType typeWithIdentifier:@"public.audio"]] asCopy:YES];p.delegate=self;p.allowsMultipleSelection=YES;[self presentViewController:p animated:YES completion:nil];}
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller{[self log:@"音频导入已取消"];}
@@ -77,7 +78,7 @@ AACAudioLibrary *library=AACAudioLibrary.shared;if(library.failure)[self log:lib
 - (void)showAudioLibrary:(PSSpecifier *)s{[self.player stop];self.player=nil;self.localAudio=nil;AACAudioLibrary *lib=AACAudioLibrary.shared;if(lib.failure)[self log:lib.failure];[self.navigationController pushViewController:[AACAudioListController new] animated:YES];}
 - (NSDictionary *)localMetadata{NSString *dir=LocalDir(nil);return dir?[NSDictionary dictionaryWithContentsOfURL:[NSURL fileURLWithPath:[dir stringByAppendingPathComponent:@"audio.plist"]] error:nil]:nil;}
 - (NSURL *)audioURL{NSString *p=[self localMetadata][@"AudioPath"]?:[Defaults() stringForKey:@"AudioPath"];return self.localAudio?:(p.length?[NSURL fileURLWithPath:p]:nil);}
-- (void)exportConfig:(PSSpecifier *)s{NSError *e=nil;NSString *dir=LocalDir(&e);NSString *path=[dir stringByAppendingPathComponent:@"configuration.plist"];NSMutableDictionary *config=[NSMutableDictionary new];NSUserDefaults *d=Defaults();for(NSString *k in @[@"Mode",@"Enabled",@"Delay",@"Whitelist",@"PlayAudio",@"AudioPath",@"AudioName",@"AudioSize",@"SelectedAudioID"]){id v=[d objectForKey:k];if(v)config[k]=v;}[config addEntriesFromDictionary:[self localMetadata]?:@{}];config[@"Version"]=@"1.12.0";if(!path||![config writeToURL:[NSURL fileURLWithPath:path] error:&e]){[self alert:@"导出失败" message:ErrorText(e,@"配置目标不可写")];return;}UIActivityViewController *a=[[UIActivityViewController alloc] initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];if(a.popoverPresentationController){a.popoverPresentationController.sourceView=self.view;a.popoverPresentationController.sourceRect=CGRectMake(self.view.bounds.size.width/2,self.view.bounds.size.height/2,1,1);}[self presentViewController:a animated:YES completion:nil];}
+- (void)exportConfig:(PSSpecifier *)s{NSError *e=nil;NSString *dir=LocalDir(&e);NSString *path=[dir stringByAppendingPathComponent:@"configuration.plist"];NSMutableDictionary *config=[NSMutableDictionary new];NSUserDefaults *d=Defaults();for(NSString *k in @[@"Mode",@"Enabled",@"Delay",@"Whitelist",@"PlayAudio",@"AudioPath",@"AudioName",@"AudioSize",@"SelectedAudioID"]){id v=[d objectForKey:k];if(v)config[k]=v;}[config addEntriesFromDictionary:[self localMetadata]?:@{}];config[@"Version"]=@"1.13.0";if(!path||![config writeToURL:[NSURL fileURLWithPath:path] error:&e]){[self alert:@"导出失败" message:ErrorText(e,@"配置目标不可写")];return;}UIActivityViewController *a=[[UIActivityViewController alloc] initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];if(a.popoverPresentationController){a.popoverPresentationController.sourceView=self.view;a.popoverPresentationController.sourceRect=CGRectMake(self.view.bounds.size.width/2,self.view.bounds.size.height/2,1,1);}[self presentViewController:a animated:YES completion:nil];}
 - (void)testAudio:(PSSpecifier *)s{
  NSURL *u=[self audioURL];NSError *e=nil;if(!u){[self alert:@"试听失败" message:@"未导入音频"];return;}
  self.player=[[AVAudioPlayer alloc] initWithContentsOfURL:u error:&e];
@@ -129,4 +130,34 @@ AACAudioLibrary *library=AACAudioLibrary.shared;if(library.failure)[self log:lib
 - (void)probeProcesses:(PSSpecifier *)s{[self.player stop];self.player=nil;[self.navigationController pushViewController:[[AACProbeController alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];}
 - (void)showSharedLogs:(PSSpecifier *)s{[self.navigationController pushViewController:[[AACSharedLogController alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];}
 - (void)showDiscovery:(PSSpecifier *)s{[self.player stop];self.player=nil;[self.navigationController pushViewController:[[AACProbeController alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];}
+/* 1.13.0: 分享全部运行日志。Gathers the per-host shared logs, the per-host runtime-discovery
+   files, the per-host inventories, the settings log, the call records, the CFPreferences
+   dumps and a freshly exported configuration plist; copies what really exists into a temporary
+   export directory and hands every file URL to UIActivityViewController together with the
+   honest report. Files that do not exist are reported as missing with the reason and are never
+   fabricated. Nothing here needs a device install and nothing is claimed to prove answering. */
+- (void)shareAllLogs:(PSSpecifier *)s{
+ NSArray *notes=AACExportPrepare(NULL);
+ NSString *prepareSummary=[notes componentsJoinedByString:@"；"];
+ NSDictionary *gathered=AACExportGather();
+ NSArray *entries=gathered[@"entries"]?:@[];
+ NSMutableArray *failures=[NSMutableArray new];
+ NSArray *urls=AACExportCopy(entries,failures);
+ [self log:[NSString stringWithFormat:@"分享全部运行日志：存在=%@ 缺失=%@ 共=%lu，可分享文件=%lu；生成：%@",gathered[@"found"],gathered[@"missing"],(unsigned long)entries.count,(unsigned long)urls.count,prepareSummary?:@"无"]];
+ for(NSString *failure in failures)[self log:[@"分享失败项：" stringByAppendingString:failure]];
+ if(!urls.count){
+  [self alert:@"没有可分享的运行日志" message:[NSString stringWithFormat:@"没有找到任何存在的运行日志文件，因此没有内容可以分享（不是分享失败）。
+
+%@",gathered[@"report"]]];
+  return;
+ }
+ [self.player stop];self.player=nil;
+ NSString *summary=[NSString stringWithFormat:@"将分享 %lu 个真实存在的文件（另有 %@ 项缺失，逐项原因写在报告里，不做虚构）。
+设置侧生成：%@
+
+报告会一并分享。",(unsigned long)urls.count,gathered[@"missing"],prepareSummary?:@"无"];
+ [self log:summary];
+ AACExportShare(self,urls,gathered[@"report"],self.view,^{});
+}
+- (void)showLogExport:(PSSpecifier *)s{[self.player stop];self.player=nil;[self.navigationController pushViewController:[[AACLogExportController alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];}
 @end

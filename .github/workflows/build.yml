@@ -51,6 +51,7 @@ jobs:
           for deb in "${debs[@]}"; do
             dpkg-deb --info "$deb"
             test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64e"
+            test "$(dpkg-deb -f "$deb" Version)" = "1.13.0"
             dpkg-deb --contents "$deb" | rg -F 'AutoAnswerCall.dylib'
             dpkg-deb --contents "$deb" | rg -F 'AutoAnswerCallPrefs.bundle'
             dpkg-deb --contents "$deb" | rg -F 'autoanswer.call.plist'

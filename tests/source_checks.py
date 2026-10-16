@@ -48,6 +48,7 @@ assert '/AutoAnswerCalls' not in s
 # ---- 1.10.0 evidence build: shared log channel, per-process probe, SB inventory ----
 shared=(r/'AACSharedLog.h').read_text();probe=(r/'AACProbe.h').read_text();inv=(r/'AACInventory.h').read_text()
 logs=(r/'Preferences/AACLogViewerController.h').read_text();pc=(r/'Preferences/AACProbeController.h').read_text()
+export_text=(r/'Preferences/AACLogExportController.h').read_text()
 # candidate absolute paths, tried in order, plus the documented private fallback domain
 for good in ['/var/mobile/Library/Application Support','/var/jb/var/mobile/Library/Application Support','NSApplicationSupportDirectory','NSTemporaryDirectory','/tmp/AutoAnswerCall','com.autoanswer.call.sharelog','@try','first one that is actually writable','NOT claimed']:
  assert good in shared,good
@@ -69,6 +70,8 @@ for good in ['AACProbeController','AACSharedLogController','probeProcesses:','sh
  assert good in s or good in pc or good in logs,good
 actions=[i.get('action') for i in p['items'] if i.get('action')]
 assert 'probeProcesses:' in actions and 'showSharedLogs:' in actions,actions
+# 1.13.0: the two new log-share rows must exist in the shipped settings plist
+assert 'shareAllLogs:' in actions and 'showLogExport:' in actions,actions
 # no invented Apple preference domains/keys anywhere in the evidence code: the only
 # CFPreferences domains used are our own, and no Apple accessor/key name is referenced.
 for text in (shared,probe,inv):
@@ -85,22 +88,62 @@ for good in ['objc_getClassList','class_copyMethodList','method_getImplementatio
 # candidate classes are discovered from the real runtime; the keyword list must stay broad
 for good in ['IncomingCall','CallAlert','CallToAction','CallPresentation','InCall','SBInCall','LockScreenCall','AnswerCall','CallController','CallUI','answer','accept','pickup']:
  assert good in sb,good
-# ABI is proven before hooking: exactly (self,_cmd) and a void return, so the fixed-signature
-# interposer is safe; nothing else is ever hooked.
-assert "if(arguments!=2){" in sb and "if(returnType[0]!='v'){" in sb
+# 1.13.0 RELAXED HOOK ABI GATE. The 1.12.0 gate ("zero explicit arguments AND a void return")
+# is gone: a device test showed SpringBoard detecting the call while NOTHING was hooked, so the
+# gate itself was the most likely reason no answer path existed. The accepted set is now "zero
+# explicit arguments + ANY return type a fixed thunk can forward correctly", one thunk per
+# return class, and argument-taking methods are registered as NSInvocation candidates instead
+# of being hooked with a wrong ABI.
+assert "if(arguments!=2){" not in sb and "if(returnType[0]!='v'){" not in sb, 'the narrow 1.12.0 gate must be gone'
+for good in ['AACSBThunkForReturnType','AACSBAnswerHookBool','AACSBAnswerHookObject','AACSBAnswerHookInteger','AACSBAnswerHookDouble',
+             '0args+void','0args+BOOL','0args+object','0args+integer','0args+float',
+             'AACSBIsOurThunk','AACSBInvocationRecords','AACSBInvocationCount','AACSBInvocationKeys','AACSBInvocationCap=12',
+             'AACSBInvocationArgumentSafe','AACSBMethodInvocationSafe','AACSBInvocationSelectorFor','AACSBInvokeByInvocation',
+             'signatureWithObjCTypes','[invocation invoke]','INVOKABLE_BY_INVOCATION','INVOKED_BY_INVOCATION','CAPTURED','HOOKED ',
+             'AACSBSelectorForbidden','AACSBClassMatchesGlobal','global-call-scan','AACSBGlobalClassCap=600','CFAbsoluteTimeGetCurrent',
+             'AACSBAnswerHookFloat','0args+float32','0args+float64','AACSBSelectorIsARCUnsafe','AACSBSelectorFamilyPrefix','ARC 方法族',
+             'rolledBack=','AACSBLogMethodOutcomes','answerPaths=%lu','AACSBAnswerPathCount']:
+ assert good in sb,good
+# the safety blacklist is real: no decline/reject/hang-up selector may ever be hooked or invoked
+for keyword in ['decline','reject','hangup','hang up','endcall','end call','disconnect','sendtovoicemail']:
+ assert keyword in sb,keyword
+# a float return must not be forwarded through a double thunk, and ARC method families
+# (init/new/copy/alloc) are never hooked because the caller assumes a +1 return there
+assert 'static float AACSBAnswerHookFloat(id self,SEL _cmd){' in sb
+assert "case 'f':if(abiText)*abiText=@\"0args+float32\";return (IMP)AACSBAnswerHookFloat;" in sb
+assert "case 'd':if(abiText)*abiText=@\"0args+float64\";return (IMP)AACSBAnswerHookDouble;" in sb
+for family in ['alloc','new','copy','mutableCopy','init']:
+ assert '"%s"' % family in sb,family
+assert "NSString *forbidden=AACSBForbiddenKeyword(selectorName);" in sb and "拒绝/挂断类关键字" in sb
+# MSHookMessageEx is the INTENDED mechanism now (ElleKit / substrate compat, resolved with
+# dlsym so no private header has to exist), with method_setImplementation as the fallback that
+# keeps the same saved-original-IMP contract. The previous test forbade this symbol; the
+# assertion is inverted because the hook is now meant to go through it.
+assert 'MSHookMessageEx' in sb and 'dlsym(RTLD_DEFAULT,"MSHookMessageEx")' in sb
+assert 'method_setImplementation(method,thunk)' in sb
+assert 'AACMSHookMessageExFn' in sb and 'hookFn(cls,selector,thunk,&original)' in sb
+assert 'substrate.h' not in sb, 'the prototype must be declared locally, never through a private header'
+# the invocation path is bounded and cannot silently call something dangerous
+assert '显式参数数量=%u 超过可安全构造默认值的上限 3' in sb
+assert '方法不存在' in sb or '方法无法用 NSInvocation 安全调用' in sb
+assert 'AACSBInvokeByInvocation' in sb and 'AACSBInvoking,1)' in sb
 # never hook the same method/IMP twice
 assert 'AACSBHookedKeys' in sb and 'AACSBHookedIMPs' in sb and '绝不重复挂钩' in sb
 # recursion guard + original IMP per (class,selector) + direct original-IMP invocation
 assert 'AACSBInvoking' in sb and 'AACSBOriginalFor' in sb and 'recursion guard' in sb
 # the answer path may not depend on any hardcoded private class name
-for bad in ['NSClassFromString','SBIncomingCallViewController','SBCallAlertViewController','IncomingCallViewController','SBInCallPresentationManager','SBLockScreenCallController','%hook','substrate.h','MSHookMessageEx']:
+# (MSHookMessageEx and substrate.h are handled above: the symbol name is required, the
+# private header is still forbidden because the prototype is declared locally.)
+for bad in ['NSClassFromString','SBIncomingCallViewController','SBCallAlertViewController','IncomingCallViewController','SBInCallPresentationManager','SBLockScreenCallController','%hook','substrate.h','IOKit','CTCall','hasOutgoing']:
  assert bad not in sb,bad
 # policy/answer wiring in Tweak.x
-for good in ['SubmitBlock','if(SubmitBlock){SubmitBlock(uuid,s);}else{','RegisterControls();','AACSBStart(env)','AnswerHostStart(answerHost)','AACSBRetryDiscoveryIfEmpty()','AACSBEnv *env=[AACSBEnv new]','LOG-ONLY primary path','已调用运行时发现的 UI 接听方法（尚未确认接通）','未发现可调用的 UI 接听路径']:
+for good in ['SubmitBlock','if(SubmitBlock){SubmitBlock(uuid,s);}else{','RegisterControls();','AACSBStart(env)','AnswerHostStart(answerHost)','AACSBRetryDiscoveryIfEmpty()','AACSBEnv *env=[AACSBEnv new]','LOG-ONLY primary path','已调用运行时发现的 UI 接听方法（尚未确认接通）','未发现可调用的 UI 接听路径','AACSBLogMethodOutcomes()']:
  assert good in t,good
+assert 'Loaded 1.13.0 answer host' in t and '1.13.0 EVIDENCE build' in t
+assert 'ABI gate relaxed' in t
 assert sb.count('AACSBAnswerHook')>=4
 # phone module keeps its 1.9.x/1.10.0 behaviour byte-for-byte
-assert 'Loaded 1.12.0 evidence build; retained CXCallObserver in MobilePhone' in t
+assert 'Loaded 1.13.0 evidence build; retained CXCallObserver in MobilePhone' in t
 assert 'inPhoneProcess' in t and 'ProcessTag=@"mobilephone";' in t
 # settings side shows the runtime-discovered result and never invents one
 for good in ['AACDiscoveryEntry','aac-springboard.discovery.txt','runtime-discovered','AACCountOccurrences','没有可读的发现文件','showDiscovery:']:
@@ -147,9 +190,22 @@ assert 'return;' in observer_branch and 'CXAnswerCallAction' not in observer_bra
 assert t.count('secondary unverified diagnostic attempt')==1
 # exactly two: the unchanged phone module (1.9.x path) and the single diagnostic attempt
 assert t.count('requestTransaction:tx')==2
-# CallKit error meaning is decoded, not reported as a generic failure
-for good in ['CallKitErrorMeaning','com.apple.CallKit.error.requesttransaction','com.apple.CallKit.error.incomingcall','code 1 = unknownCallUUID','不拥有该蜂窝通话','不猜测含义','含义：']:
+# 1.13.0: the CallKit error mapping is CORRECTED. Apple's CXErrorCodeRequestTransactionError
+# order is unknown(0), unentitled(1), unknownCallProvider(2), emptyTransaction(3),
+# unknownCallUUID(4), callUUIDAlreadyExists(5), invalidAction(6), maximumCallGroupsReached(7),
+# so code 1 means UNENTITLED ("The app doesn't have the entitlement to perform the actions in
+# the requested transaction") and NOT unknownCallUUID. The 1.12.0 table was wrong.
+for good in ['CallKitErrorMeaning','com.apple.CallKit.error.requesttransaction','com.apple.CallKit.error.incomingcall',
+             'code 0 = unknown','code 1 = unentitled','code 2 = unknownCallProvider','code 3 = emptyTransaction',
+             'code 4 = unknownCallUUID','code 5 = callUUIDAlreadyExists','code 6 = invalidAction','code 7 = maximumCallGroupsReached',
+             "doesn't have the entitlement",'不猜测含义','含义：']:
  assert good in t,good
+assert 'code 1 = unknownCallUUID' not in t, 'the wrong 1.12.0 mapping must be gone'
+assert 'code 1 = unentitled' in t
+# the public transaction path is labelled unusable by Apple's own documentation, not by our guess
+assert 'asynchronously performed by the telephony provider' in t
+assert 'CXAnswerCallAction' in t and 'performed by a CallKit provider' in t
+assert 'asking the telephony provider to perform the actions' in t
 # each answer host proves its own discovery result so the next device test is conclusive
 for good in ['已挂钩方法=','本宿主已挂钩运行时发现到的接听方法','因此本宿主不可能接听']:
  assert good in sb,good
@@ -157,11 +213,39 @@ for good in ['已挂钩方法=','本宿主已挂钩运行时发现到的接听�
 for good in ['@"mobilephone",@"springboard",@"incall",@"settings"','com.autoanswer.call.pong.incall','incall-pong','AACDiscoveryHosts','AACDiscoveryHostLabel','AACDiscoveryEntryForHost','AACDiscoveryLabelForEntry','aac-incall.discovery.txt','aac-springboard.discovery.txt','没有可读的发现文件']:
  assert good in pc,good
 # version bumped everywhere, package id unchanged, filter is the four documented ids
-assert 'Version: 1.12.0' in (r/'control').read_text() and 'Package: com.autoanswer.call' in (r/'control').read_text()
-assert 'PACKAGE_VERSION := 1.12.0' in (r/'Makefile').read_text()
+# ---- 1.13.0: version bump everywhere + full run-log export/share ------------------------
+assert 'Version: 1.13.0' in (r/'control').read_text() and 'Package: com.autoanswer.call' in (r/'control').read_text()
+assert 'PACKAGE_VERSION := 1.13.0' in (r/'Makefile').read_text()
 assert 'INSTALL_TARGET_PROCESSES := SpringBoard MobilePhone InCallService' in (r/'Makefile').read_text()
-assert '1.12.0' in (r/'README.md').read_text() and '1.12.0' in pstr and '1.12.0' in pc
-assert 'config[@"Version"]=@"1.12.0";' in s
-assert '设置模块已加载 1.12.0' in s
+assert '1.13.0' in (r/'README.md').read_text() and '1.13.0' in pstr and '1.13.0' in pc and '1.13.0' in sb
+assert 'config[@"Version"]=@"1.13.0";' in s
+assert '设置模块已加载 1.13.0' in s
+assert 'config[@"Version"]=@"1.13.0";' in export_text, 'the exported configuration plist must carry the 1.13.0 version too'
+# no stale 1.12.0 version stamp may survive in the shipped sources (historical prose about
+# the previous release is allowed only where it is explicitly marked as history).
+for path in ('control','Makefile'):
+ assert '1.12.0' not in (r/path).read_text(), path
+assert 'PACKAGE_VERSION := 1.13.0' in (r/'Makefile').read_text()
+# --- run-log export / share (Task 2) ---
+for good in ['shareAllLogs:','showLogExport:','AACLogExportController','运行日志分享']:
+ assert good in s or good in pstr,good
+for good in ['AACExportHosts','AACExportDiscoveryFiles','aac-incall.discovery.txt','aac-springboard.discovery.txt',
+             'AACSharedFileLeaf(host,@"log")','AACSharedFileLeaf(host,@"txt")',
+             'AACExportLocalDir','AACExportPrepare','configuration.plist','call-records.txt','shared-prefs-fallback.txt',
+             'probe-companion.txt','settings.log','audio-library.plist','AACExportGather','AACExportEntry','AACExportCopy',
+             '运行导出报告.txt','AutoAnswerCall-export-','UIActivityViewController','initWithActivityItems:items',
+             'accessoryButtonTappedForRowWithIndexPath','AACLogText','未创建','不做任何虚构','AACSharedPrefsDump','AACSharedProbeCompanionDump','AACReadRecords']:
+ assert good in export_text,good
+# the export must report found/missing counts and never invent an entry or a credential
+assert '存在 %lu 项，缺失 %lu 项' in export_text
+assert 'found' in export_text and 'missing' in export_text
+for forbidden in ['password','passwd','apiKey','secret','token']:
+ assert forbidden not in export_text,forbidden
+assert 'com.apple.' not in export_text, 'the export must only read our own domain'
+assert 'callAudioRouting' not in export_text
+# the entries are enumerated per host and per candidate directory, i.e. no file is hardcoded away
+assert 'AACSharedLogCandidateDirs()' in export_text and 'for(NSString *host in AACExportHosts())' in export_text
+assert 'AACExportHosts(void){return @[@"incall",@"springboard",@"mobilephone",@"settings"];}' in export_text
+assert 'UIActivityViewController' in export_text and 'copyItemAtPath' in export_text
 
-print('PASS: transactions, mode2 exclusions, finite seconds, stop generations, bounded multiselect import, library schema/migration/delete guards, native accessor ABI guards, 1.10.0 evidence channel (per-process probe, bounded inventory, per-path log reporting) plus 1.11.0/1.12.0 answer-host module (host table InCallService+SpringBoard+MobilePhone, per-host probe/pong/discovery names, broad runtime candidate classes, ABI-proven dynamic hooks, per-method original IMP, recursion guard, weak capture + hierarchy re-scan, deterministic single-owner role table with a per-UUID submission guard, decoded CallKit error meanings, explicit observer/log-only fallbacks) - static checks only, NOT device runtime')
+print('PASS: transactions, mode2 exclusions, finite seconds, stop generations, bounded multiselect import, library schema/migration/delete guards, native accessor ABI guards, 1.10.0 evidence channel (per-process probe, bounded inventory, per-path log reporting) plus the 1.11.0/1.12.0 answer-host module and the 1.13.0 relaxed hook ABI gate (MSHookMessageEx + per-return-type thunks + bounded NSInvocation candidates for argument-taking methods, per-method HOOKED/INVOKABLE_BY_INVOCATION/CAPTURED/INVOKED_BY_INVOCATION/SKIPPED reporting), the corrected CallKit error mapping (code 1 = unentitled) and the full run-log export/share surface (host table InCallService+SpringBoard+MobilePhone, per-host probe/pong/discovery names, broad runtime candidate classes, ABI-proven dynamic hooks, per-method original IMP, recursion guard, weak capture + hierarchy re-scan, deterministic single-owner role table with a per-UUID submission guard, decoded CallKit error meanings, explicit observer/log-only fallbacks) - static checks only, NOT device runtime')

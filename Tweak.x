@@ -27,24 +27,36 @@ static void Record(NSUUID *uuid,NSMutableDictionary *state,NSString *status,NSDi
 }
 static NSUInteger StopGeneration;
 static NSString *ProcessTag=@"unknown";
-/* 1.12.0: the answer host installs its own submit step (runtime-discovered UI answer
-   path). Left nil in the phone module, which keeps the 1.9.x/1.10.0 CXAnswerCallAction
+/* 1.13.0: the answer host installs its own submit step (runtime-discovered UI answer path,
+   now with a relaxed ABI gate and an NSInvocation fallback for argument-taking methods).
+   Left nil in the phone module, which keeps the 1.9.x/1.10.0 CXAnswerCallAction
    transaction path byte-for-byte unchanged. */
 static void (^SubmitBlock)(NSUUID *,NSMutableDictionary *);
-/* Device evidence 1.11.0 (19:46:53 call): SpringBoard detected the call, ran the 6 s
-   delay and the policy layer correctly, then reported "未发现可调用的 UI 接听路径" and the
-   public CXAnswerCallAction fallback failed with
-   com.apple.CallKit.error.requesttransaction code 1 = unknownCallUUID: our own
-   CXCallController does not own this cellular call, so the public transaction path is
-   effectively dead on this device. It stays a single clearly-labelled diagnostic
-   attempt and is never treated as the answering plan. */
+/* Device evidence (1.11.0 call, re-confirmed by the 1.13.0 analysis): SpringBoard detected
+   the call, ran the delay and the policy layer correctly, then reported "未发现可调用的 UI
+   接听路径" and the public CXAnswerCallAction fallback failed with
+   com.apple.CallKit.error.requesttransaction code 1.
+   Apple's CXErrorCodeRequestTransactionError order is unknown(0), unentitled(1),
+   unknownCallProvider(2), emptyTransaction(3), unknownCallUUID(4), callUUIDAlreadyExists(5),
+   invalidAction(6), maximumCallGroupsReached(7) — so code 1 means UNENTITLED
+   ("The app doesn't have the entitlement to perform the actions in the requested
+   transaction"), NOT unknownCallUUID. The 1.12.0 table mapped this wrong and is corrected
+   here.
+   Apple documents requestTransaction as "Requests that the actions in the specified
+   transaction be asynchronously performed by the telephony provider" and CXAnswerCallAction
+   as performed by a CallKit provider, so this public path is not usable by a tweak process:
+   it stays exactly ONE clearly labelled diagnostic attempt and is never the answering plan. */
 static NSString *CallKitErrorMeaning(NSString *domain,NSInteger code){
  if([domain isEqualToString:@"com.apple.CallKit.error.requesttransaction"]){
   switch(code){
-   case 1:return @"code 1 = unknownCallUUID：本进程的 CXCallController 不拥有该蜂窝通话，公开事务路径在本设备上无效（已实测）";
-   case 2:return @"code 2 = callUUIDAlreadyExists：同一 UUID 已存在通话，事务被拒绝";
-   case 3:return @"code 3 = invalidAction：事务中的 action 类型不被接受";
-   case 4:return @"code 4 = maximumCallGroupsReached：通话组数量达到上限";
+   case 0:return @"code 0 = unknown：CXErrorCodeRequestTransactionErrorUnknown，未分类错误";
+   case 1:return @"code 1 = unentitled：本进程没有执行该事务所需的权利（Apple 文档：The app doesn't have the entitlement to perform the actions in the requested transaction）——实测结果；tweak 进程不是 CallKit 提供者，公开事务路径在本设备上无效";
+   case 2:return @"code 2 = unknownCallProvider：找不到可执行该事务的通话提供者";
+   case 3:return @"code 3 = emptyTransaction：事务为空";
+   case 4:return @"code 4 = unknownCallUUID：事务中的通话 UUID 未知";
+   case 5:return @"code 5 = callUUIDAlreadyExists：同一 UUID 已存在通话，事务被拒绝";
+   case 6:return @"code 6 = invalidAction：事务中的 action 类型不被接受";
+   case 7:return @"code 7 = maximumCallGroupsReached：通话组数量达到上限";
    default:return [NSString stringWithFormat:@"code %ld = requesttransaction 未记录/未知错误（不猜测含义）",(long)code];
   }
  }
@@ -181,7 +193,8 @@ static void RegisterControls(void){
   else notify_post("com.autoanswer.call.records.clearFailed");
  });if(clearStatus!=NOTIFY_STATUS_OK)Log(@"Record clear notification registration failed; phone diagnostics remain the only fallback");
 }
-/* Host-parameterised answer module (1.12.0).
+/* Host-parameterised answer module (1.13.0; the hook ABI gate and the per-method outcome
+   reporting were relaxed and extended in this version).
    Device evidence that shaped this version: SpringBoard announces itself over Darwin and
    detects a real call (UUID recorded, 6 s delay executed, policy layer worked), but it
    has NO hookable answer UI and the public CXAnswerCallAction fallback fails with
@@ -197,7 +210,7 @@ static void RegisterControls(void){
 static void AnswerHostStart(NSDictionary *host){
  NSString *tag=host[@"tag"],*display=host[@"display"],*pong=host[@"pong"];
  Records=AACReadRecords(NULL,NULL);States=[NSMutableDictionary new];Controller=[CXCallController new];Observer=[CXCallObserver new];RetainedDelegate=[AACDelegate new];[Observer setDelegate:RetainedDelegate queue:dispatch_get_main_queue()];
- Log([NSString stringWithFormat:@"Loaded 1.12.0 answer host: %@ (tag=%@ probe=%@ pong=%@ discovery=%@); retained its own CXCallObserver in %@; runtime discovery of the real incoming-call UI starts now",display,tag,host[@"probe"],pong,host[@"discovery"],display]);
+ Log([NSString stringWithFormat:@"Loaded 1.13.0 answer host: %@ (tag=%@ probe=%@ pong=%@ discovery=%@); retained its own CXCallObserver in %@; runtime discovery of the real incoming-call UI starts now (ABI gate relaxed: zero-arg any-return -> MSHookMessageEx hook, arg-taking -> NSInvocation candidate)",display,tag,host[@"probe"],pong,host[@"discovery"],display]);
  Log([NSString stringWithFormat:@"接听归属角色表：%@；每个宿主都观察并记录，但只有一个宿主提交接听（InCallService 优先，其次 SpringBoard，否则仅日志）",AACAnswerRoleTableText()]);
  AACSBEnv *env=[AACSBEnv new];
  env.host=host;env.process=tag;
@@ -245,6 +258,7 @@ static void AnswerHostStart(NSDictionary *host){
   NSDictionary *recheck=Prefs();
   Log([NSString stringWithFormat:@"%@ re-verify before answering: settings re-read (fail-closed configValid=%d keys=%lu enabled=%@ mode=%@ delay=%@); %@; the call itself was re-checked as still incoming/unanswered immediately before this step",display,ConfigValid,(unsigned long)recheck.count,recheck[@"Enabled"]?:@"missing",recheck[@"Mode"]?:@"missing",recheck[@"Delay"]?:@"missing",AACSBHostRoleText()]);
   NSString *source=nil;id target=AACSBAnswerTarget(&source);
+  AACSBLogMethodOutcomes();
   NSString *reason=nil;BOOL invoked=AACSBInvokeDiscovered(target,&reason);
   state[@"discoveredPath"]=@(invoked);
   if(invoked){
@@ -256,9 +270,11 @@ static void AnswerHostStart(NSDictionary *host){
   }
   /* Primary path unavailable: stay honest, log-only, then make exactly ONE clearly
      labelled secondary attempt with the public transaction API. That API is proven
-     ineffective for a third-party controller on this device (it does not own the
-     cellular call: com.apple.CallKit.error.requesttransaction code 1 = unknownCallUUID),
-     so it is a diagnostic and not the answering plan. */
+     ineffective for a third-party process on this device — Apple documents
+     requestTransaction as asking the telephony provider to perform the actions, and
+     CXAnswerCallAction as being performed by a CallKit provider, so a tweak process gets
+     com.apple.CallKit.error.requesttransaction code 1 = unentitled (NOT unknownCallUUID).
+     It is therefore a diagnostic and not the answering plan. */
   Record(uuid,state,@"未发现可调用的 UI 接听路径（仅日志）；已做一次公开事务诊断尝试（本设备已证明无效）",@{@"discovered":@NO,@"logOnly":@YES});
   Log([NSString stringWithFormat:@"LOG-ONLY primary path in %@: no captured/rescanned UI object could answer (source=%@, reason=%@)",display,source?:@"unknown",reason?:@"unknown"]);
   state[@"submitted"]=@YES;
@@ -277,7 +293,7 @@ static void AnswerHostStart(NSDictionary *host){
 %ctor {
  NSString *bundle=NSBundle.mainBundle.bundleIdentifier?:@"";
  NSString *process=NSProcessInfo.processInfo.processName?:@"";
- /* 1.12.0 injects into the four filter ids: com.apple.mobilephone, com.apple.springboard,
+ /* 1.13.0 injects into the four filter ids: com.apple.mobilephone, com.apple.springboard,
     com.apple.InCallService and com.apple.incallservice (the lowercase-only rule applies
     to the phone id; the two InCall spellings cover case differences, and duplicate or
     nonexistent ids are harmless). The wrong-case com.apple.MobilePhone is never written
@@ -303,17 +319,17 @@ static void AnswerHostStart(NSDictionary *host){
   return;
  }
  dispatch_async(dispatch_get_main_queue(),^{
-  AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"Loaded 1.12.0 EVIDENCE build; bundle=%@ process=%@ tag=%@",bundle,process,ProcessTag]);
+  AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"Loaded 1.13.0 EVIDENCE build; bundle=%@ process=%@ tag=%@",bundle,process,ProcessTag]);
   AACProbeStart(ProcessTag);
   if(inAnswerHostProcess){
-   AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"%@ answer host 1.12.0: runtime discovery + dynamic hook answer path shared with SpringBoard (names discovered at runtime, never hardcoded; observer-only when another host owns the answer; log-only when nothing is discovered)",answerHost[@"display"]]);
+   AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"%@ answer host 1.13.0: runtime discovery + MSHookMessageEx hook + NSInvocation candidate answer path shared with SpringBoard (names discovered at runtime, never hardcoded; observer-only when another host owns the answer; log-only when nothing is discovered; every candidate method and its outcome is written to the discovery file)",answerHost[@"display"]]);
    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{AACRunInventory(ProcessTag);});
    AnswerHostStart(answerHost);
    return;
   }
   if(inPhoneProcess){
   Records=AACReadRecords(NULL,NULL);States=[NSMutableDictionary new];Controller=[CXCallController new];Observer=[CXCallObserver new];RetainedDelegate=[AACDelegate new];[Observer setDelegate:RetainedDelegate queue:dispatch_get_main_queue()];
-  Log(@"Loaded 1.12.0 evidence build; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed (this module is unchanged from 1.10.0)");
+  Log(@"Loaded 1.13.0 evidence build; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed (this module is unchanged from 1.10.0)");
   int token=0;notify_register_dispatch("com.autoanswer.call.ping",&token,dispatch_get_main_queue(),^(int t){Log(@"Ping acknowledged in MobilePhone");NSDictionary *actual=Prefs();Log([NSString stringWithFormat:@"Configuration observed: keys=%lu enabledPresent=%d mode=%@ delay=%@ whitelistPresent=%d",(unsigned long)actual.count,actual[@"Enabled"]!=nil,actual[@"Mode"]?:@"missing",actual[@"Delay"]?:@"missing",actual[@"Whitelist"]!=nil]);notify_post("com.autoanswer.call.pong");});
   RegisterControls();
  /* MobilePhone keeps the 1.9.x registration order through RegisterControls(); on this device neither InCallService nor SpringBoard has ever been beaten to the answer by it. */

@@ -174,9 +174,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>证据采集（1.12.0）</string>
+			<string>证据采集（1.13.0）</string>
 			<key>footerText</key>
-			<string>1.12.0 采集证据并支持双宿主：注入范围现为 com.apple.mobilephone、com.apple.springboard、com.apple.InCallService、com.apple.incallservice 四个标识（手机号标识只允许小写 com.apple.mobilephone；两个 InCall 拼写仅覆盖大小写差异，重复或不存在的标识无害）。每个已加载模块在载入时及每约 20 秒发送一条按进程区分的 Darwin 通知（com.autoanswer.call.probe.&lt;进程&gt;）；每个接听宿主另有自己的 pong 名与自己的运行时发现文件（aac-incall.discovery.txt / aac-springboard.discovery.txt），设置页逐宿主标注来源与路径。接听只由一个宿主提交：角色表 InCallService(2) &gt; SpringBoard(1) &gt; 仅日志(0)，其余宿主只观察记录。共享日志会按顺序尝试多个绝对候选路径并记录命中哪一个；跨进程可写/可读并未验证，失败时回退到自有 CFPreferences 域且不声称可见。本版本未在设备上安装或验证，不能说明自动接听可用。</string>
+			<string>1.13.0 采集证据、支持双宿主并放开了挂钩 ABI 门槛：注入范围现为 com.apple.mobilephone、com.apple.springboard、com.apple.InCallService、com.apple.incallservice 四个标识（手机号标识只允许小写 com.apple.mobilephone；两个 InCall 拼写仅覆盖大小写差异，重复或不存在的标识无害）。每个已加载模块在载入时及每约 20 秒发送一条按进程区分的 Darwin 通知（com.autoanswer.call.probe.&lt;进程&gt;）；每个接听宿主另有自己的 pong 名与自己的运行时发现文件（aac-incall.discovery.txt / aac-springboard.discovery.txt），设置页逐宿主标注来源与路径。接听只由一个宿主提交：角色表 InCallService(2) &gt; SpringBoard(1) &gt; 仅日志(0)，其余宿主只观察记录。共享日志会按顺序尝试多个绝对候选路径并记录命中哪一个；跨进程可写/可读并未验证，失败时回退到自有 CFPreferences 域且不声称可见。1.13.0 的挂钩门槛从「零参数且返回 void」放宽为「零参数且返回类型可安全直通（void/BOOL/对象/整数/浮点），改用 MSHookMessageEx（ElleKit/substrate 兼容层，dlsym 解析，不可用时回退 method_setImplementation）」，有显式参数的方法不挂钩而是在活实例上用 NSInvocation 传默认参数调用；每个候选方法在发现文件里都写明 HOOKED / INVOKABLE_BY_INVOCATION / CAPTURED / INVOKED_BY_INVOCATION / SKIPPED(原因)。本版本未在设备上安装或验证，不能说明自动接听可用。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -201,6 +201,30 @@
 			<string>共享日志查看器（逐候选路径尝试）</string>
 			<key>action</key>
 			<string>showSharedLogs:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>运行日志分享（1.13.0）</string>
+			<key>footerText</key>
+			<string>汇总同一批次：逐宿主的共享日志（aac-incall.log / aac-springboard.log / aac-mobilephone.log / aac-settings.log）、逐宿主的运行时发现文件（aac-incall.discovery.txt / aac-springboard.discovery.txt）、逐宿主运行清单、设置模块日志、接听记录导出文本、导出的配置 plist、CFPreferences 回退域内容与模块伴随探测记录。每一项都按真实文件系统读数写出存在/大小/可读，缺失的写明原因（候选目录不可用、该目录里没有此文件、另一进程的跨进程可见性未验证），绝不虚构条目；存在的文件复制到临时目录后一次性交给系统分享面板，随附一份报告文本。分享只包含本插件自有日志与自有偏好域内容，不含任何凭据，也不代表自动接听可用。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>分享全部运行日志</string>
+			<key>action</key>
+			<string>shareAllLogs:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>运行日志文件：逐项查看 / 分享</string>
+			<key>action</key>
+			<string>showLogExport:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -238,7 +262,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>1.12.0：InCallService 优先的双宿主接听版。音频最大5MB且仍位于设置沙盒；本地试听不代表电话进程能读取，也不会注入通话上行。InCallService 与 SpringBoard 使用同一套运行时发现 + 动态挂钩逻辑：只有发现了可挂钩接听方法、且没有更高优先级接听宿主存活的那个宿主执行接听；其余宿主只观察记录，并明确写出 observer only, answer owned by &lt;宿主&gt;。设备证据（1.11.0，19:46:53 实测）：SpringBoard 的检测、延时与策略层工作正常，但它没有可挂钩的接听 UI，公开事务回退失败于 com.apple.CallKit.error.requesttransaction code 1 = unknownCallUUID（本进程的 CXCallController 不拥有蜂窝通话），因此公开事务路径在本设备上无效，只做一次带含义说明的诊断尝试。共享日志路径与进程探测结果均为本机实际读数，未在设备安装验证，不构成自动接听可用的证据。</string>
+			<string>1.13.0：放开挂钩 ABI 门槛并增加全部运行日志分享。挂钩不再是「零参数 void」这一条窄门：零参数且返回类型可安全直通的方法用 MSHookMessageEx 挂钩并原样直通，带参数的方法只登记为 NSInvocation 候选（活实例 + 默认参数调用，结果写入 INVOKED_BY_INVOCATION 行），每个候选的处置与原因都写在发现文件里。运行日志新增「分享全部运行日志」与「运行日志文件：逐项查看 / 分享」：把逐宿主共享日志、运行时发现文件、运行清单、设置日志、接听记录、配置 plist 与 CFPreferences 转储汇总成清单，逐项写出存在/缺失原因，存在的文件复制后一次性交给系统分享，缺失的绝不虚构。CallKit 错误含义已按 Apple 文档更正：com.apple.CallKit.error.requesttransaction code 1 = unentitled（本进程没有执行该事务的权利），不是 unknownCallUUID——requestTransaction 是请求通话提供者执行动作，CXAnswerCallAction 由 CallKit 提供者执行，因此公开事务路径对 tweak 进程无效，只保留一次带含义说明的诊断尝试。音频最大5MB且仍位于设置沙盒；本地试听不代表电话进程能读取，也不会注入通话上行。InCallService 与 SpringBoard 使用同一套运行时发现 + 动态挂钩逻辑：只有发现了可挂钩接听方法、且没有更高优先级接听宿主存活的那个宿主执行接听；其余宿主只观察记录，并明确写出 observer only, answer owned by &lt;宿主&gt;。设备证据（1.11.0，19:46:53 实测）：SpringBoard 的检测、延时与策略层工作正常，但它没有可挂钩的接听 UI，公开事务回退失败于 com.apple.CallKit.error.requesttransaction code 1 = unentitled（Apple 文档：The app doesn't have the entitlement to perform the actions in the requested transaction），因此公开事务路径在本设备上无效，只做一次带含义说明的诊断尝试。共享日志路径与进程探测结果均为本机实际读数，未在设备安装验证，不构成自动接听可用的证据。</string>
 		</dict>
 	</array>
 </dict>

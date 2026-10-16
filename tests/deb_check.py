@@ -1,6 +1,7 @@
-"""Verify the built deb ships the four configured bundle ids and every host module.
+"""Verify the built deb ships the four configured bundle ids, every host module, the 1.13.0
+relaxed hook ABI strategy, the corrected CallKit error mapping and the run-log share surface.
 
-Apple Platform Deployment lists the Phone app as com.apple.mobilephone (lowercase). 1.12.0
+Apple Platform Deployment lists the Phone app as com.apple.mobilephone (lowercase). 1.13.0
 injects into com.apple.mobilephone, com.apple.springboard, com.apple.InCallService and
 com.apple.incallservice; the two InCall spellings only cover case differences for the same
 modern host that presents the in-call UI. The wrong-case com.apple.MobilePhone must never
@@ -53,10 +54,19 @@ for required in ('objc_getClassList', 'com.autoanswer.call.probe.',
         sys.exit('artifact dylib missing 1.10.0 evidence string/symbol %r' % required)
 # 1.11.0/1.12.0: the runtime discovery/hook answer path and the host table must really be
 # compiled into the dylib, and it must not carry a hardcoded guessed private class name.
+# 1.13.0: the hook is installed through MSHookMessageEx (ElleKit / substrate compat, resolved
+# with dlsym), with method_setImplementation as the documented fallback that keeps the same
+# saved-original-IMP contract. The previous artifact check FORBADE MSHookMessageEx; that
+# assertion is now inverted on purpose, because it is the intended hooking primitive of this
+# version and its symbol name is expected to be present as the dlsym string.
 required_discovery = ('method_setImplementation', 'class_copyMethodList', 'discovery.txt',
                       'runtime-discovered', 'AACSBEnv',
                       'LOG-ONLY primary path',
-                      'answer-ish method invoked through our dynamic hook')
+                      'answer-ish method invoked through our dynamic hook',
+                      'MSHookMessageEx', 'ElleKit/substrate',
+                      'INVOKABLE_BY_INVOCATION', 'INVOKED_BY_INVOCATION', 'CAPTURED',
+                      'answerPaths=', 'invokableSkipped=', 'globalPassScanned=',
+                      'global-call-scan', '0args+BOOL', '0args+object')
 missing_discovery = [item for item in required_discovery if not present(dylib, item)]
 print('dylib runtime discovery strings found: %d/%d'
       % (len(required_discovery) - len(missing_discovery), len(required_discovery)))
@@ -71,16 +81,21 @@ required_host = ('com.autoanswer.call.probe.incall', 'com.autoanswer.call.pong.i
                  'com.autoanswer.call.owner.',
                  'InCallService(2) > SpringBoard(1)',
                  'observer only, answer owned by',
-                 'HOOK_SUMMARY', 'HOOK_ENTRY', 'CONCLUSIVE',
-                 'com.apple.CallKit.error.requesttransaction', 'unknownCallUUID')
+                 'HOOK_SUMMARY', 'HOOK_ENTRY', 'INVOKE_SUMMARY', 'INVOKE_ENTRY', 'CONCLUSIVE',
+                 'HOOKED_TOTAL',
+                 'com.apple.CallKit.error.requesttransaction', 'unknownCallUUID',
+                 # 1.13.0: the corrected mapping — code 1 is unentitled, not unknownCallUUID
+                 'code 1 = unentitled', 'code 4 = unknownCallUUID')
 missing_host = [item for item in required_host if not present(dylib, item)]
 print('dylib 1.12.0 host-table/single-owner strings found: %d/%d'
       % (len(required_host) - len(missing_host), len(required_host)))
 if missing_host:
     sys.exit('artifact dylib missing host-table/single-owner strings: %r' % (missing_host,))
+# MSHookMessageEx is deliberately NOT forbidden any more (see above). The remaining entries are
+# guessed private class names / dynamic class lookup, which would mean the answer path is not
+# runtime-discovered.
 for forbidden in (b'SBIncomingCallViewController', b'SBCallAlertViewController',
-                  b'IncomingCallViewController', b'MSHookMessageEx',
-                  b'NSClassFromString'):
+                  b'IncomingCallViewController', b'NSClassFromString'):
     if forbidden in dylib:
         sys.exit('artifact dylib must not hardcode %r: the answer path is runtime-discovered'
                  % forbidden)
@@ -96,7 +111,12 @@ required_settings = ('AACProbeController', 'AACSharedLogController',
                      'com.autoanswer.call.probe.', 'com.autoanswer.call.sharelog',
                      'aac-incall.discovery.txt', 'aac-springboard.discovery.txt',
                      'com.autoanswer.call.pong.incall', 'com.autoanswer.call.pong.springboard',
-                     'runtime-discovered', 'InCallService')
+                     'runtime-discovered', 'InCallService',
+                     # 1.13.0 run-log export / share surface
+                     'AACLogExportController', 'AutoAnswerCall-export-',
+                     'settings.log', 'configuration.plist', 'call-records.txt',
+                     'shared-prefs-fallback.txt', 'probe-companion.txt', 'audio-library.plist',
+                     '运行导出报告', '运行日志导出报告')
 missing_settings = [item for item in required_settings if not present(settings, item)]
 print('settings binary evidence strings found: %d/%d'
       % (len(required_settings) - len(missing_settings), len(required_settings)))
@@ -115,4 +135,7 @@ for other in ('com.apple.springboard', 'com.apple.mobilephone'):
 print('artifact bundle id check passed (filter has exactly the four configured ids; the '
       'dylib keeps the wrong-case runtime fallback, the evidence modules, the '
       'host-parameterised InCallService+SpringBoard runtime-discovered answer path with its '
-      'single-owner rule and decoded CallKit error meanings, and hardcodes no private class name)')
+      'single-owner rule, the 1.13.0 relaxed hook ABI strategy (MSHookMessageEx + per-return-'
+      'type thunks + bounded NSInvocation candidates) with per-method outcome reporting, the '
+      'corrected CallKit error mapping, the run-log export/share surface, and hardcodes no '
+      'private class name)')
