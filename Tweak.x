@@ -12,6 +12,7 @@ static CXCallController *Controller;
 static id RetainedDelegate;
 static NSMutableDictionary<NSUUID *,NSMutableDictionary *> *States;
 static AVAudioPlayer *Player;
+static NSUInteger StopGeneration;
 static NSDictionary *Prefs(void){CFPreferencesAppSynchronize((__bridge CFStringRef)Domain); return CFBridgingRelease(CFPreferencesCopyMultiple(NULL,(__bridge CFStringRef)Domain,kCFPreferencesCurrentUser,kCFPreferencesAnyHost))?:@{};}
 static void Log(NSString *s){
  NSString *line=[NSString stringWithFormat:@"[%@] PHONE %@\n",NSDate.date,s]; NSLog(@"[AutoAnswerCall] %@",s);
@@ -63,9 +64,10 @@ static void Changed(CXCall *call){
  if(call.hasEnded){s[@"pending"]=@NO;s[@"attempted"]=@YES;return;}
  if([s[@"scheduled"] boolValue]||[s[@"attempted"] boolValue]||!Allowed(call,Prefs()))return;
  s[@"scheduled"]=@YES; NSDictionary *p=Prefs(); double delay=p[@"Delay"]?AACBoundDelay([p[@"Delay"] doubleValue]):0.5;
- Log([NSString stringWithFormat:@"Scheduled %@ delay=%.2f",uuid.UUIDString,delay]);
+ NSUInteger generation=StopGeneration;
+ Log([NSString stringWithFormat:@"Scheduled %@ delay=%.15g seconds from first eligible observed incoming event, NOT measured audible ringing",uuid.UUIDString,delay]);
  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(delay*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
-  if(States[uuid]!=s)return; s[@"scheduled"]=@NO; CXCall *live=Current(uuid);
+  if(States[uuid]!=s||generation!=StopGeneration){Log(@"Delayed answer cancelled by plugin stop generation");return;} s[@"scheduled"]=@NO; CXCall *live=Current(uuid);
   if(!live||!Allowed(live,Prefs())){Log(@"Delayed answer cancelled: call absent/state or settings changed");return;}
   s[@"attempted"]=@YES;s[@"pending"]=@YES;
   CXAnswerCallAction *action=[[CXAnswerCallAction alloc] initWithCallUUID:uuid]; CXTransaction *tx=[[CXTransaction alloc] initWithAction:action];
@@ -84,8 +86,9 @@ static void Changed(CXCall *call){
 %ctor {
  if([NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.MobilePhone"]){dispatch_async(dispatch_get_main_queue(),^{
   States=[NSMutableDictionary new];Controller=[CXCallController new];Observer=[CXCallObserver new];RetainedDelegate=[AACDelegate new];[Observer setDelegate:RetainedDelegate queue:dispatch_get_main_queue()];
-  Log(@"Loaded 1.8.0; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed");
+  Log(@"Loaded 1.9.0; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed");
   int token=0;notify_register_dispatch("com.autoanswer.call.ping",&token,dispatch_get_main_queue(),^(int t){Log(@"Ping acknowledged in MobilePhone");notify_post("com.autoanswer.call.pong");});
-  for(CXCall *call in Observer.calls)Changed(call);
+  int stopToken=0;uint32_t stopStatus=notify_register_dispatch("com.autoanswer.call.stop",&stopToken,dispatch_get_main_queue(),^(int t){StopGeneration++;for(NSMutableDictionary *s in States.allValues){if([s[@"scheduled"] boolValue]){s[@"scheduled"]=@NO;s[@"attempted"]=@YES;}}[Player stop];Log(@"Plugin stop observed; invalidated unsubmitted timers, existing transactions cannot be revoked; native system switch unaffected");});if(stopStatus!=NOTIFY_STATUS_OK)Log(@"Plugin stop notification registration failed; delayed preferences revalidation still applies");
+  Log(@"Initial observer snapshot is diagnostic only, not a ringing-start event; no delay scheduled until a delegate event");
  });}
 }

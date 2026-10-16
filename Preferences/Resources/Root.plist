@@ -51,22 +51,26 @@
 			<string>两种模式均读取；不控制 iOS 独立总开关</string>
 		</dict>
 		<dict>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>defaults</key>
-			<string>com.autoanswer.call</string>
-			<key>key</key>
-			<string>Delay</string>
-			<key>default</key>
-			<real>0.5</real>
-			<key>min</key>
-			<real>0.0</real>
-			<key>max</key>
-			<real>60.0</real>
-			<key>label</key>
-			<string>接听等待时间（0～60秒）</string>
-			<key>showValue</key>
-			<true/>
+			<key>cell</key><string>PSButtonCell</string>
+			<key>label</key><string>立即停止插件策略（不关系统开关）</string>
+			<key>action</key><string>stopPlugin:</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>来电等待 N 秒后请求接听</string>
+			<key>footerText</key><string>从电话模块收到首个符合条件的来电事件开始，等待下方 N 秒，再重新检查 Enabled、模式、通话状态和排除名单后请求接听。不是从实测铃声开始计时；观察器状态未知或无事件时不调度，不能推断此前已经响铃多久。没有 pong 不代表已验证接听。秒数仅控制方案2，不控制系统自动接听。</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSEditTextCell</string>
+			<key>defaults</key><string>com.autoanswer.call</string>
+			<key>key</key><string>Delay</string>
+			<key>default</key><real>0.5</real>
+			<key>label</key><string>等待秒数 N（0～60 秒）</string>
+			<key>placeholder</key><string>例如 5 = 等待5秒</string>
+			<key>get</key><string>readDelay:</string>
+			<key>set</key><string>setDelay:specifier:</string>
+			<key>keyboard</key><string>DecimalPad</string>
+			<key>isNumeric</key><true/>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -85,6 +89,7 @@
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>接听后音频</string>
+			<key>footerText</key><string>可多选导入，每个文件最多5MB，追加不覆盖。音频库中点行选择，ⓘ 可试听/停止/逐项删除；只发布所选音频。旧单曲自动登记，原文件不搬移。音频仍位于设置沙盒，不保证电话进程可读，不是上行注入。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -118,15 +123,30 @@
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>清除已导入音频</string>
+			<string>音频库：选择 / 试听 / 逐项删除</string>
 			<key>action</key>
-			<string>clearAudio:</string>
+			<string>showAudioLibrary:</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>iOS 原生自动接听（独立于插件）</string>
+			<key>footerText</key><string>系统状态必须单独读取，不能从插件开关推断。关闭按钮仅在 AXSettings 已核实签名且运行时 ABI 校验通过时调用原生 setter 并回读；不可用时明确报错，不写猜测偏好键。深链是否直达页面未在 iOS17.3 实机验证。手动路径：设置 → 辅助功能 → 触控 → 通话音频路由 → 自动接听通话。</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSButtonCell</string>
+			<key>label</key><string>读取系统开关状态（可能不可用）</string>
+			<key>action</key><string>systemStatus:</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSButtonCell</string>
+			<key>label</key><string>一键关闭系统自动接听（须通过校验）</string>
+			<key>action</key><string>disableSystem:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>打开系统自动接听设置</string>
+			<string>直接尝试原生自动接听页（深链未验证）</string>
 			<key>action</key>
 			<string>openSystemAutoAnswer:</string>
 		</dict>
@@ -174,7 +194,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>1.8.0：音频最大5MB，复制至设置沙盒；本地试听不代表电话进程能读取，也不会注入通话上行。MobilePhone 可能被挂起，未保证锁屏后台接听或蜂窝事务权限。</string>
+			<string>1.9.0：音频最大5MB，复制至设置沙盒；本地试听不代表电话进程能读取，也不会注入通话上行。MobilePhone 可能被挂起，未保证锁屏后台接听或蜂窝事务权限。</string>
 		</dict>
 	</array>
 </dict>
