@@ -2,7 +2,7 @@ include $(THEOS)/makefiles/common.mk
 
 BUNDLE_NAME := AutoAnswerCallPrefs
 AutoAnswerCallPrefs_FILES := AACRootListController.m
-AutoAnswerCallPrefs_FRAMEWORKS := UIKit Foundation AVFoundation
+AutoAnswerCallPrefs_FRAMEWORKS := UIKit Foundation AVFoundation UniformTypeIdentifiers
 AutoAnswerCallPrefs_PRIVATE_FRAMEWORKS := Preferences
 AutoAnswerCallPrefs_LDFLAGS := -F$(THEOS_PROJECT_DIR)/vendor
 AutoAnswerCallPrefs_INSTALL_PATH := /Library/PreferenceBundles

@@ -21,9 +21,13 @@ jobs:
       - name: Install build tools
         run: brew install ldid dpkg
 
+      - name: Policy regression
+        run: cc -std=c11 tests/policy.c -lm -o /tmp/aac-policy && /tmp/aac-policy && python3 tests/source_checks.py
+
       - name: Build RootHide arm64e package
         run: |
           set -euxo pipefail
+          { git -C "$THEOS" rev-parse HEAD; xcrun --sdk iphoneos --show-sdk-version; xcrun clang --version; command -v ldid; } | tee environment.log
           make clean package FINALPACKAGE=1 \
             ARCHS=arm64e \
             THEOS="$THEOS" \
@@ -37,9 +41,9 @@ jobs:
           for deb in "${debs[@]}"; do
             dpkg-deb --info "$deb"
             test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64e"
-            dpkg-deb --contents "$deb" | grep -F 'AutoAnswerCall.dylib'
-            dpkg-deb --contents "$deb" | grep -F 'AutoAnswerCallPrefs.bundle'
-            dpkg-deb --contents "$deb" | grep -F 'autoanswer.call.plist'
+            dpkg-deb --contents "$deb" | rg -F 'AutoAnswerCall.dylib'
+            dpkg-deb --contents "$deb" | rg -F 'AutoAnswerCallPrefs.bundle'
+            dpkg-deb --contents "$deb" | rg -F 'autoanswer.call.plist'
           done
 
       - name: Upload build logs
@@ -47,7 +51,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AutoAnswerCall-build-logs
-          path: build.log
+          path: |
+            build.log
+            environment.log
 
       - name: Upload deb
         uses: actions/upload-artifact@v4
