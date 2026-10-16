@@ -154,7 +154,8 @@ static id AACSBRescan(void){
   NSUInteger visited=0;
   NSMutableArray *windows=[NSMutableArray new];
   UIApplication *application=UIApplication.sharedApplication;
-  if(application.windows.count)[windows addObjectsFromArray:application.windows];
+  /* Scene API only: UIApplication.windows is deprecated since iOS 15 and this project
+     builds with -Werror, so no deprecated accessor is used anywhere. */
   for(UIScene *scene in application.connectedScenes)if([scene isKindOfClass:UIWindowScene.class])[windows addObjectsFromArray:((UIWindowScene *)scene).windows];
   for(UIWindow *window in windows){
    AACSBScanResponder(window,&found);
