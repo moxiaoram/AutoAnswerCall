@@ -15,7 +15,12 @@ static inline NSArray *AACValidRecords(id value){
 static NSString *AACRecordResult(NSDictionary *r){
  if([r[@"connected"] boolValue]&&[r[@"beforeRequest"] boolValue])return [r[@"ended"] boolValue]?@"提交前已连接（手动/系统/其他），现已结束":@"提交前已连接（手动/系统/其他）；已取消自动接听和自动播放";
  if([r[@"connected"] boolValue])return [r[@"ended"] boolValue]?@"曾观察到连接，现已结束（归因未确认）":@"观察到连接（不能确定由插件接听）";
- if([r[@"ended"] boolValue])return @"已结束，未观察到连接";
+ if([r[@"ended"] boolValue]){
+  if([r[@"button"] boolValue])return @"已结束，已尝试按钮动作但未观察到连接";
+  if([r[@"submitted"] boolValue])return @"已结束，已提交请求但未观察到连接";
+  if([r[@"attempted"] boolValue])return @"已结束，未完成有效接听动作（查看详情）";
+  return @"已结束，未触发自动接听（查看详情）";
+ }
  if([r[@"failed"] boolValue])return @"请求失败，未确认连接";
  if([r[@"timedOut"] boolValue])return @"观察超时，未确认连接";
  if([r[@"accepted"] boolValue])return @"事务已接受，未确认连接";

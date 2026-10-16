@@ -2,7 +2,7 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
-/* ======================= 1.17.0 TASK 1/2: 活体按钮发现 + 模拟点击 =======================
+/* ======================= 1.17.1 TASK 1/2: 活体按钮发现 + 模拟点击 =======================
    为什么换成按钮路径（决定性设备证据，来自用户在 iOS 17.3 RootHide 设备上的 1.16.0 分片回读）：
      - 三个宿主全部注入：springboard pid=9061、mobilephone pid=9145、incall pid=9146。
      - 三个宿主全部自报 role=LOG-ONLY、answerPaths=0：incall「0 个 ACTION（其中已挂钩 0、
@@ -14,7 +14,7 @@
    而且这是结构性的——真正的接听是一个 UI 按钮，它的响应走 UIControl 的 action 机制
    （sendActionsForControlEvents:），方法名里永远不会出现 answer/accept。关键字匹配在原理上
    就不可能找到它。
-   1.17.0 因此把按钮路径变为主策略（方法名关键字发现保留，但已知不足）：
+   1.17.1 因此把按钮路径变为主策略（方法名关键字发现保留，但已知不足）：
      1) 来电期间在每个拥有来电 UI 的宿主里遍历活体层级（窗口场景 → 已呈现/子视图控制器 →
         子视图 → 响应者链），有界（≤6000 节点、深度 ≤40、1.5 秒时间预算）；
      2) 收集候选 UIControl（含 UIButton 及任意 UIControl 子类），按信号优先级打分；
@@ -30,7 +30,7 @@
        直接让出，绝不出现两个宿主同时点击。
      - 整个扫描/点击都在 @try 内，任何异常都只记录，不抛出。 */
 
-/* 通知通道：某个宿主真的点击了接听按钮时广播（1.17.0 新增）。名内无载荷，只断言到达。
+/* 通知通道：某个宿主真的点击了接听按钮时广播（1.17.1 新增）。名内无载荷，只断言到达。
    这是「避免双重点击」的依据：低优先级宿主在结算窗口后看到高优先级宿主的点击通知就让出。 */
 static NSString * const AACButtonTapPrefix=@"com.autoanswer.call.buttontap.";
 
@@ -502,29 +502,36 @@ static BOOL AACButtonInvokeActionPair(NSDictionary *pair,NSString **why){
  if(why)*why=[NSString stringWithFormat:@"已用 NSInvocation 以默认参数调用 %@ 上的 -%@（参数是猜测的默认值，调用本身不等于已接通）",NSStringFromClass(object_getClass(target)),name];
  return YES;
 }
-/* 三种点击机制，按任务要求的顺序（1 安全 sendActions → 2 追加 TouchDown → 3 target/action
+/* 三种点击机制，按任务要求的顺序（1 安全 sendActions → 2 仅 TouchDown → 3 target/action
    + NSInvocation）。返回实际使用的机制的说明文本；返回 nil 表示没有任何可用的点击机制。 */
 static NSString *AACButtonPerformTap(UIControl *control,NSString **detail){
  if(![control isKindOfClass:UIControl.class]){if(detail)*detail=@"目标不是 UIControl";return nil;}
  NSArray *pairsUp=AACButtonActionPairsForEvent(control,UIControlEventTouchUpInside);
- @try{[control sendActionsForControlEvents:UIControlEventTouchUpInside];}
- @catch(NSException *e){AACButtonLogLine([@"sendActions(TouchUpInside) 抛出异常：" stringByAppendingString:e.reason?:@"unknown"]);}
+ BOOL upSent=NO;
  if(pairsUp.count){
+  @try{[control sendActionsForControlEvents:UIControlEventTouchUpInside];upSent=YES;}
+  @catch(NSException *e){AACButtonLogLine([@"sendActions(TouchUpInside) 抛出异常：" stringByAppendingString:e.reason?:@"unknown"]);}
+ }
+ if(upSent){
   if(detail)*detail=[NSString stringWithFormat:@"控件确实为该事件注册了 %lu 个 target/action 对；真正的接听与否由 CXCallObserver 的 hasConnected 判定",(unsigned long)pairsUp.count];
   return @"(1) sendActionsForControlEvents:UIControlEventTouchUpInside";
  }
  /* 机制 1 没有任何 target/action 对 => 它实际上没有触发任何动作；继续机制 2。 */
  UIControlEvents combined=UIControlEventTouchUpInside|UIControlEventTouchDown;
  NSArray *pairsCombined=AACButtonActionPairsForEvent(control,combined);
- @try{[control sendActionsForControlEvents:combined];}
- @catch(NSException *e){AACButtonLogLine([@"sendActions(TouchUpInside|TouchDown) 抛出异常：" stringByAppendingString:e.reason?:@"unknown"]);}
- if(pairsCombined.count){
+ NSArray *pairsDown=AACButtonActionPairsForEvent(control,UIControlEventTouchDown);
+ BOOL downSent=NO;
+ if(pairsDown.count && !pairsUp.count){
+  @try{[control sendActionsForControlEvents:UIControlEventTouchDown];downSent=YES;}
+  @catch(NSException *e){AACButtonLogLine([@"sendActions(TouchDown) 抛出异常：" stringByAppendingString:e.reason?:@"unknown"]);}
+ }
+ if(downSent){
   if(detail)*detail=[NSString stringWithFormat:@"机制 1 没有注册任何 target/action，因此改用组合事件（%lu 个 target/action 对）",(unsigned long)pairsCombined.count];
-  return @"(2) sendActionsForControlEvents:UIControlEventTouchUpInside|UIControlEventTouchDown";
+  return @"(2) sendActionsForControlEvents:UIControlEventTouchDown";
  }
  NSArray *pairs=pairsCombined.count?pairsCombined:pairsUp;
  if(!pairs.count){
-  if(detail)*detail=@"控件没有注册任何 target/action 对（allTargets+actionsForTarget 均为空），两种 sendActions 都不可能触发动作";
+  if(detail)*detail=@"控件没有注册任何 target/action 对（allTargets+actionsForTarget 均为空），不能安全模拟点击";
   return nil;
  }
  NSUInteger invoked=0;NSString *lastReason=nil;
@@ -555,16 +562,26 @@ static inline NSArray *AACButtonTapNames(void){
  return out;
 }
 static inline NSString *AACButtonTapName(NSString *tag){return [AACButtonTapPrefix stringByAppendingString:[tag isKindOfClass:NSString.class]&&tag.length?tag:@"unknown"];}
-static inline void AACButtonNotePeerTap(NSString *tag){
- if(![tag isKindOfClass:NSString.class]||!tag.length)return;
- if(!AACButtonTapSeen)AACButtonTapSeen=[NSMutableDictionary new];
- @try{AACButtonTapSeen[tag]=NSDate.date;}@catch(NSException *e){}
+/* Each peer tap must be identified by both host and call UUID. A host-only notification
+   can suppress answering for the NEXT incoming call for up to 90 seconds. */
+static inline NSString *AACButtonTapNameForCall(NSString *tag,NSString *uuid){
+ if(!tag.length||!uuid.length)return nil;
+ return [NSString stringWithFormat:@"%@%@.%@",AACButtonTapPrefix,tag,uuid];
 }
-/* 更高优先级宿主是否在有效窗口内真的点击过接听按钮（这就是避免双重点击的依据）。 */
-static inline NSString *AACButtonPeerTapped(NSArray *higherPriorityTags){
+static inline NSString *AACButtonPeerKey(NSString *tag,NSString *uuid){
+ return [NSString stringWithFormat:@"%@|%@",tag?:@"",uuid?:@""];
+}
+static inline void AACButtonNotePeerTap(NSString *tag,NSString *uuid){
+ if(!tag.length||!uuid.length)return;
+ if(!AACButtonTapSeen)AACButtonTapSeen=[NSMutableDictionary new];
+ @try{AACButtonTapSeen[AACButtonPeerKey(tag,uuid)]=NSDate.date;}@catch(NSException *e){}
+}
+/* Peer evidence is eligible ONLY for the same call UUID. */
+static inline NSString *AACButtonPeerTapped(NSArray *higherPriorityTags,NSString *uuid){
+ if(!uuid.length)return nil;
  @try{
   for(NSString *tag in higherPriorityTags){
-   NSDate *when=AACButtonTapSeen?AACButtonTapSeen[tag]:nil;
+   NSDate *when=AACButtonTapSeen?AACButtonTapSeen[AACButtonPeerKey(tag,uuid)]:nil;
    if([when isKindOfClass:NSDate.class]&&-[when timeIntervalSinceNow]<=AACButtonTapFreshSeconds)return tag;
   }
  }@catch(NSException *e){}
@@ -587,6 +604,18 @@ static inline BOOL AACButtonClaimTapUUID(NSString *uuid){
  return YES;
 }
 static inline BOOL AACButtonHasTappedUUID(NSString *uuid){return [uuid isKindOfClass:NSString.class]&&uuid.length&&AACButtonTappedUUIDs&&[AACButtonTappedUUIDs containsObject:uuid];}
+/* An exception/no-action attempt must not permanently consume this UUID. */
+static inline void AACButtonUnclaimTapUUID(NSString *uuid){
+ if(uuid.length)@try{[AACButtonTappedUUIDs removeObject:uuid];}@catch(NSException *e){}
+}
+static inline void AACButtonForgetCall(NSString *uuid){
+ if(!uuid.length)return;
+ AACButtonUnclaimTapUUID(uuid);
+ @try{
+  for(NSString *tag in @[@"incall",@"springboard"])
+   [AACButtonTapSeen removeObjectForKey:AACButtonPeerKey(tag,uuid)];
+ }@catch(NSException *e){}
+}
 /* 一次扫描：遍历 + 打分 + 记录 EVERY 候选。返回非黑名单且可点击的候选数量。 */
 static NSUInteger AACButtonScanReport(NSString *phase){
  if(__sync_add_and_fetch(&AACButtonScanning,1)>1){
@@ -629,7 +658,7 @@ static NSUInteger AACButtonScanReport(NSString *phase){
    的顺序尝试点击机制。每个通话 UUID 只点一次。返回所用机制的说明文本；返回 nil 时 *why 写原因。 */
 static NSString *AACButtonTryTap(NSString *uuid,NSString *tag,NSArray *higherPriorityTags,NSString **why){
  if(![uuid isKindOfClass:NSString.class]||!uuid.length){if(why)*why=@"通话 UUID 不可用：不点击";return nil;}
- NSString *peer=AACButtonPeerTapped(higherPriorityTags);
+ NSString *peer=AACButtonPeerTapped(higherPriorityTags,uuid);
  if(peer){
   if(why)*why=[NSString stringWithFormat:@"已观察到更高优先级宿主 %@ 真的点击过接听按钮（窗口 %.0f 秒内）：本宿主让出，绝不双重点击",peer,AACButtonTapFreshSeconds];
   return nil;
@@ -647,7 +676,7 @@ static NSString *AACButtonTryTap(NSString *uuid,NSString *tag,NSArray *higherPri
  if(!AACButtonClaimTapUUID(uuid)){if(why)*why=@"该通话 UUID 已经由本宿主点击过一次（每个 UUID 只点一次）";return nil;}
  NSString *detail=nil;
  NSString *mechanism=AACButtonPerformTap(control,&detail);
- if(!mechanism){if(why)*why=detail?:@"没有任何可用的点击机制";return nil;}
+ if(!mechanism){AACButtonUnclaimTapUUID(uuid);if(why)*why=detail?:@"没有任何可用的点击机制";return nil;}
  @try{
   AACButtonChosenText=[NSString stringWithFormat:@"class=%@ id=%@ label=%@ title=%@ frame=%@ signal=%@ matched=%@ green=%.2f blacklisted=no tappable=yes",
     NSStringFromClass(object_getClass(control)),AACButtonShort(control.accessibilityIdentifier),AACButtonShort(control.accessibilityLabel),AACButtonShort(AACButtonTitleOf(control)),
@@ -659,8 +688,8 @@ static NSString *AACButtonTryTap(NSString *uuid,NSString *tag,NSArray *higherPri
   AACButtonReportAdd([NSString stringWithFormat:@"# BUTTON_CONNECTED uuid=%@ connected=%@（点击机制成功只表示事件被发出，接通必须由 CXCallObserver 的 hasConnected 确认）",uuid,AACButtonConnectedText()]);
   AACButtonLogLine([NSString stringWithFormat:@"button tap performed: uuid=%@ host=%@ chosen=[%@] mechanism=%@ detail=%@",uuid,tag?:@"unknown",AACButtonChosenText?:@"-",mechanism,detail?:@"-"]);
   if(tag.length){
-   uint32_t posted=notify_post(AACButtonTapName(tag).UTF8String);
-   AACButtonLogLine([NSString stringWithFormat:@"buttontap 通知已广播：name=%@ post=%u（只会断言到达；它让更低优先级宿主让出，避免双重点击）",AACButtonTapName(tag),posted]);
+   uint32_t posted=notify_post(AACButtonTapNameForCall(tag,uuid).UTF8String);
+   AACButtonLogLine([NSString stringWithFormat:@"buttontap 通知已广播：name=%@ post=%u（只会断言到达；它让更低优先级宿主让出，避免双重点击）",AACButtonTapNameForCall(tag,uuid),posted]);
   }
  }@catch(NSException *e){AACButtonLogLine([@"button tap reporting exception: " stringByAppendingString:e.reason?:@"unknown"]);}
  if(why)*why=detail?:@"已点击";
@@ -685,7 +714,7 @@ static inline NSString *AACButtonSummaryText(void){
 }
 static inline NSString *AACButtonReportText(void){
  NSMutableArray *lines=[NSMutableArray new];
- [lines addObject:@"# ===== BUTTON 候选（1.17.0 活体层级发现 + 模拟点击；与同文件里 ACTION/ACCESSOR 方法分类相互独立） ====="];
+ [lines addObject:@"# ===== BUTTON 候选（1.17.1 活体层级发现 + 模拟点击；与同文件里 ACTION/ACCESSOR 方法分类相互独立） ====="];
  [lines addObject:[NSString stringWithFormat:@"# BUTTON_RULE %@",AACButtonRuleText()]];
  [lines addObject:@"# BUTTON_SIGNAL_PRIORITY accessibilityIdentifier > accessibilityLabel > accessibilityValue > titleLabel.text/currentTitle > knownLocalisationSubstring > greenLeftPrimary(弱信号：绿色主导且是同父控件里靠左的主按钮，且同父至少两个控件)"];
  [lines addObject:[NSString stringWithFormat:@"# BUTTON_BLACKLIST %@（黑名单作用于 accessibilityIdentifier / accessibilityLabel / accessibilityValue / 按钮标题，并且颜色为红色主导的控件一律列入；黑名单候选只记录，绝不点击）",[AACButtonForbiddenKeywords() componentsJoinedByString:@","]]];

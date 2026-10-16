@@ -112,11 +112,7 @@
  if(section==1)return @"操作";
  return @"通道形状、上限与诚实性说明";
 }
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section{
- if(section==0)return [NSString stringWithFormat:@"%@ 名内载荷通道只能观察到「到达片数/总片数、结束标记、最近更新时间、完整性」，解码字节通常为 0；内容由固定名字的状态槽通道给出，且必须通过「代次一致 + 长度一致 + CRC32 一致」才算完整。",AACChunkMsgNameChannelNote()];
- if(section==1)return @"按需上报让宿主立刻重发一次，这是通话刚结束后不必等 20 秒周期就能取到 InCallService 数据的办法；请求是否送达无法确认，本页只按实际读回结果显示。";
- return [NSString stringWithFormat:@"%@ 本页不证明自动接听可用，也不证明任何宿主已注入。",AACChunkMsgBoundText()];
-}
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section{return nil;}
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath{
  UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
  cell.detailTextLabel.numberOfLines=4;
