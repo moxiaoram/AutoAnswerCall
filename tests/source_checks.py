@@ -8,10 +8,11 @@ for good in ['CXAnswerCallAction','requestTransaction:tx','callChanged:(CXCall *
 for good in ['asCopy:YES','NSFileCoordinator','startAccessingSecurityScopedResource','stopAccessingSecurityScopedResource','Limit+1','NSApplicationSupportDirectory','SETTINGS','PHONE']:
  assert good in s+t,good
 p=plistlib.loads((r/'Preferences/Resources/Root.plist').read_bytes());mode=next(i for i in p['items'] if i.get('key')=='Mode');assert mode['default']==2 and mode['cell']=='PSLinkListCell' and mode['validValues']==[1,2]
-# Apple Platform Deployment lists Phone as com.apple.mobilephone (case-sensitive).
+# The filter must ship only the official id; the tweak may additionally accept the
+# historical wrong-case id and the process name as compatibility fallbacks.
 assert 'com.apple.mobilephone' in (r/'AutoAnswerCall.plist').read_text()
-assert 'isEqualToString:@"com.apple.mobilephone"' in t
-assert 'com.apple.MobilePhone' not in t+(r/'AutoAnswerCall.plist').read_text()
+assert 'com.apple.MobilePhone' not in (r/'AutoAnswerCall.plist').read_text()
+assert 'isEqualToString:@"com.apple.mobilephone"' in t and '[process isEqualToString:@"MobilePhone"]' in t
 delay=next(i for i in p['items'] if i.get('key')=='Delay');assert delay['cell']=='PSEditTextCell' and delay['get']=='readDelay:' and delay['set']=='setDelay:specifier:'
 assert 'PSSliderCell' not in str(p)
 for good in ['AACParseDelay(text.UTF8String','setBool:NO forKey:@"Enabled"','com.autoanswer.call.stop','allowsMultipleSelection=YES','NSUUID.UUID.UUIDString','dispatch_sync(dispatch_get_main_queue()','showAudioLibrary:']:

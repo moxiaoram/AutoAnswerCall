@@ -117,9 +117,15 @@ static void Changed(CXCall *call){
 @end
 %ctor {
  NSLog(@"[AutoAnswerCall] dylib constructor reached; bundle=%@ process=%@",NSBundle.mainBundle.bundleIdentifier,NSProcessInfo.processInfo.processName);
- if([NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.mobilephone"]){dispatch_async(dispatch_get_main_queue(),^{
+ /* The filter already scopes injection to the phone app. Accept the official
+    lowercase bundle id, the historical wrong-case variant, or the process name so a
+    single identifier mismatch cannot silently disable the whole phone module. */
+ NSString *bundle=NSBundle.mainBundle.bundleIdentifier?:@"";
+ NSString *process=NSProcessInfo.processInfo.processName?:@"";
+ BOOL inPhoneProcess=[bundle isEqualToString:@"com.apple.mobilephone"]||[bundle isEqualToString:@"com.apple.MobilePhone"]||[process isEqualToString:@"MobilePhone"];
+ if(inPhoneProcess){dispatch_async(dispatch_get_main_queue(),^{
   Records=AACReadRecords(NULL,NULL);States=[NSMutableDictionary new];Controller=[CXCallController new];Observer=[CXCallObserver new];RetainedDelegate=[AACDelegate new];[Observer setDelegate:RetainedDelegate queue:dispatch_get_main_queue()];
-  Log(@"Loaded 1.9.2; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed");
+  Log(@"Loaded 1.9.3; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed");
   int token=0;notify_register_dispatch("com.autoanswer.call.ping",&token,dispatch_get_main_queue(),^(int t){Log(@"Ping acknowledged in MobilePhone");NSDictionary *actual=Prefs();Log([NSString stringWithFormat:@"Configuration observed: keys=%lu enabledPresent=%d mode=%@ delay=%@ whitelistPresent=%d",(unsigned long)actual.count,actual[@"Enabled"]!=nil,actual[@"Mode"]?:@"missing",actual[@"Delay"]?:@"missing",actual[@"Whitelist"]!=nil]);notify_post("com.autoanswer.call.pong");});
   int resumeToken=0;uint32_t resumeStatus=notify_register_dispatch("com.autoanswer.call.resume",&resumeToken,dispatch_get_main_queue(),^(int t){Stopped=NO;Log(@"Explicit resume observed from settings; stop latch cleared");});if(resumeStatus!=NOTIFY_STATUS_OK)Log(@"Resume notification registration failed");
   int stopToken=0;uint32_t stopStatus=notify_register_dispatch("com.autoanswer.call.stop",&stopToken,dispatch_get_main_queue(),^(int t){StopGeneration++;Stopped=YES;for(NSMutableDictionary *s in States.allValues){if([s[@"scheduled"] boolValue]){s[@"scheduled"]=@NO;s[@"attempted"]=@YES;}}[Player stop];Log(@"Plugin stop observed; invalidated unsubmitted timers, existing transactions cannot be revoked; native system switch unaffected");});if(stopStatus!=NOTIFY_STATUS_OK)Log(@"Plugin stop notification registration failed; delayed preferences revalidation still applies");
