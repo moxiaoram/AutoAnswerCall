@@ -653,7 +653,6 @@ assert 'AACSBButtonSectionText()];' in sb, 'the BUTTON section is part of the di
 assert 'AACSBWriteDiscoveryFile();' in sb
 assert 'AACSBHostMessageText' in sb and 'AACSBButtonSectionText(),' in sb.replace('\n',' ') or 'AACSBButtonSectionText()];' in sb
 assert 'AACSBButtonSectionText()]\n' in sb or 'AACSBButtonSectionText()];' in sb
-assert 'AACSBButtonSectionText()\n' in sb or True
 assert 'AACChunkMsgStart(AACSBProcess(),^NSString *{return AACSBHostMessageText();});' in sb, 'the chunk transport publishes the button section through the same text'
 assert 'for(NSString *buttonLine in [AACSBButtonSectionText() componentsSeparatedByString:@"\\n"])AACSBLog(buttonLine);' in sb
 assert '"buttonCandidates"' in sb and '"buttonMechanism"' in sb and '"buttonConnected"' in sb, 'the host report carries the button facts'
