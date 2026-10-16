@@ -21,6 +21,7 @@ static void Record(NSUUID *uuid,NSMutableDictionary *state,NSString *status,NSDi
  if(!AACWriteRecords(Records))NSLog(@"[AutoAnswerCall] record preferences write failed; Settings visibility not confirmed");
 }
 static NSUInteger StopGeneration;
+static void Log(NSString *s);
 /* Stop latch and configuration validity are phone-side state, not derived
    from unverified cross-process preference visibility. */
 static BOOL Stopped;
