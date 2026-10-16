@@ -149,7 +149,7 @@ static inline NSDictionary *AACChunkMsgVerifyEnvelope(NSData *envelopeData){
   if(!expectedCrc.length){result[@"reason"]=@"信封头缺少 crc32";return result;}
   unsigned expectedPieces=[result[@"channel"] isEqualToString:@"state"]?
     AACChunkBytesNeeded((unsigned)bodyData.length):AACChunkCount((unsigned)AACChunkMsgBase64UrlEncode(bodyData).length);
-  if(piecesField.unsignedIntegerValue!=expectedPieces){result[@"reason"]=@"信封 pieces 与有效载荷不一致";return result;}
+  if((unsigned)piecesField.integerValue!=expectedPieces){result[@"reason"]=@"信封 pieces 与有效载荷不一致";return result;}
   if([result[@"declaredBytes"] unsignedLongLongValue]!=bodyData.length){result[@"reason"]=[NSString stringWithFormat:@"长度不一致：信封声明 %@ 字节，实际 %lu 字节",fields[@"bytes"],(unsigned long)bodyData.length];return result;}
   if(![[expectedCrc lowercaseString] isEqualToString:actualCrc]){result[@"reason"]=[NSString stringWithFormat:@"CRC32 不一致：信封声明 %@，实际 %@",expectedCrc,actualCrc];return result;}
   result[@"truncated"]=@([fields[@"truncated"] isEqualToString:@"yes"]);
