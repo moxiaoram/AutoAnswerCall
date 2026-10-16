@@ -129,13 +129,18 @@ static inline NSArray *AACAnswerOwnerClaimNames(void){
    includes this header, so the state is shared by all hosts in that process only. */
 static NSMutableDictionary *AACAnswerProbeSeen=nil;
 static NSMutableDictionary *AACAnswerClaimSeen=nil;
-static inline void AACAnswerRemember(NSMutableDictionary **table,NSString *key){
- if(![key isKindOfClass:NSString.class]||!key.length)return;
- if(!*table)*table=[NSMutableDictionary new];
- @try{(*table)[key]=NSDate.date;}@catch(NSException *e){}
+/* Two separate recorders instead of one helper taking &global: under ARC the address of a
+   non-local object cannot be passed to an autoreleasing out-parameter. */
+static inline void AACAnswerHostSeenProbe(NSString *tag){
+ if(![tag isKindOfClass:NSString.class]||!tag.length)return;
+ if(!AACAnswerProbeSeen)AACAnswerProbeSeen=[NSMutableDictionary new];
+ @try{AACAnswerProbeSeen[tag]=NSDate.date;}@catch(NSException *e){}
 }
-static inline void AACAnswerHostSeenProbe(NSString *tag){AACAnswerRemember(&AACAnswerProbeSeen,tag);}
-static inline void AACAnswerHostSeenOwnerClaim(NSString *tag){AACAnswerRemember(&AACAnswerClaimSeen,tag);}
+static inline void AACAnswerHostSeenOwnerClaim(NSString *tag){
+ if(![tag isKindOfClass:NSString.class]||!tag.length)return;
+ if(!AACAnswerClaimSeen)AACAnswerClaimSeen=[NSMutableDictionary new];
+ @try{AACAnswerClaimSeen[tag]=NSDate.date;}@catch(NSException *e){}
+}
 static inline NSDate *AACAnswerLastProbe(NSString *tag){id v=AACAnswerProbeSeen?AACAnswerProbeSeen[tag]:nil;return [v isKindOfClass:NSDate.class]?v:nil;}
 static inline NSDate *AACAnswerLastOwnerClaim(NSString *tag){id v=AACAnswerClaimSeen?AACAnswerClaimSeen[tag]:nil;return [v isKindOfClass:NSDate.class]?v:nil;}
 static inline BOOL AACAnswerFresh(NSDate *date,NSTimeInterval window){
