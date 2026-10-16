@@ -191,7 +191,7 @@ static inline void AACExportShare(UIViewController *controller,NSArray *urls,NSS
   if([report writeToFile:reportPath atomically:YES encoding:NSUTF8StringEncoding error:&error])[items addObject:[NSURL fileURLWithPath:reportPath]];
  }
  UIActivityViewController *activity=[[UIActivityViewController alloc] initWithActivityItems:items applicationActivities:nil];
- activity.completionWithItemsHandler=^(UIActivityType type,BOOL completed,NSArray *returned,NSArray *error){if(completion)completion();};
+ activity.completionWithItemsHandler=^(UIActivityType type,BOOL completed,NSArray *returned,NSError *error){if(completion)completion();};
  if(activity.popoverPresentationController){
   activity.popoverPresentationController.sourceView=sourceView?:controller.view;
   activity.popoverPresentationController.sourceRect=sourceView?sourceView.bounds:CGRectMake(controller.view.bounds.size.width/2,controller.view.bounds.size.height/2,1,1);

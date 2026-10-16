@@ -146,16 +146,11 @@ AACAudioLibrary *library=AACAudioLibrary.shared;if(library.failure)[self log:lib
  [self log:[NSString stringWithFormat:@"分享全部运行日志：存在=%@ 缺失=%@ 共=%lu，可分享文件=%lu；生成：%@",gathered[@"found"],gathered[@"missing"],(unsigned long)entries.count,(unsigned long)urls.count,prepareSummary?:@"无"]];
  for(NSString *failure in failures)[self log:[@"分享失败项：" stringByAppendingString:failure]];
  if(!urls.count){
-  [self alert:@"没有可分享的运行日志" message:[NSString stringWithFormat:@"没有找到任何存在的运行日志文件，因此没有内容可以分享（不是分享失败）。
-
-%@",gathered[@"report"]]];
+  [self alert:@"没有可分享的运行日志" message:[NSString stringWithFormat:@"没有找到任何存在的运行日志文件，因此没有内容可以分享（不是分享失败）。\n\n%@",gathered[@"report"]]];
   return;
  }
  [self.player stop];self.player=nil;
- NSString *summary=[NSString stringWithFormat:@"将分享 %lu 个真实存在的文件（另有 %@ 项缺失，逐项原因写在报告里，不做虚构）。
-设置侧生成：%@
-
-报告会一并分享。",(unsigned long)urls.count,gathered[@"missing"],prepareSummary?:@"无"];
+ NSString *summary=[NSString stringWithFormat:@"将分享 %lu 个真实存在的文件（另有 %@ 项缺失，逐项原因写在报告里，不做虚构）。\n设置侧生成：%@\n\n报告会一并分享。",(unsigned long)urls.count,gathered[@"missing"],prepareSummary?:@"无"];
  [self log:summary];
  AACExportShare(self,urls,gathered[@"report"],self.view,^{});
 }
