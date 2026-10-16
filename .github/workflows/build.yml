@@ -21,8 +21,16 @@ jobs:
       - name: Install build tools
         run: brew install ldid dpkg ripgrep
 
-      - name: Policy regression
-        run: cc -std=c11 tests/policy.c -lm -o /tmp/aac-policy && /tmp/aac-policy && python3 tests/source_checks.py
+      - name: Policy and library regression
+        run: |
+          set -euxo pipefail
+          {
+            cc -std=c11 tests/policy.c -lm -o /tmp/aac-policy
+            /tmp/aac-policy
+            python3 tests/source_checks.py
+            xcrun clang -fobjc-arc -framework Foundation -framework AVFoundation tests/library.m -o /tmp/aac-library
+            /tmp/aac-library
+          } 2>&1 | tee tests.log
 
       - name: Build RootHide arm64e package
         run: |
@@ -54,6 +62,7 @@ jobs:
           path: |
             build.log
             environment.log
+            tests.log
 
       - name: Upload deb
         uses: actions/upload-artifact@v4

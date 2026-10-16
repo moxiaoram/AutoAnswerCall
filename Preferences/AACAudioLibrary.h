@@ -43,11 +43,13 @@
  if(wasSelected)self.selected=self.items.firstObject[@"id"];
  if(![self save]){self.items=backup;self.selected=previous;return NO;}
  if(wasSelected&&![self select:self.items.firstObject])return NO;
- BOOL shared=NO;for(NSDictionary *other in self.items)if([other[@"path"] isEqual:item[@"path"]])shared=YES;
- NSError *e=nil;NSString *dir=LocalDir(&e);NSString *file=[item[@"path"] stringByStandardizingPath];
+ NSString *file=[[item[@"path"] stringByStandardizingPath] stringByResolvingSymlinksInPath];
+ BOOL shared=NO;for(NSDictionary *other in self.items)if([[[other[@"path"] stringByStandardizingPath] stringByResolvingSymlinksInPath] isEqual:file])shared=YES;
+ NSError *e=nil;NSString *dir=[LocalDir(&e) stringByResolvingSymlinksInPath];
  if(!shared&&dir&&[file hasPrefix:[[dir stringByStandardizingPath] stringByAppendingString:@"/"]]&&[[NSFileManager defaultManager] fileExistsAtPath:file]&&![[NSFileManager defaultManager] removeItemAtPath:file error:&e]){self.failure=ErrorText(e,@"条目已移除，但音频文件删除失败");return NO;}return YES;
 }
 @end
+#ifndef AAC_LIBRARY_MODEL_ONLY
 @interface AACAudioListController : UITableViewController
 @property(nonatomic,strong) AVAudioPlayer *player;
 @end
@@ -75,3 +77,4 @@
  [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];if(a.popoverPresentationController){a.popoverPresentationController.sourceView=[t cellForRowAtIndexPath:ip];a.popoverPresentationController.sourceRect=[t cellForRowAtIndexPath:ip].bounds;}[self presentViewController:a animated:YES completion:nil];
 }
 @end
+#endif

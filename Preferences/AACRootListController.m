@@ -82,7 +82,8 @@ static NSString *ErrorText(NSError *e,NSString *fallback){return e?[NSString str
  return [NSDecimalNumber decimalNumberWithString:[@(seconds) stringValue]].stringValue;
 }
 - (void)setDelay:(id)value specifier:(PSSpecifier *)s{
- NSString *text=[value isKindOfClass:NSString.class]?[value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]:nil;
+ NSString *raw=[value isKindOfClass:NSString.class]?value:([value isKindOfClass:NSNumber.class]?[value stringValue]:nil);
+ NSString *text=[raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
  /* ASCII decimal only: no units, exponent, NaN, Infinity, signs or partial parse. */
  double seconds=0;BOOL valid=AACParseDelay(text.UTF8String,&seconds);
  if(!valid){[self alert:@"秒数无效，未保存" message:@"请输入 0～60 的有限数字，可用小数点，例如 5 或 1.5。单位是秒；旧值保持不变。"];[self reloadSpecifiers];return;}
