@@ -31,4 +31,16 @@ static void AACPlayAudio(void) {
  });
 }
 %end
-%ctor { if([NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.MobilePhone"]) NSLog(@"[AutoAnswer] loaded"); }
+%hook CXCallObserver
+- (void)callChanged:(id)callUpdate {
+ %orig;
+ AACLog([NSString stringWithFormat:@"CXCallObserver回调，update类型=%@",NSStringFromClass([callUpdate class])]);
+ @try {
+  BOOL outgoing=[[callUpdate valueForKey:@"hasOutgoing"] boolValue];
+  BOOL connected=[[callUpdate valueForKey:@"hasConnected"] boolValue];
+  BOOL ended=[[callUpdate valueForKey:@"hasEnded"] boolValue];
+  AACLog([NSString stringWithFormat:@"通话状态 outgoing=%@ connected=%@ ended=%@",outgoing?@"YES":@"NO",connected?@"YES":@"NO",ended?@"YES":@"NO"]);
+ } @catch(NSException *e) { AACLog([NSString stringWithFormat:@"读取 CXCallUpdate 失败：%@",e.reason]); }
+}
+%end
+%ctor { if([NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.MobilePhone"]) { AACLog(@"插件已加载：MobilePhone"); NSLog(@"[AutoAnswer] loaded"); } }
