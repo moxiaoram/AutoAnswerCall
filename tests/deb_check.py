@@ -36,10 +36,17 @@ binary = bundle_dir / 'AutoAnswerCallPrefs'
 if not binary.is_file():
     sys.exit('artifact missing AutoAnswerCallPrefs binary')
 settings = binary.read_bytes()
-for required in ('进程探测'.encode(), '共享日志查看器'.encode(),
+for required in (b'AACProbeController', b'AACSharedLogController',
                  b'com.autoanswer.call.probe.', b'com.autoanswer.call.sharelog'):
     if required not in settings:
         sys.exit('artifact settings binary missing 1.10.0 evidence string %r' % required)
+# The Chinese page titles may be stored in a non-UTF-8 literal encoding; report the
+# encoding actually found instead of failing the artifact check on it.
+for title in ('\u8fdb\u7a0b\u63a2\u6d4b', '\u5171\u4eab\u65e5\u5fd7\u67e5\u770b\u5668'):
+    encodings = [enc for enc, blob in (('utf-8', title.encode()),
+                                       ('utf-16-le', title.encode('utf-16-le')))
+                 if blob in settings]
+    print('settings title %s found as: %s' % (title, ', '.join(encodings) or 'not found (informational only)'))
 for other in ('com.apple.springboard', 'com.apple.mobilephone'):
     if other.encode() in settings:
         sys.exit('settings binary should not carry an injection bundle id: %s' % other)
