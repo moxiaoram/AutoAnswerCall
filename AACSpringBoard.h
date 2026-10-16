@@ -6,8 +6,8 @@
 #import <dlfcn.h>
 #import "AACSharedLog.h"
 #import "AACAnswerHost.h"
-/* Host-parameterised answer module (1.13.0; 1.12.0 shipped the host table, 1.11.0 shipped
-   this file SpringBoard-only). The SAME machinery runs in whichever host process the caller
+/* Host-parameterised answer module (1.14.0; 1.13.0 relaxed the hook ABI gate, 1.12.0 shipped
+   the host table, 1.11.0 shipped this file SpringBoard-only). The SAME machinery runs in whichever host process the caller
    names through AACSBEnv.host: probe/pong Darwin names, discovery file name and the
    ownership role all come from the host table in AACAnswerHost.h. Refactor basis: runtime
    discovery + dynamic hook + capture.
@@ -126,10 +126,13 @@ static NSString *AACSBHostDiscoveryFile(void){
 /* Number of answer paths this host really holds: one hooked method or one
    invocation candidate both count, because both can be attempted at answer time. */
 static NSUInteger AACSBAnswerPathCount(void){return AACSBHookCount+AACSBInvocationCount;}
-/* Re-evaluates the single-owner role from the role table plus observed host presence. */
+/* Re-evaluates the single-owner role from the role table plus observed host presence.
+   1.14.0: AACAnswerHostRoleForTag takes the number of answer paths this host really holds and
+   demotes ONLY on a fresh explicit higher-priority ownership claim (see the device evidence at
+   the top of AACAnswerHost.h). A probe from the peer can no longer demote us. */
 static void AACSBRecomputeRole(void){
  NSString *reason=nil;NSString *owner=nil;
- AACAnswerRole role=AACAnswerHostRoleForTag(AACSBHost()[@"tag"],AACSBAnswerPathCount()>0,&reason,&owner);
+ AACAnswerRole role=AACAnswerHostRoleForTag(AACSBHost()[@"tag"],AACSBAnswerPathCount(),&reason,&owner);
  BOOL changed=(role!=AACSBRole)||![owner isEqualToString:AACSBOwnerTag?:@""];
  AACSBRole=role;AACSBHostTag=AACSBHost()[@"tag"];AACSBHostDisplay=AACSBDisplay();AACSBOwnerTag=owner;AACSBRoleReason=reason;
  if(!changed)return;
@@ -145,9 +148,12 @@ static void AACSBRecomputeRole(void){
   });
  }
 }
-/* A higher-priority host's probe/claim just arrived: refresh presence and re-run the role
-   rule (this is how an already-loaded lower-priority host deterministically demotes itself to
-   observer when InCallService shows up later). */
+/* A higher-priority host's probe/claim just arrived: refresh observed liveness/claim state and
+   re-run the role rule. 1.14.0: a PROBE arrival can no longer change the role (a probe is
+   presence only); only a claim arrival can, because AACAnswerHostRoleForTag consults
+   AACAnswerPeerClaimReason exclusively. The call is still kept because the presence line goes
+   into the recorded reason and because an already-loaded lower-priority host must re-check when
+   a real claim shows up later. */
 static void AACSBHostProbeArrived(NSString *tag){
  if(![tag isKindOfClass:NSString.class]||!tag.length)return;
  AACAnswerHostSeenProbe(tag);
@@ -170,6 +176,50 @@ static NSString *AACSBHostRoleText(void){
  return [NSString stringWithFormat:@"host=%@ role=%@ owner=%@",AACSBDisplay(),AACSBRole==AACAnswerRoleOwner?@"OWNER":(AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY"),AACSBOwnerTag?:@"(none)"];
 }
 static NSString *AACSBHostOwnerTagText(void){return AACSBOwnerTag.length?AACSBOwnerTag:@"(none)";}
+/* 1.14.0: the durable reason string of the current decision, always loggable. */
+static NSString *AACSBClaimReasonText(void){return AACSBRoleReason.length?AACSBRoleReason:@"无说明（角色尚未判定）";}
+/* 1.14.0 TASK 2: one explicit line per incoming call saying which host owns the answer, WHY,
+   and whether a submission happened. The role is recomputed first, so the line is the
+   discovery-time decision and (called again immediately before submitting) the submit-time
+   decision. */
+static NSString *AACSBAnswerOwnershipLine(NSString *uuid,BOOL submitted,NSString *detail){
+ AACSBRecomputeRole();
+ return [NSString stringWithFormat:@"接听归属判定 call=%@ owner=%@ role=%@ host=%@ why=%@ submitted=%@%@",uuid.length?uuid:@"(unknown)",AACSBHostOwnerTagText(),AACSBHostRoleText(),AACSBDisplay(),AACSBClaimReasonText(),submitted?@"yes":@"no",detail.length?[NSString stringWithFormat:@"；%@",detail]:@""];
+}
+/* 1.14.0 bounded safety takeover state. One takeover per call UUID, and the takeover
+   submission still has to pass AACSBClaimAnswerUUID, so this host can never submit the same
+   UUID twice even if the role is recomputed mid-call. */
+static NSMutableSet *AACSBTakeoverUUIDs=nil;
+static BOOL AACSBClaimTakeoverUUID(NSString *uuid){
+ if(![uuid isKindOfClass:NSString.class]||!uuid.length)return NO;
+ if(!AACSBTakeoverUUIDs)AACSBTakeoverUUIDs=[NSMutableSet new];
+ @try{
+  if([AACSBTakeoverUUIDs containsObject:uuid])return NO;
+  [AACSBTakeoverUUIDs addObject:uuid];
+ }@catch(NSException *e){return NO;}
+ return YES;
+}
+static BOOL AACSBHasTakenOverUUID(NSString *uuid){return [uuid isKindOfClass:NSString.class]&&uuid.length&&AACSBTakeoverUUIDs&&[AACSBTakeoverUUIDs containsObject:uuid];}
+/* Is a strictly higher-priority answer host asserting ownership right now (a real claim)? */
+static BOOL AACSBHigherPriorityOwnerClaimed(NSString **ownerTag,NSString **reason){
+ return AACAnswerHigherPriorityOwnerClaimed(AACSBHost()[@"tag"],ownerTag,reason);
+}
+/* The takeover gate. peerIdle==YES means Tweak.x really checked, AACAnswerTakeoverIdleSeconds
+   after our own delay expired, that the call is still incoming/unconnected (so the claiming
+   higher-priority owner has produced no submission evidence). Only then, and only once per
+   UUID, may a host that holds answer paths take over. */
+static BOOL AACSBMayTakeOver(NSString *uuid,BOOL peerIdle,NSString **reason){
+ if(![AACSBHost()[@"answer"] boolValue]){if(reason)*reason=@"本宿主不是接听宿主：不可能接管";return NO;}
+ if(AACSBAnswerPathCount()==0){if(reason)*reason=@"本宿主没有可用的接听路径（HOOKED/INVOKABLE 都是 0）：接管了也无法提交";return NO;}
+ NSString *ownerTag=nil;NSString *claimReason=nil;
+ if(!AACSBHigherPriorityOwnerClaimed(&ownerTag,&claimReason)){if(reason)*reason=claimReason;return NO;}
+ if(!peerIdle){if(reason)*reason=[NSString stringWithFormat:@"更高优先级宿主 %@ 的归属声明仍在生效，且已观察到连接/状态变化：无需接管",ownerTag];return NO;}
+ if(AACSBHasTakenOverUUID(uuid)){if(reason)*reason=[NSString stringWithFormat:@"该通话 UUID（%@）已经行使过接管权：每个 UUID 最多接管一次",uuid?:@"(unknown)"];return NO;}
+ if(![AACSBHost()[@"tag"] isKindOfClass:NSString.class]){if(reason)*reason=@"宿主 tag 不可用：不接管";return NO;}
+ if(!AACSBClaimTakeoverUUID(uuid)){if(reason)*reason=[NSString stringWithFormat:@"该通话 UUID（%@）已经行使过接管权：每个 UUID 最多接管一次",uuid?:@"(unknown)"];return NO;}
+ if(reason)*reason=AACAnswerTakeoverReasonText(ownerTag,claimReason);
+ return YES;
+}
 static BOOL AACSBClaimAnswerUUID(NSString *uuid){
  if(![uuid isKindOfClass:NSString.class]||!uuid.length)return NO;
  if(!AACSBSubmittedUUIDs)AACSBSubmittedUUIDs=[NSMutableSet new];
@@ -594,7 +644,7 @@ static NSString *AACSBInvokableSummary(void){
  NSArray *list=AACSBInvokableSelectors.count>6?[AACSBInvokableSelectors subarrayWithRange:NSMakeRange(0,6)]:AACSBInvokableSelectors;
  return [list componentsJoinedByString:@"、"];
 }
-/* 1.13.0: at answer time, repeat each candidate method's outcome in the shared log (not only
+/* 1.13.0/1.14.0: at answer time, repeat each candidate method's outcome in the shared log (not only
    in the discovery file), so the next device test can read the conclusions from the log too. */
 static void AACSBLogMethodOutcomes(void){
  NSMutableArray *lines=[NSMutableArray new];
@@ -614,6 +664,68 @@ static void AACSBAppendDiscovery(NSString *line){
   if(AACSBDiscoveryLines.count>=4000)return;
   [AACSBDiscoveryLines addObject:line];
  }@catch(NSException *e){}
+}
+/* 1.14.0 TASK 2: the compact "HOOKED list" block. Because the shared-log digest is budgeted
+   and because the full discovery file can be long, the hooked method NAMES (class + selector +
+   mechanism) and the invokable-by-invocation candidates are emitted as their own explicitly
+   labelled block that is placed FIRST in both the log lines and the discovery file. Bounded:
+   at most AACSBListBlockMaxEntries hook entries and AACSBListBlockMaxEntries invocation
+   entries, one line each, so the block can never itself become unreadable. */
+enum { AACSBListBlockMaxEntries=24 };
+static NSString *AACSBHookedBlockText(void){
+ NSMutableArray *lines=[NSMutableArray new];
+ NSUInteger hookTotal=AACSBHookCount;
+ NSUInteger invokeTotal=AACSBInvocationCount;
+ [lines addObject:@"# ===== HOOKED list（紧凑块：类+选择器+机制；日志行与发现文件都放在最前面，不受摘要预算截断影响） ====="];
+ [lines addObject:[NSString stringWithFormat:@"# HOOKED_TOTAL hooked=%lu invokable=%lu answerPaths=%lu candidateClasses=%lu rejected=%lu role=%@ owner=%@ discoverRuns=%lu",(unsigned long)hookTotal,(unsigned long)invokeTotal,(unsigned long)AACSBAnswerPathCount(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBRejectedMethods,AACSBRole==AACAnswerRoleOwner?@"OWNER":(AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY"),AACSBHostOwnerTagText(),(unsigned long)AACSBDiscoverRuns]];
+ [lines addObject:[NSString stringWithFormat:@"# HOOKED_LIST count=%lu host=%@ display=%@",(unsigned long)hookTotal,AACSBProcess(),AACSBDisplay()]];
+ if(hookTotal==0){
+  [lines addObject:@"  HOOKED (none) 没有挂钩任何方法：没有「零显式参数且返回类型可直通」的候选（每个候选的具体原因见本文件 SKIPPED 行）"];
+ }else{
+  for(NSUInteger i=0;i<hookTotal&&i<AACSBListBlockMaxEntries;i++){
+   NSString *detail=(AACSBHookDetails&&i<AACSBHookDetails.count)?AACSBHookDetails[i]:[NSString stringWithFormat:@"-[%@ %@]（详情索引缺失）",@"(unknown-class)",@"(unknown-selector)"];
+   [lines addObject:[@"  HOOKED " stringByAppendingString:detail]];
+  }
+  if(hookTotal>AACSBListBlockMaxEntries)[lines addObject:[NSString stringWithFormat:@"  HOOKED ... 其余 %lu 条见本文件的 HOOK_ENTRY 行",(unsigned long)(hookTotal-AACSBListBlockMaxEntries)]];
+ }
+ [lines addObject:[NSString stringWithFormat:@"# INVOKABLE_LIST count=%lu（有显式参数、未挂钩，接听步骤用 NSInvocation 传默认参数调用）",(unsigned long)invokeTotal]];
+ if(invokeTotal==0){
+  [lines addObject:@"  INVOKABLE (none) 没有登记 NSInvocation 候选"];
+ }else{
+  NSUInteger shown=invokeTotal<(NSUInteger)AACSBListBlockMaxEntries?invokeTotal:(NSUInteger)AACSBListBlockMaxEntries;
+  for(NSUInteger i=0;i<shown&&i<AACSBInvokableSelectors.count;i++)[lines addObject:[@"  INVOKABLE " stringByAppendingString:AACSBInvokableSelectors[i]]];
+  if(invokeTotal>shown)[lines addObject:[NSString stringWithFormat:@"  INVOKABLE ... 其余 %lu 条见本文件的 INVOKE_ENTRY 行",(unsigned long)(invokeTotal-shown)]];
+ }
+ [lines addObject:[NSString stringWithFormat:@"# roleReason=%@",AACSBClaimReasonText()]];
+ [lines addObject:[NSString stringWithFormat:@"# observedHostPresence=%@",AACAnswerPresenceText()]];
+ [lines addObject:@"# ===== end HOOKED list ====="];
+ return [lines componentsJoinedByString:@"\n"];
+}
+/* 1.14.0 TASK 2: the shared log truncates every single line at 2000 chars, so the discovery
+   digest is emitted in bounded chunks (default total budget raised to AACSBLogDigestTotalCap
+   characters, chunk size AACSBLogDigestChunkCap) instead of one line that would silently lose
+   its tail. The HOOKED list block is the first chunk, so it is always visible. */
+static const NSUInteger AACSBLogDigestTotalCap=6000;
+static const NSUInteger AACSBLogDigestChunkCap=1600;
+static void AACSBLogDigest(NSString *text){
+ if(![text isKindOfClass:NSString.class]||!text.length){AACSBLog(@"discovery digest: 空（运行时发现没有产生任何行）");return;}
+ NSArray *sourceLines=[text componentsSeparatedByString:@"\n"];
+ NSMutableArray *chunks=[NSMutableArray new];
+ NSMutableString *current=[NSMutableString string];
+ for(NSString *line in sourceLines){
+  if(current.length&&current.length+line.length+1>AACSBLogDigestChunkCap){[chunks addObject:current.copy];current=[NSMutableString string];}
+  [current appendString:line];[current appendString:@"\n"];
+ }
+ if(current.length)[chunks addObject:current.copy];
+ NSUInteger total=chunks.count;NSUInteger index=1;NSUInteger budget=AACSBLogDigestTotalCap;
+ AACSBLog([NSString stringWithFormat:@"discovery digest 分块输出（每行 <=2000 字符的共享日志上限，总预算 %lu 字符，共 %lu 块；完整内容见上面写出的发现文件路径）：",(unsigned long)AACSBLogDigestTotalCap,(unsigned long)total]);
+ for(NSString *chunk in chunks){
+  if(!budget){AACSBLog([NSString stringWithFormat:@"discovery digest 截断：剩余 %lu 块未写入日志（预算 %lu 字符已用完），完整内容在发现文件里",(unsigned long)(total-index+1),(unsigned long)AACSBLogDigestTotalCap]);break;}
+  NSString *piece=chunk.length>budget?[chunk substringToIndex:budget]:chunk;
+  AACSBLog([NSString stringWithFormat:@"discovery digest[%lu/%lu]:\n%@",(unsigned long)index,(unsigned long)total,piece]);
+  budget=budget>piece.length?budget-(NSUInteger)piece.length:0;
+  index++;
+ }
 }
 static void AACSBWriteDiscoveryFile(void){
  if(!AACSBDiscoveryLines){AACSBDiscoveryLines=[NSMutableArray new];}
@@ -640,7 +752,11 @@ static void AACSBWriteDiscoveryFile(void){
  }else{
   [AACSBDiscoveryLines addObject:@"# CONCLUSIVE: 本宿主发现到的可挂钩接听方法=0，因此本宿主不可能接听；请以下一次设备来电时的日志确认其他宿主是否可接听。"];
  }
- NSString *text=AACSBDiscoveryLines.count?[AACSBDiscoveryLines componentsJoinedByString:@"\n"]:@"# 运行时发现未运行";
+ NSString *body=AACSBDiscoveryLines.count?[AACSBDiscoveryLines componentsJoinedByString:@"\n"]:@"# 运行时发现未运行";
+ /* 1.14.0 TASK 2: the compact HOOKED list goes FIRST in the file (and in the log below), so the
+    hooked class+selector+mechanism is readable even if the rest of the file is long. */
+ NSString *hookedBlock=AACSBHookedBlockText();
+ NSString *text=[hookedBlock stringByAppendingFormat:@"\n%@\n",body];
  NSError *error=nil;
  BOOL written=AACSharedWriteNamed(AACSBProcess(),@"discovery.txt",text,&error);
  NSDictionary *chosen=AACSharedResolve(AACSBProcess(),NO);
@@ -649,9 +765,12 @@ static void AACSBWriteDiscoveryFile(void){
  if(AACSBHookCount)AACSBLog([@"已挂钩方法：" stringByAppendingString:AACSBHookedSummary()]);
  else AACSBLog(@"没有挂钩任何方法：零显式参数且返回类型可直通的接听方法为 0；若下面有 NSInvocation 候选，接听仍可能通过该路径发生（结果会写入 INVOKED_BY_INVOCATION 行）");
  if(AACSBInvocationCount)AACSBLog([@"NSInvocation 候选：" stringByAppendingString:AACSBInvokableSummary()]);
- NSString *digest=text.length>4000?[text substringToIndex:4000]:text;
- AACSBLog([@"discovery digest (summary only; full file path above):\n" stringByAppendingString:digest]);
- AACSBRecord(AACSBAnswerPathCount()?[NSString stringWithFormat:@"%@ 运行时发现（非硬编码，objc_getClassList 枚举）：候选类=%lu，已挂钩方法=%lu（%@），NSInvocation 候选=%lu（%@），安全跳过=%lu；角色=%@",AACSBDisplay(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBHookCount,AACSBHookedSummary(),(unsigned long)AACSBInvocationCount,AACSBInvokableSummary(),(unsigned long)AACSBRejectedMethods,AACSBRole==AACAnswerRoleOwner?@"接听负责宿主":(AACSBRole==AACAnswerRoleObserver?@"观察者":@"仅日志")]:[NSString stringWithFormat:@"%@ 运行时发现：候选类=%lu，但没有可挂钩或可调用的接听方法（跳过 %lu）；本宿主不可能接听（仅日志）%@",AACSBDisplay(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBRejectedMethods,AACSBOwnerTag.length?[NSString stringWithFormat:@"，接听由 %@ 负责",AACSBOwnerTag]:@""],@{@"discovered":@(AACSBAnswerPathCount()>0)});
+ /* 1.14.0 TASK 2: the compact HOOKED list is logged line by line first (each line is far below
+    the 2000-char shared-log line cap), then the digest follows in bounded chunks. */
+ for(NSString *blockLine in [hookedBlock componentsSeparatedByString:@"\n"])AACSBLog(blockLine);
+ AACSBLog([NSString stringWithFormat:@"%@ 接听归属判定（发现时）：owner=%@ role=%@ submitted=no why=%@",AACSBDisplay(),AACSBHostOwnerTagText(),AACSBHostRoleText(),AACSBClaimReasonText()]);
+ AACSBLogDigest(text);
+ AACSBRecord(AACSBAnswerPathCount()?[NSString stringWithFormat:@"%@ 运行时发现（非硬编码，objc_getClassList 枚举）：候选类=%lu，已挂钩方法=%lu（%@），NSInvocation 候选=%lu（%@），安全跳过=%lu；角色=%@（%@）",AACSBDisplay(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBHookCount,AACSBHookedSummary(),(unsigned long)AACSBInvocationCount,AACSBInvokableSummary(),(unsigned long)AACSBRejectedMethods,AACSBRole==AACAnswerRoleOwner?@"接听负责宿主":(AACSBRole==AACAnswerRoleObserver?@"观察者":@"仅日志"),AACSBClaimReasonText()]:[NSString stringWithFormat:@"%@ 运行时发现：候选类=%lu，但没有可挂钩或可调用的接听方法（跳过 %lu）；本宿主不可能接听（仅日志）%@；%@",AACSBDisplay(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBRejectedMethods,AACSBOwnerTag.length?[NSString stringWithFormat:@"，接听由 %@ 负责",AACSBOwnerTag]:@"",AACSBClaimReasonText()],@{@"discovered":@(AACSBAnswerPathCount()>0)});
 }
 
 /* ---- discovery ------------------------------------------------------------------------ */
@@ -780,7 +899,7 @@ static void AACSBDiscover(void){
  if(!AACSBHookedSelectors)AACSBHookedSelectors=[NSMutableArray new];
  if(!AACSBInvokableSelectors)AACSBInvokableSelectors=[NSMutableArray new];
  if(!AACSBHookDetails)AACSBHookDetails=[NSMutableArray new];
- [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# AutoAnswerCall 1.13.0 answer-host runtime discovery run %lu host=%@ tag=%@ (runtime-discovered; no hardcoded class name)",(unsigned long)AACSBDiscoverRuns,AACSBDisplay(),AACSBProcess()]];
+ [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# AutoAnswerCall 1.14.0 answer-host runtime discovery run %lu host=%@ tag=%@ (runtime-discovered; no hardcoded class name)",(unsigned long)AACSBDiscoverRuns,AACSBDisplay(),AACSBProcess()]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# discoveryFile=%@ roleTable=%@",AACSBHostDiscoveryFile(),AACAnswerRoleTableText()]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# process=%@ date=%@",AACSBProcess(),NSDate.date]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# classFilters=%@",[AACSBClassKeywords() componentsJoinedByString:@","]]];
@@ -851,10 +970,17 @@ static inline void AACSBStart(AACSBEnv *env){
  @try{AACSBDiscover();}@catch(NSException *e){AACSBLog([@"discovery exception: " stringByAppendingString:e.reason?:@"unknown"]);AACSBRecord(@"运行时发现异常：接听路径退化为仅日志",@{@"discovered":@NO});}
  AACSBRecomputeRole();
  if(AACSBRole==AACAnswerRoleOwner){
-  /* Announce ownership once so lower-priority hosts can yield deterministically. */
+  /* Announce ownership once so lower-priority hosts can yield deterministically. 1.14.0: a
+     claim is posted ONLY here, i.e. only by a host that decided it is the OWNER because its own
+     runtime discovery really found answer paths. That is exactly why a CLAIM may take the
+     answer away from another host while a probe (which proves nothing but process existence and
+     is also sent by hosts that found nothing) may never do so. */
   uint32_t claim=AACAnswerPostOwnerClaim(AACSBProcess());
-  AACSBLog([NSString stringWithFormat:@"%@ 已在 %@ 上广播接听归属声明（post=%u；Darwin 通知无载荷，只断言到达）",AACSBDisplay(),AACAnswerOwnerClaimName(AACSBProcess()),claim]);
+  AACSBLog([NSString stringWithFormat:@"%@ 已在 %@ 上广播接听归属声明（post=%u；Darwin 通知无载荷，只断言到达；只有 OWNER 才广播归属声明）",AACSBDisplay(),AACAnswerOwnerClaimName(AACSBProcess()),claim]);
+ }else{
+  AACSBLog([NSString stringWithFormat:@"%@ 未广播接听归属声明（role=%@，owner=%@）：没有归属声明的宿主不可能让更高优先级宿主让出接听",AACSBDisplay(),AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY",AACSBHostOwnerTagText()]);
  }
+ AACSBLog(AACSBAnswerOwnershipLine(nil,NO,@"启动时的归属判定（还没有任何通话）"));
  /* 1.13.0: the real call UI classes are often registered AFTER this dylib's constructor, so
     repeat the bounded enumeration on a timer as well as on a call event. This is how the
     relaxed gate gets a second chance without an unbounded scan. */

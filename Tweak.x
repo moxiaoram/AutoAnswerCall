@@ -27,7 +27,7 @@ static void Record(NSUUID *uuid,NSMutableDictionary *state,NSString *status,NSDi
 }
 static NSUInteger StopGeneration;
 static NSString *ProcessTag=@"unknown";
-/* 1.13.0: the answer host installs its own submit step (runtime-discovered UI answer path,
+/* 1.13.0/1.14.0: the answer host installs its own submit step (runtime-discovered UI answer path,
    now with a relaxed ABI gate and an NSInvocation fallback for argument-taking methods).
    Left nil in the phone module, which keeps the 1.9.x/1.10.0 CXAnswerCallAction
    transaction path byte-for-byte unchanged. */
@@ -153,6 +153,9 @@ static void Changed(CXCall *call){
  NSUInteger generation=StopGeneration;NSUInteger callGeneration=[s[@"callGeneration"] unsignedIntegerValue];
  Record(uuid,s,[NSString stringWithFormat:@"等待 %.15g 秒后重新检查",delay],nil);
  Log([NSString stringWithFormat:@"Scheduled %@ delay=%.15g seconds from first eligible observed incoming event, NOT measured audible ringing",uuid.UUIDString,delay]);
+ /* 1.14.0 TASK 2: exactly one explicit ownership line per incoming call, at detection time. The
+    same line is written again immediately before any submission (see PerformAnswer). */
+ if(SubmitBlock)Log(AACSBAnswerOwnershipLine(uuid.UUIDString,NO,[NSString stringWithFormat:@"来电检测时的判定；本宿主延时=%.15g 秒，提交前会再判定一次",delay]));
  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(delay*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
   if(generation!=StopGeneration){Log(@"Delayed answer cancelled by plugin stop generation");Record(uuid,s,@"取消：插件已停止",nil);return;}
   if(States[uuid]!=s){Log(@"Delayed answer dropped: call state no longer current");return;} s[@"scheduled"]=@NO; CXCall *live=Current(uuid);
@@ -193,7 +196,8 @@ static void RegisterControls(void){
   else notify_post("com.autoanswer.call.records.clearFailed");
  });if(clearStatus!=NOTIFY_STATUS_OK)Log(@"Record clear notification registration failed; phone diagnostics remain the only fallback");
 }
-/* Host-parameterised answer module (1.13.0; the hook ABI gate and the per-method outcome
+/* Host-parameterised answer module (1.14.0; 1.13.0 relaxed the hook ABI gate; 1.14.0 fixes the
+   ownership demotion bug — see the device evidence block in AACAnswerHost.h. the hook ABI and the per-method outcome
    reporting were relaxed and extended in this version).
    Device evidence that shaped this version: SpringBoard announces itself over Darwin and
    detects a real call (UUID recorded, 6 s delay executed, policy layer worked), but it
@@ -210,7 +214,7 @@ static void RegisterControls(void){
 static void AnswerHostStart(NSDictionary *host){
  NSString *tag=host[@"tag"],*display=host[@"display"],*pong=host[@"pong"];
  Records=AACReadRecords(NULL,NULL);States=[NSMutableDictionary new];Controller=[CXCallController new];Observer=[CXCallObserver new];RetainedDelegate=[AACDelegate new];[Observer setDelegate:RetainedDelegate queue:dispatch_get_main_queue()];
- Log([NSString stringWithFormat:@"Loaded 1.13.0 answer host: %@ (tag=%@ probe=%@ pong=%@ discovery=%@); retained its own CXCallObserver in %@; runtime discovery of the real incoming-call UI starts now (ABI gate relaxed: zero-arg any-return -> MSHookMessageEx hook, arg-taking -> NSInvocation candidate)",display,tag,host[@"probe"],pong,host[@"discovery"],display]);
+ Log([NSString stringWithFormat:@"Loaded 1.14.0 answer host: %@ (tag=%@ probe=%@ pong=%@ discovery=%@); retained its own CXCallObserver in %@; runtime discovery of the real incoming-call UI starts now (ABI gate relaxed: zero-arg any-return -> MSHookMessageEx hook, arg-taking -> NSInvocation candidate)",display,tag,host[@"probe"],pong,host[@"discovery"],display]);
  Log([NSString stringWithFormat:@"接听归属角色表：%@；每个宿主都观察并记录，但只有一个宿主提交接听（InCallService 优先，其次 SpringBoard，否则仅日志）",AACAnswerRoleTableText()]);
  AACSBEnv *env=[AACSBEnv new];
  env.host=host;env.process=tag;
@@ -241,30 +245,29 @@ static void AnswerHostStart(NSDictionary *host){
  }
  int pingToken=0;uint32_t pingStatus=notify_register_dispatch("com.autoanswer.call.ping",&pingToken,dispatch_get_main_queue(),^(int t){Log([NSString stringWithFormat:@"Legacy Darwin ping observed in %@; answering on %@",display,pong]);uint32_t posted=notify_post(pong.UTF8String);if(posted!=NOTIFY_STATUS_OK)Log([NSString stringWithFormat:@"pong post failed status=%u",posted]);});
  if(pingStatus!=NOTIFY_STATUS_OK)Log([NSString stringWithFormat:@"%@ ping notification registration failed",display]);
- SubmitBlock=^(NSUUID *uuid,NSMutableDictionary *state){
-  /* Single-owner gate, re-evaluated at answer time (not only at load). */
-  NSString *ownership=nil;
-  if(!AACSBShouldAnswer(&ownership)){
-   state[@"observerOnly"]=@YES;
-   Record(uuid,state,[NSString stringWithFormat:@"观察者：本宿主不提交接听（接听由 %@ 负责）",AACSBHostOwnerTagText()],@{@"observerOnly":@YES});
-   Log([NSString stringWithFormat:@"observer only, answer owned by %@; %@ 不提交接听，避免两个宿主对同一通话重复提交：%@",AACSBHostOwnerTagText(),display,ownership?:@""]);
-   return;
-  }
+ /* 1.14.0: the submission body is one block so that the bounded takeover path runs the
+    EXACT same code (same per-UUID claim, same fail-closed re-read, same honest reporting)
+    instead of a second, weaker copy. takeover=YES only when the observer branch decided to
+    take over after an idle higher-priority owner. */
+ void (^PerformAnswer)(NSUUID *,NSMutableDictionary *,BOOL) = ^(NSUUID *uuid,NSMutableDictionary *state,BOOL takeover){
   if(!AACSBClaimAnswerUUID(uuid.UUIDString)){
    Record(uuid,state,@"已拒绝重复提交：该通话 UUID 已由本宿主提交过接听",@{@"duplicate":@YES});
    Log([NSString stringWithFormat:@"duplicate answer submission refused for %@ (同一 UUID 只提交一次)",uuid.UUIDString]);
+   Log(AACSBAnswerOwnershipLine(uuid.UUIDString,NO,@"重复提交被拒：同一 UUID 只提交一次"));
    return;
   }
   NSDictionary *recheck=Prefs();
   Log([NSString stringWithFormat:@"%@ re-verify before answering: settings re-read (fail-closed configValid=%d keys=%lu enabled=%@ mode=%@ delay=%@); %@; the call itself was re-checked as still incoming/unanswered immediately before this step",display,ConfigValid,(unsigned long)recheck.count,recheck[@"Enabled"]?:@"missing",recheck[@"Mode"]?:@"missing",recheck[@"Delay"]?:@"missing",AACSBHostRoleText()]);
+  /* 1.14.0 TASK 2: the decision is logged again immediately before submitting. */
+  Log(AACSBAnswerOwnershipLine(uuid.UUIDString,YES,takeover?@"提交前的判定（接管路径：takeover after idle higher-priority owner）":@"提交前的判定（常规 OWNER 路径，已通过同一 UUID 的单次提交判定）"));
   NSString *source=nil;id target=AACSBAnswerTarget(&source);
   AACSBLogMethodOutcomes();
   NSString *reason=nil;BOOL invoked=AACSBInvokeDiscovered(target,&reason);
   state[@"discoveredPath"]=@(invoked);
   if(invoked){
    state[@"submitted"]=@YES;
-   Record(uuid,state,@"已调用运行时发现的 UI 接听方法（尚未确认接通）",@{@"submitted":@YES,@"discovered":@YES});
-   Log([NSString stringWithFormat:@"discovered UI answer path invoked; host=%@ source=%@; %@",display,source?:@"unknown",reason?:@""]);
+   Record(uuid,state,takeover?@"接管后已调用运行时发现的 UI 接听方法（尚未确认接通）":@"已调用运行时发现的 UI 接听方法（尚未确认接通）",@{@"submitted":@YES,@"discovered":@YES});
+   Log([NSString stringWithFormat:@"discovered UI answer path invoked; host=%@ source=%@ takeover=%d; %@",display,source?:@"unknown",takeover,reason?:@""]);
    Log(@"this call is NOT yet confirmed: success is only reported when CXCallObserver reports hasConnected");
    return;
   }
@@ -284,6 +287,51 @@ static void AnswerHostStart(NSDictionary *host){
    if(error){NSString *meaning=CallKitErrorMeaning(error.domain,(NSInteger)error.code);Record(uuid,state,[NSString stringWithFormat:@"次要诊断路径失败：%@/%ld（%@）",error.domain,(long)error.code,meaning],@{@"failed":@YES});Log([NSString stringWithFormat:@"secondary CX answer transaction failed domain=%@ code=%ld detail=%@; 含义：%@",error.domain,(long)error.code,error.localizedDescription?:@"No description",meaning]);}
    else{state[@"accepted"]=@YES;Record(uuid,state,@"次要路径事务已接受；不代表连接",@{@"accepted":@YES});Log(@"secondary CX answer transaction accepted; this alone does not confirm connected, and on this device the primary runtime-discovered path is the one that matters");}
   });}];
+ };
+ SubmitBlock=^(NSUUID *uuid,NSMutableDictionary *state){
+  /* Single-owner gate, re-evaluated at answer time (not only at load).
+     1.14.0: this gate now demotes ONLY on a fresh EXPLICIT higher-priority ownership claim.
+     Peer PROBE presence can no longer take the answer away (device evidence: the 1.13.0 run
+     demoted SpringBoard at 14:05:09 because InCallService's probe had arrived within 90 s, and
+     the call was then answered by nobody). */
+  NSString *ownership=nil;
+  if(!AACSBShouldAnswer(&ownership)){
+   state[@"observerOnly"]=@YES;
+   Record(uuid,state,[NSString stringWithFormat:@"观察者：本宿主不提交接听（接听由 %@ 负责）",AACSBHostOwnerTagText()],@{@"observerOnly":@YES});
+   Log([NSString stringWithFormat:@"observer only, answer owned by %@; %@ 不提交接听，避免两个宿主对同一通话重复提交：%@",AACSBHostOwnerTagText(),display,ownership?:@""]);
+   Log(AACSBAnswerOwnershipLine(uuid.UUIDString,NO,@"观察者路径：本次不提交；探测量达到只能说明对方进程存在，绝不能作为让出接听的依据"));
+   /* 1.14.0 BOUNDED SAFETY TAKEOVER. We yield only to an explicit claim, and a claim is not a
+      submission. AACAnswerTakeoverIdleSeconds after our own delay expired we check once
+      whether the claiming higher-priority host produced anything; if the call is still
+      incoming/unconnected we may take over ONCE for this UUID. */
+   NSString *claimOwner=nil;NSString *claimReason=nil;
+   if(!AACSBHigherPriorityOwnerClaimed(&claimOwner,&claimReason)){
+    Log([NSString stringWithFormat:@"no takeover scheduled: %@",claimReason?:@"无说明"]);
+    return;
+   }
+   Log([NSString stringWithFormat:@"takeover observation started: %@ 广播了明确归属声明（%@）；%@ 将在 %.0f 秒后（本宿主延时到期之后）检查它是否真的提交/接通，若没有则接管一次",claimOwner,claimReason,display,(double)AACAnswerTakeoverIdleSeconds]);
+   NSUInteger takeoverGeneration=StopGeneration;
+   dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(((double)AACAnswerTakeoverIdleSeconds)*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+    if(takeoverGeneration!=StopGeneration){Log(@"takeover cancelled by plugin stop generation");return;}
+    if(States[uuid]!=state){Log(@"takeover dropped: call state no longer current");return;}
+    CXCall *liveCall=Current(uuid);
+    if(!liveCall){Log(@"takeover dropped: the call UUID is no longer observed");return;}
+    if(liveCall.hasConnected){Log(@"takeover not needed: a connection was observed (the claiming owner or the user acted)");return;}
+    if(liveCall.hasEnded){Log(@"takeover dropped: the call already ended");return;}
+    NSString *takeoverReason=nil;
+    if(!AACSBMayTakeOver(uuid.UUIDString,YES,&takeoverReason)){
+     Log([NSString stringWithFormat:@"takeover refused: %@",takeoverReason?:@"条件不满足"]);
+     Record(uuid,state,[NSString stringWithFormat:@"未接管：%@",takeoverReason?:@"条件不满足"],nil);
+     return;
+    }
+    Log([NSString stringWithFormat:@"%@ 接管：%@",display,takeoverReason]);
+    Log(AACSBAnswerOwnershipLine(uuid.UUIDString,NO,@"接管前：更高优先级宿主空闲未提交，本宿主将提交一次"));
+    Record(uuid,state,@"接管：更高优先级宿主空闲未提交，本宿主对该 UUID 接管一次（每个 UUID 最多一次）",@{@"takeover":@YES});
+    PerformAnswer(uuid,state,YES);
+   });
+   return;
+  }
+  PerformAnswer(uuid,state,NO);
  };
  AACSBStart(env);
  Log([NSString stringWithFormat:@"%@ discovery/ownership summary: %@",display,AACSBHostRoleText()]);
@@ -319,17 +367,17 @@ static void AnswerHostStart(NSDictionary *host){
   return;
  }
  dispatch_async(dispatch_get_main_queue(),^{
-  AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"Loaded 1.13.0 EVIDENCE build; bundle=%@ process=%@ tag=%@",bundle,process,ProcessTag]);
+  AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"Loaded 1.14.0 EVIDENCE build; bundle=%@ process=%@ tag=%@",bundle,process,ProcessTag]);
   AACProbeStart(ProcessTag);
   if(inAnswerHostProcess){
-   AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"%@ answer host 1.13.0: runtime discovery + MSHookMessageEx hook + NSInvocation candidate answer path shared with SpringBoard (names discovered at runtime, never hardcoded; observer-only when another host owns the answer; log-only when nothing is discovered; every candidate method and its outcome is written to the discovery file)",answerHost[@"display"]]);
+   AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"%@ answer host 1.14.0: runtime discovery + MSHookMessageEx hook + NSInvocation candidate answer path shared with SpringBoard (names discovered at runtime, never hardcoded; observer-only when another host owns the answer; log-only when nothing is discovered; every candidate method and its outcome is written to the discovery file)",answerHost[@"display"]]);
    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{AACRunInventory(ProcessTag);});
    AnswerHostStart(answerHost);
    return;
   }
   if(inPhoneProcess){
   Records=AACReadRecords(NULL,NULL);States=[NSMutableDictionary new];Controller=[CXCallController new];Observer=[CXCallObserver new];RetainedDelegate=[AACDelegate new];[Observer setDelegate:RetainedDelegate queue:dispatch_get_main_queue()];
-  Log(@"Loaded 1.13.0 evidence build; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed (this module is unchanged from 1.10.0)");
+  Log(@"Loaded 1.14.0 evidence build; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed (this module is unchanged from 1.10.0)");
   int token=0;notify_register_dispatch("com.autoanswer.call.ping",&token,dispatch_get_main_queue(),^(int t){Log(@"Ping acknowledged in MobilePhone");NSDictionary *actual=Prefs();Log([NSString stringWithFormat:@"Configuration observed: keys=%lu enabledPresent=%d mode=%@ delay=%@ whitelistPresent=%d",(unsigned long)actual.count,actual[@"Enabled"]!=nil,actual[@"Mode"]?:@"missing",actual[@"Delay"]?:@"missing",actual[@"Whitelist"]!=nil]);notify_post("com.autoanswer.call.pong");});
   RegisterControls();
  /* MobilePhone keeps the 1.9.x registration order through RegisterControls(); on this device neither InCallService nor SpringBoard has ever been beaten to the answer by it. */

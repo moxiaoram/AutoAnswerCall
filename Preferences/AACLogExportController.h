@@ -3,7 +3,7 @@
 #import "../AACSharedLog.h"
 #import "../AACRecords.h"
 #import "AACLogViewerController.h"
-/* 运行日志导出 / 分享 (1.13.0)。
+/* 运行日志导出 / 分享 (1.14.0；1.13.0 建立）。
    用户要求「增加所有运行日志可以分享被打开」：本文件把所有已经存在或应当存在的运行日志集中成
    一张清单，逐项记录 存在 / 大小 / 可读 / 缺失原因，然后
      - 「分享全部运行日志」把清单里真实存在的文件复制到临时导出目录后一次性交给
@@ -58,7 +58,7 @@ static inline NSDictionary *AACExportConfiguration(void){
  NSMutableDictionary *config=[NSMutableDictionary new];
  NSUserDefaults *defaults=AACExportDefaults();
  for(NSString *key in @[@"Mode",@"Enabled",@"Delay",@"Whitelist",@"PlayAudio",@"AudioPath",@"AudioName",@"AudioSize",@"SelectedAudioID"]){id value=[defaults objectForKey:key];if(value)config[key]=value;}
- config[@"Version"]=@"1.13.0";
+ config[@"Version"]=@"1.14.0";
  config[@"ExportedAt"]=NSDate.date;
  config[@"ExportSource"]=@"AutoAnswerCall Settings 运行日志导出（仅本插件自有偏好域与自有日志文件；不含凭据）";
  return config;
@@ -66,7 +66,7 @@ static inline NSDictionary *AACExportConfiguration(void){
 static inline NSString *AACExportRecordsText(NSString **note){
  BOOL synced=NO,present=NO;
  NSArray *records=AACReadRecords(&synced,&present);
- NSMutableString *text=[NSMutableString stringWithFormat:@"# AutoAnswerCall 接听记录导出 (1.13.0)\n# 域名=%@ key=Records synchronized=%d present=%d count=%lu\n# 导出时刻=%@（时间戳为通话事件观察时刻）\n\n",AACRecordDomain,synced,present,(unsigned long)records.count,NSDate.date];
+ NSMutableString *text=[NSMutableString stringWithFormat:@"# AutoAnswerCall 接听记录导出 (1.14.0)\n# 域名=%@ key=Records synchronized=%d present=%d count=%lu\n# 导出时刻=%@（时间戳为通话事件观察时刻）\n\n",AACRecordDomain,synced,present,(unsigned long)records.count,NSDate.date];
  if(!records.count)[text appendString:@"（本进程读不到任何记录：可能从未写入，或另一进程写入对这里不可见——跨进程可见性未验证。）\n"];
  for(NSDictionary *record in records){
   [text appendFormat:@"%@  %@  %@\n",record[@"timestamp"],record[@"id"],record[@"caller"]?:@"(号码不可得)"];
@@ -147,7 +147,7 @@ static inline NSDictionary *AACExportGather(void){
  }
  NSUInteger found=0,missing=0;
  for(NSDictionary *entry in entries){if([entry[@"exists"] boolValue])found++;else missing++;}
- NSMutableString *report=[NSMutableString stringWithFormat:@"# AutoAnswerCall 运行日志导出报告 (1.13.0)\n# 生成时刻=%@\n# 设置侧目录=%@\n# 说明：下表逐项列出所有应当存在的运行日志路径及其在本进程中的真实状态。\n#       存在的条目会被复制到临时导出目录并一起分享；缺失的条目写明原因，不做任何虚构。\n#       跨进程可写/可读没有在 RootHide 上验证过，因此「未创建」既可能是没有写入，也可能是写到了\n#       另一个进程可写、本进程不可见的候选路径。\n#       本报告只描述文件是否存在与是否可读：它不能证明自动接听可用，也不能证明任何宿主已注入。\n\n存在 %lu 项，缺失 %lu 项，共 %lu 项。\n\n",NSDate.date,dir?:@"(设置侧目录不可用)",(unsigned long)found,(unsigned long)missing,(unsigned long)entries.count];
+ NSMutableString *report=[NSMutableString stringWithFormat:@"# AutoAnswerCall 运行日志导出报告 (1.14.0)\n# 生成时刻=%@\n# 设置侧目录=%@\n# 说明：下表逐项列出所有应当存在的运行日志路径及其在本进程中的真实状态。\n#       存在的条目会被复制到临时导出目录并一起分享；缺失的条目写明原因，不做任何虚构。\n#       跨进程可写/可读没有在 RootHide 上验证过，因此「未创建」既可能是没有写入，也可能是写到了\n#       另一个进程可写、本进程不可见的候选路径。\n#       本报告只描述文件是否存在与是否可读：它不能证明自动接听可用，也不能证明任何宿主已注入。\n\n存在 %lu 项，缺失 %lu 项，共 %lu 项。\n\n",NSDate.date,dir?:@"(设置侧目录不可用)",(unsigned long)found,(unsigned long)missing,(unsigned long)entries.count];
  for(NSDictionary *entry in entries){
   [report appendFormat:@"[%@] %@\n    分组：%@\n    路径：%@\n    状态：%@\n",[entry[@"exists"] boolValue]?@"存在":@"缺失",entry[@"label"],entry[@"group"],entry[@"path"],entry[@"note"]];
  }

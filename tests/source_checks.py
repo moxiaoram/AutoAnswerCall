@@ -139,11 +139,11 @@ for bad in ['NSClassFromString','SBIncomingCallViewController','SBCallAlertViewC
 # policy/answer wiring in Tweak.x
 for good in ['SubmitBlock','if(SubmitBlock){SubmitBlock(uuid,s);}else{','RegisterControls();','AACSBStart(env)','AnswerHostStart(answerHost)','AACSBRetryDiscoveryIfEmpty()','AACSBEnv *env=[AACSBEnv new]','LOG-ONLY primary path','已调用运行时发现的 UI 接听方法（尚未确认接通）','未发现可调用的 UI 接听路径','AACSBLogMethodOutcomes()']:
  assert good in t,good
-assert 'Loaded 1.13.0 answer host' in t and '1.13.0 EVIDENCE build' in t
+assert 'Loaded 1.14.0 answer host' in t and '1.14.0 EVIDENCE build' in t
 assert 'ABI gate relaxed' in t
 assert sb.count('AACSBAnswerHook')>=4
 # phone module keeps its 1.9.x/1.10.0 behaviour byte-for-byte
-assert 'Loaded 1.13.0 evidence build; retained CXCallObserver in MobilePhone' in t
+assert 'Loaded 1.14.0 evidence build; retained CXCallObserver in MobilePhone' in t
 assert 'inPhoneProcess' in t and 'ProcessTag=@"mobilephone";' in t
 # settings side shows the runtime-discovered result and never invents one
 for good in ['AACDiscoveryEntry','aac-springboard.discovery.txt','runtime-discovered','AACCountOccurrences','没有可读的发现文件','showDiscovery:']:
@@ -184,9 +184,17 @@ for good in ['AnswerHostStart(NSDictionary *host)','AACAnswerHostTagForBundle(bu
 # single-owner rule: the ownership gate runs BEFORE any answer submission, the observer
 # branch returns without submitting, and there is exactly ONE public-transaction attempt
 # (never more weight on a path proven ineffective on this device).
-assert t.index('AACSBShouldAnswer(&ownership)')<t.index('secondary unverified diagnostic attempt')
-observer_branch=t.split('if(!AACSBShouldAnswer(&ownership)){')[1].split('if(!AACSBClaimAnswerUUID')[0]
+# 1.14.0: the ownership gate still runs BEFORE any submission. The submission body is now the
+# PerformAnswer block (so the bounded takeover path can reuse it), which is DEFINED earlier in
+# the file but can only be REACHED through SubmitBlock's gate: the non-owner branch returns
+# without calling it, and the owner branch calls it exactly once. Textual order is therefore
+# asserted through the call sites, not through the definition.
+assert t.index('AACSBShouldAnswer(&ownership)')<t.index('PerformAnswer(uuid,state,NO)')
+assert t.count('PerformAnswer(uuid,state,')==2, 'the submission body must have exactly two call sites: owner + bounded takeover'
+assert 'PerformAnswer(uuid,state,YES)' in t and 'PerformAnswer(uuid,state,NO)' in t
+observer_branch=t.split('if(!AACSBShouldAnswer(&ownership)){')[1].split('PerformAnswer(uuid,state,NO)')[0]
 assert 'return;' in observer_branch and 'CXAnswerCallAction' not in observer_branch
+assert observer_branch.count('PerformAnswer(uuid,state,YES)')==1, 'the takeover is the only submission reachable from the observer branch'
 assert t.count('secondary unverified diagnostic attempt')==1
 # exactly two: the unchanged phone module (1.9.x path) and the single diagnostic attempt
 assert t.count('requestTransaction:tx')==2
@@ -214,18 +222,18 @@ for good in ['@"mobilephone",@"springboard",@"incall",@"settings"','com.autoansw
  assert good in pc,good
 # version bumped everywhere, package id unchanged, filter is the four documented ids
 # ---- 1.13.0: version bump everywhere + full run-log export/share ------------------------
-assert 'Version: 1.13.0' in (r/'control').read_text() and 'Package: com.autoanswer.call' in (r/'control').read_text()
-assert 'PACKAGE_VERSION := 1.13.0' in (r/'Makefile').read_text()
+assert 'Version: 1.14.0' in (r/'control').read_text() and 'Package: com.autoanswer.call' in (r/'control').read_text()
+assert 'PACKAGE_VERSION := 1.14.0' in (r/'Makefile').read_text()
 assert 'INSTALL_TARGET_PROCESSES := SpringBoard MobilePhone InCallService' in (r/'Makefile').read_text()
-assert '1.13.0' in (r/'README.md').read_text() and '1.13.0' in pstr and '1.13.0' in pc and '1.13.0' in sb
-assert 'config[@"Version"]=@"1.13.0";' in s
-assert '设置模块已加载 1.13.0' in s
-assert 'config[@"Version"]=@"1.13.0";' in export_text, 'the exported configuration plist must carry the 1.13.0 version too'
+assert '1.14.0' in (r/'README.md').read_text() and '1.14.0' in pstr and '1.14.0' in pc and '1.14.0' in sb
+assert 'config[@"Version"]=@"1.14.0";' in s
+assert '设置模块已加载 1.14.0' in s
+assert 'config[@"Version"]=@"1.14.0";' in export_text, 'the exported configuration plist must carry the 1.14.0 version too'
 # no stale 1.12.0 version stamp may survive in the shipped sources (historical prose about
 # the previous release is allowed only where it is explicitly marked as history).
 for path in ('control','Makefile'):
  assert '1.12.0' not in (r/path).read_text(), path
-assert 'PACKAGE_VERSION := 1.13.0' in (r/'Makefile').read_text()
+assert 'PACKAGE_VERSION := 1.14.0' in (r/'Makefile').read_text()
 # --- run-log export / share (Task 2) ---
 for good in ['shareAllLogs:','showLogExport:','AACLogExportController','运行日志分享']:
  assert good in s or good in pstr,good
@@ -248,4 +256,78 @@ assert 'AACSharedLogCandidateDirs()' in export_text and 'for(NSString *host in A
 assert 'AACExportHosts(void){return @[@"incall",@"springboard",@"mobilephone",@"settings"];}' in export_text
 assert 'UIActivityViewController' in export_text and 'copyItemAtPath' in export_text
 
-print('PASS: transactions, mode2 exclusions, finite seconds, stop generations, bounded multiselect import, library schema/migration/delete guards, native accessor ABI guards, 1.10.0 evidence channel (per-process probe, bounded inventory, per-path log reporting) plus the 1.11.0/1.12.0 answer-host module and the 1.13.0 relaxed hook ABI gate (MSHookMessageEx + per-return-type thunks + bounded NSInvocation candidates for argument-taking methods, per-method HOOKED/INVOKABLE_BY_INVOCATION/CAPTURED/INVOKED_BY_INVOCATION/SKIPPED reporting), the corrected CallKit error mapping (code 1 = unentitled) and the full run-log export/share surface (host table InCallService+SpringBoard+MobilePhone, per-host probe/pong/discovery names, broad runtime candidate classes, ABI-proven dynamic hooks, per-method original IMP, recursion guard, weak capture + hierarchy re-scan, deterministic single-owner role table with a per-UUID submission guard, decoded CallKit error meanings, explicit observer/log-only fallbacks) - static checks only, NOT device runtime')
+print('PASS: transactions, mode2 exclusions, finite seconds, stop generations, bounded multiselect import, library schema/migration/delete guards, native accessor ABI guards, 1.10.0 evidence channel (per-process probe, bounded inventory, per-path log reporting) plus the 1.11.0/1.12.0 answer-host module, the 1.13.0 relaxed hook ABI gate (MSHookMessageEx + per-return-type thunks + bounded NSInvocation candidates for argument-taking methods, per-method HOOKED/INVOKABLE_BY_INVOCATION/CAPTURED/INVOKED_BY_INVOCATION/SKIPPED reporting), the corrected CallKit error mapping (code 1 = unentitled) and the full run-log export/share surface (host table InCallService+SpringBoard+MobilePhone, per-host probe/pong/discovery names, broad runtime candidate classes, ABI-proven dynamic hooks, per-method original IMP, recursion guard, weak capture + hierarchy re-scan, deterministic single-owner role table with a per-UUID submission guard, decoded CallKit error meanings, explicit observer/log-only fallbacks) and the 1.14.0 ownership fix (demotion ONLY on a fresh explicit higher-priority ownership claim inside a bounded 90 s window; peer probe presence can never demote and is reported as presence-only evidence; a host that holds answer paths and sees no claim stays OWNER and really submits; bounded 12 s takeover after an idle higher-priority owner, at most once per call UUID and still behind the same per-UUID single-submission claim; durable reason strings for every OWNER/OBSERVER decision; one explicit 接听归属判定/owner/why/submitted line per incoming call; compact always-visible HOOKED list block with class+selector+mechanism and the invokable-by-invocation candidates, written first into the log and the discovery file; discovery digest now emitted in bounded chunks with a 6000-char budget instead of one truncated line) - static checks only, NOT device runtime')
+
+# ---- 1.14.0 TASK 1: ownership demotion only on an explicit ownership claim -------------
+# Device evidence this fixes (user's real SpringBoard shared log, 2026-10-16): the 1.13.0 run
+# at 14:03:05 reported matchedClasses=150 hookedMethods=4 invokable=5 rejected=0 role=OWNER and
+# detected the 14:05:08 call, then at 14:05:09 demoted ITSELF to OBSERVER with the reason
+# "(incall 的探测通知在 90 秒内到达过本进程（存活证据）)" and logged "observer only, answer owned
+# by incall" — InCallService never submitted anything, so nobody answered. A probe proves only
+# that the peer process exists.
+# The demotion loop must use the CLAIM helper exclusively. Asserted structurally: the role
+# decision contains exactly two loops over higher-priority peers, the FIRST (demotion) uses only
+# AACAnswerPeerClaimReason, the second is reporting-only presence.
+role_fn=host.split('static inline AACAnswerRole AACAnswerHostRoleForTag')[1].split('/* Human-readable presence snapshot')[0]
+assert 'AACAnswerPeerClaimReason' in role_fn,'the role decision must consult the explicit ownership claim'
+peer_loops=role_fn.split('for(NSDictionary *peer in AACAnswerHostsHigherPriority(tag)){')
+assert len(peer_loops)==3,'expected exactly two peer loops: the claim (demotion) loop and the presence (reporting) loop'
+assert 'AACAnswerPeerClaimReason' in peer_loops[1] and 'AACAnswerPeerPresenceReason' not in peer_loops[1], \
+    'the demotion loop must consult the claim only: probe presence must NEVER be able to demote'
+assert 'AACAnswerRoleObserver' in peer_loops[1],'the claim loop with a fresh higher-priority claim returns OBSERVER'
+assert 'AACAnswerPeerPresenceReason' in peer_loops[2] and 'AACAnswerRoleObserver' not in peer_loops[2], \
+    'the presence loop only enriches the OWNER reason, it never demotes'
+assert 'AACAnswerHigherPriorityOwnerClaimed' in host and 'AACAnswerTakeoverReasonText' in host
+for good in ['AACAnswerClaimFreshSeconds=90.0','AACAnswerTakeoverIdleSeconds=12.0','AACAnswerPeerClaimReason','AACAnswerPeerPresenceReason',
+             'REPORTING/PRESENCE helper only','may never be used to','demote a host that holds answer paths','AACAnswerHostRoleForTag(NSString *tag,NSUInteger answerPaths']:
+ assert good in host,good
+assert 'BOOL selfDiscoveredHooks' not in host,'the role decision now takes the real answer-path count, not a boolean'
+assert 'only an EXPLICIT, fresh, higher-priority ownership claim demotes us' in host
+assert '探测到存在只证明进程存在，不构成归属' in host
+assert 'takeover after idle higher-priority owner' in host
+# the claim is the ONLY admission criterion, and a claim is only ever posted by an OWNER host
+assert 'com.autoanswer.call.owner.' in host and 'AACAnswerOwnerClaimName(tag)' in host
+assert 'PROBE PRESENCE' in host.upper() and 'ROOT CAUSE' in host.upper()
+assert 'matchedClasses=150 hookedMethods=4 invokable=5 rejected=0' in host,'the 1.13.0 device evidence must be quoted in the source'
+assert 'observer only, answer owned by incall' in host,'the demotion line from the device log must be quoted in the source'
+# module side: the role is recomputed with the answer-path count, probe arrival cannot demote,
+# and a claim is broadcast only when this host decided it is OWNER
+assert 'AACAnswerHostRoleForTag(AACSBHost()[@"tag"],AACSBAnswerPathCount(),&reason,&owner)' in sb
+assert '只有 OWNER 才广播归属声明' in sb and '未广播接听归属声明' in sb
+for good in ['AACSBHigherPriorityOwnerClaimed','AACSBMayTakeOver','AACSBClaimTakeoverUUID','AACSBHasTakenOverUUID',
+             '每个 UUID 最多接管一次','本宿主没有可用的接听路径（HOOKED/INVOKABLE 都是 0）：接管了也无法提交',
+             'AACSBClaimReasonText','AACSBAnswerOwnershipLine','接听归属判定 call=%@']:
+ assert good in sb,good
+# TASK 1 takeover wiring: bounded (12 s), once per UUID, cancelled by the stop generation, and
+# skipped as soon as a connection appears; it reuses the SAME submission body so the per-UUID
+# single-submission claim still guards it.
+for good in ['AACSBHigherPriorityOwnerClaimed(&claimOwner,&claimReason)','AACSBMayTakeOver(uuid.UUIDString,YES,&takeoverReason)',
+             'takeover after idle higher-priority owner','takeover cancelled by plugin stop generation',
+             'takeover dropped: call state no longer current','takeover dropped: the call UUID is no longer observed',
+             'takeover not needed: a connection was observed','takeover dropped: the call already ended',
+             'takeover observation started','每个 UUID 最多一次']:
+ assert good in t,good
+assert 'AACSBClaimAnswerUUID' in sb and 'AACSBClaimAnswerUUID(uuid.UUIDString)' in t
+# never two submissions for the same UUID from this host: both the normal path and the takeover
+# path go through the same single-submission claim, and the takeover itself is claimed once
+submit_sites=t.count('PerformAnswer(uuid,state,')
+assert submit_sites==2 and 'if(!AACSBClaimAnswerUUID(uuid.UUIDString)){' in t
+assert t.count('if(!AACSBClaimAnswerUUID(uuid.UUIDString)){')==1,'exactly one single-submission gate'
+# TASK 2 per-call line: which host owns the answer, why, and whether a submission happened
+assert t.count('AACSBAnswerOwnershipLine(')>=4,'the ownership line must be logged at detection, before/at submission and on the observer path'
+assert 'submitted=%@' in sb and 'submitted?@"yes":@"no"' in sb
+assert '来电检测时的判定' in t and '提交前的判定' in t
+# ---- 1.14.0 TASK 2: compact HOOKED list + bounded multi-chunk digest --------------------
+for good in ['AACSBHookedBlockText','HOOKED list','HOOKED_LIST count=','INVOKABLE_LIST count=','end HOOKED list',
+             'AACSBLogDigest','AACSBLogDigestTotalCap=6000','AACSBLogDigestChunkCap=1600','AACSBListBlockMaxEntries=24']:
+ assert good in sb,good
+assert 'digest=text.length>4000' not in sb,'the single truncated 4000-char digest line must be gone'
+assert 'AACSBLogDigest(text)' in sb
+# the HOOKED list is FIRST in the file and logged line by line (each line is far under the
+# 2000-char per-line shared-log cap that silently truncated the old digest)
+assert 'NSString *text=[hookedBlock stringByAppendingFormat:@"\\n%@\\n",body]' in sb
+assert 'for(NSString *blockLine in [hookedBlock componentsSeparatedByString:@"\\n"])AACSBLog(blockLine);' in sb
+assert '共享日志单行' in sb or '每行 <=2000 字符' in sb
+# the invokable-by-invocation candidates are part of the compact block too
+assert 'AACSBInvokableSelectors[i]' in sb
+print('1.14.0 ownership/takeover/HOOKED-list static checks passed')

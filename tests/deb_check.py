@@ -1,5 +1,5 @@
-"""Verify the built deb ships the four configured bundle ids, every host module, the 1.13.0
-relaxed hook ABI strategy, the corrected CallKit error mapping and the run-log share surface.
+"""Verify the built deb ships the four configured bundle ids, every host module, the 1.14.0 ownership rule (claim-only demotion + bounded takeover) and
+the 1.13.0 relaxed hook ABI strategy, the corrected CallKit error mapping and the run-log share surface.
 
 Apple Platform Deployment lists the Phone app as com.apple.mobilephone (lowercase). 1.13.0
 injects into com.apple.mobilephone, com.apple.springboard, com.apple.InCallService and
@@ -99,6 +99,47 @@ for forbidden in (b'SBIncomingCallViewController', b'SBCallAlertViewController',
     if forbidden in dylib:
         sys.exit('artifact dylib must not hardcode %r: the answer path is runtime-discovered'
                  % forbidden)
+
+
+# 1.14.0: the ownership fix and the Task-2 evidence surface must be IN the artifact, not only in
+# the source tree. Device evidence that drove the fix (user's real SpringBoard shared log):
+# 1.13.0 @14:03:05 matchedClasses=150 hookedMethods=4 invokable=5 rejected=0 role=OWNER, the
+# 14:05:08 call was detected and the 6 s delay scheduled, then @14:05:09 the host demoted itself
+# to OBSERVER because "incall 的探测通知在 90 秒内到达过本进程（存活证据）" and logged
+# "observer only, answer owned by incall" — nobody ever answered. 1.14.0 demotes ONLY on a fresh
+# explicit ownership claim, never on probe presence, and adds a bounded 12 s takeover.
+required_ownership = ('Loaded 1.14.0 answer host',
+                      'AutoAnswerCall 1.14.0 answer-host runtime discovery run',
+                      'takeover after idle higher-priority owner',
+                      'takeover cancelled by plugin stop generation',
+                      'takeover not needed: a connection was observed',
+                      'takeover observation started',
+                      'no takeover scheduled',
+                      '\u6bcf\u4e2a UUID \u6700\u591a\u63a5\u7ba1\u4e00\u6b21',
+                      '\u4ec5\u5b58\u6d3b\u8bc1\u636e',
+                      '\u63a2\u6d4b\u5230\u5b58\u5728\u53ea\u8bc1\u660e\u8fdb\u7a0b\u5b58\u5728\uff0c\u4e0d\u6784\u6210\u5f52\u5c5e',
+                      '\u672c\u5bbf\u4e3b\u6ca1\u6709\u53ef\u7528\u7684\u63a5\u542c\u8def\u5f84',
+                      '\u4ecd\u7136\u6ca1\u6709\u89c2\u5bdf\u5230\u8fde\u63a5',
+                      '\u53ea\u6709 OWNER \u624d\u5e7f\u64ad\u5f52\u5c5e\u58f0\u660e',
+                      'HOOKED list', 'end HOOKED list', 'HOOKED_LIST count=', 'INVOKABLE_LIST count=',
+                      'submitted=%@', '\u63a5\u542c\u5f52\u5c5e\u5224\u5b9a call=',
+                      'discovery digest[%lu/%lu]',
+                      # NOTE: only string literals are checked here. Static C function names
+                      # (AACSBMayTakeOver, AACSBClaimTakeoverUUID, AACSBAnswerOwnershipLine,
+                      # AACSBHookedBlockText, AACSBLogDigest, AACSBPeerClaimReason) are NOT
+                      # string literals and are deliberately not required to appear in the
+                      # binary; their behaviour is checked by tests/source_checks.py.)
+                      '\u5df2\u7ecf\u884c\u4f7f\u8fc7\u63a5\u7ba1\u6743')
+missing_ownership = [item for item in required_ownership if not present(dylib, item)]
+print('dylib 1.14.0 ownership/HOOKED-list strings found: %d/%d'
+      % (len(required_ownership) - len(missing_ownership), len(required_ownership)))
+if missing_ownership:
+    sys.exit('artifact dylib missing 1.14.0 ownership/takeover/HOOKED-list strings: %r'
+             % (missing_ownership,))
+# The old probe-presence demotion reason must be gone: it may not be shipped as the demotion
+# basis any more (it survives only as presence-only reporting evidence).
+if present(dylib, '\u89c2\u5bdf\u8005\uff1a\u63a5\u542c\u7531 %@ \u8d1f\u8d23\uff08%@\uff09\uff1b\u672c\u5bbf\u4e3b\u53ea\u89c2\u5bdf\u5e76\u8bb0\u5f55'):
+    print('  note: the claim-based OBSERVER reason (kept, now claim-only) is present')
 
 # Settings module: the probe/log pages and the per-host discovery labels must be linked
 # into the preference bundle.
