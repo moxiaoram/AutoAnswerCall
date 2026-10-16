@@ -153,7 +153,7 @@ static inline NSArray *AACSharedViewerEntries(NSArray *processes){
   BOOL writable=exists&&isDir&&[fm isWritableFileAtPath:dir];
   [out addObject:@{@"label":candidate[@"label"],@"kind":@"dir",@"path":dir,@"exists":@(exists&&isDir),@"writable":@(writable),@"readable":@(exists&&isDir),@"size":@0,@"note":(exists&&isDir)?@"目录存在":@"目录不存在"}];
   for(NSString *process in processes){
-   for(NSString *suffix in @[@"log",@"txt",@"discovery.txt"]){
+   for(NSString *suffix in @[@"log",@"txt",@"discovery.txt",@"host-messages.txt"]){ /* 1.16.0: the chunked Darwin transport persists its reassembled text here */
     NSString *path=[dir stringByAppendingPathComponent:AACSharedFileLeaf(process,suffix)];
     BOOL file=NO;[fm fileExistsAtPath:path isDirectory:&file];
     NSDictionary *attributes=[fm attributesOfItemAtPath:path error:nil];

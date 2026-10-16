@@ -1,9 +1,10 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import "../AACSharedLog.h"
+#import "../AACChunkMsg.h"
 #import "../AACRecords.h"
 #import "AACLogViewerController.h"
-/* 运行日志导出 / 分享 (1.15.0；1.13.0 建立）。
+/* 运行日志导出 / 分享 (1.16.0；1.13.0 建立）。
    用户要求「增加所有运行日志可以分享被打开」：本文件把所有已经存在或应当存在的运行日志集中成
    一张清单，逐项记录 存在 / 大小 / 可读 / 缺失原因，然后
      - 「分享全部运行日志」把清单里真实存在的文件复制到临时导出目录后一次性交给
@@ -58,7 +59,7 @@ static inline NSDictionary *AACExportConfiguration(void){
  NSMutableDictionary *config=[NSMutableDictionary new];
  NSUserDefaults *defaults=AACExportDefaults();
  for(NSString *key in @[@"Mode",@"Enabled",@"Delay",@"Whitelist",@"PlayAudio",@"AudioPath",@"AudioName",@"AudioSize",@"SelectedAudioID"]){id value=[defaults objectForKey:key];if(value)config[key]=value;}
- config[@"Version"]=@"1.15.0";
+ config[@"Version"]=@"1.16.0";
  config[@"ExportedAt"]=NSDate.date;
  config[@"ExportSource"]=@"AutoAnswerCall Settings 运行日志导出（仅本插件自有偏好域与自有日志文件；不含凭据）";
  return config;
@@ -66,7 +67,7 @@ static inline NSDictionary *AACExportConfiguration(void){
 static inline NSString *AACExportRecordsText(NSString **note){
  BOOL synced=NO,present=NO;
  NSArray *records=AACReadRecords(&synced,&present);
- NSMutableString *text=[NSMutableString stringWithFormat:@"# AutoAnswerCall 接听记录导出 (1.15.0)\n# 域名=%@ key=Records synchronized=%d present=%d count=%lu\n# 导出时刻=%@（时间戳为通话事件观察时刻）\n\n",AACRecordDomain,synced,present,(unsigned long)records.count,NSDate.date];
+ NSMutableString *text=[NSMutableString stringWithFormat:@"# AutoAnswerCall 接听记录导出 (1.16.0)\n# 域名=%@ key=Records synchronized=%d present=%d count=%lu\n# 导出时刻=%@（时间戳为通话事件观察时刻）\n\n",AACRecordDomain,synced,present,(unsigned long)records.count,NSDate.date];
  if(!records.count)[text appendString:@"（本进程读不到任何记录：可能从未写入，或另一进程写入对这里不可见——跨进程可见性未验证。）\n"];
  for(NSDictionary *record in records){
   [text appendFormat:@"%@  %@  %@\n",record[@"timestamp"],record[@"id"],record[@"caller"]?:@"(号码不可得)"];
@@ -100,6 +101,11 @@ static inline NSArray *AACExportPrepare(NSString **summary){
  else [notes addObject:[@"shared-prefs-fallback.txt：生成失败 " stringByAppendingString:why?:@"写入失败"]];
  if(AACExportWriteText(dir,@"host-report.txt",AACHostReportDump(),&why))[notes addObject:@"host-report.txt：已生成（宿主跨进程上报域读回；只包含本进程实际读到的键与真实 plist 路径）"];
  else [notes addObject:[@"host-report.txt：生成失败 " stringByAppendingString:why?:@"写入失败"]];
+ /* 1.16.0 TASK 1: the chunked Darwin message read-back. Written here so the export always
+    contains it; it reports only what THIS process actually read (per tag: name-channel chunk
+    arrivals, state-slot generation/completeness/CRC verification, and the reassembled text). */
+ if(AACExportWriteText(dir,@"host-messages.txt",AACChunkMsgDump(),&why))[notes addObject:@"host-messages.txt：已生成（跨进程分片消息读回；只包含本进程实际读到的片/槽、完整性、CRC32 校验结果与重组文本）"];
+ else [notes addObject:[@"host-messages.txt：生成失败 " stringByAppendingString:why?:@"写入失败"]];
  if(AACExportWriteText(dir,@"probe-companion.txt",AACSharedProbeCompanionDump(),&why))[notes addObject:@"probe-companion.txt：已生成（模块伴随探测记录）"];
  else [notes addObject:[@"probe-companion.txt：生成失败 " stringByAppendingString:why?:@"写入失败"]];
  if(summary)*summary=[notes componentsJoinedByString:@"；"];
@@ -136,6 +142,8 @@ static inline NSDictionary *AACExportGather(void){
    NSString *missing=dirExists?[NSString stringWithFormat:@"未创建：候选目录 %@ 存在，但该进程没有在里面写这个文件（跨进程可见性未验证）",label]:[NSString stringWithFormat:@"未创建：候选目录不可用（%@：本进程读不到或不可写）",label];
    [entries addObject:AACExportEntry(@"shared-log",host,[NSString stringWithFormat:@"%@ 共享日志",AACExportHostLabel(host)],[base stringByAppendingPathComponent:AACSharedFileLeaf(host,@"log")],missing)];
    [entries addObject:AACExportEntry(@"inventory",host,[NSString stringWithFormat:@"%@ 运行清单",AACExportHostLabel(host)],[base stringByAppendingPathComponent:AACSharedFileLeaf(host,@"txt")],missing)];
+   /* 1.16.0 TASK 1: the per-tag reassembled chunked message persisted next to the shared logs. */
+   [entries addObject:AACExportEntry(@"host-messages",host,[NSString stringWithFormat:@"%@ 分片消息读回文件",AACExportHostLabel(host)],[base stringByAppendingPathComponent:AACSharedFileLeaf(host,@"host-messages.txt")],missing)];
   }
   for(NSString *leaf in AACExportDiscoveryFiles()){
    NSString *host=AACExportDiscoveryHost(leaf);
@@ -154,13 +162,13 @@ static inline NSDictionary *AACExportGather(void){
   if(![entry[@"path"] hasSuffix:@".plist"])continue;
   [entries addObject:AACExportEntry(@"host-report",@"settings",entry[@"label"],entry[@"path"],entry[@"note"])];
  }
- for(NSArray *pair in @[@[@"设置模块日志",@"settings.log"],@[@"导出的配置 plist",@"configuration.plist"],@[@"接听记录导出文本",@"call-records.txt"],@[@"CFPreferences 回退域内容",@"shared-prefs-fallback.txt"],@[@"模块伴随探测记录",@"probe-companion.txt"],@[@"音频库元数据",@"audio-library.plist"]]){
+ for(NSArray *pair in @[@[@"设置模块日志",@"settings.log"],@[@"导出的配置 plist",@"configuration.plist"],@[@"接听记录导出文本",@"call-records.txt"],@[@"CFPreferences 回退域内容",@"shared-prefs-fallback.txt"],@[@"模块伴随探测记录",@"probe-companion.txt"],@[@"跨进程分片消息读回",@"host-messages.txt"],@[@"音频库元数据",@"audio-library.plist"]]){
   [entries addObject:AACExportEntry(@"settings",@"settings",pair[0],dir?[dir stringByAppendingPathComponent:pair[1]]:pair[1],localReason)];
  }
  [entries addObject:AACExportEntry(@"settings",@"settings",@"宿主跨进程上报读回文本",dir?[dir stringByAppendingPathComponent:@"host-report.txt"]:@"host-report.txt",localReason)];
  NSUInteger found=0,missing=0;
  for(NSDictionary *entry in entries){if([entry[@"exists"] boolValue])found++;else missing++;}
- NSMutableString *report=[NSMutableString stringWithFormat:@"# AutoAnswerCall 运行日志导出报告 (1.15.0)\n# 生成时刻=%@\n# 设置侧目录=%@\n# 说明：下表逐项列出所有应当存在的运行日志路径及其在本进程中的真实状态。\n#       存在的条目会被复制到临时导出目录并一起分享；缺失的条目写明原因，不做任何虚构。\n#       跨进程可写/可读没有在 RootHide 上验证过，因此「未创建」既可能是没有写入，也可能是写到了\n#       另一个进程可写、本进程不可见的候选路径。\n#       本报告只描述文件是否存在与是否可读：它不能证明自动接听可用，也不能证明任何宿主已注入。\n\n存在 %lu 项，缺失 %lu 项，共 %lu 项。\n\n",NSDate.date,dir?:@"(设置侧目录不可用)",(unsigned long)found,(unsigned long)missing,(unsigned long)entries.count];
+ NSMutableString *report=[NSMutableString stringWithFormat:@"# AutoAnswerCall 运行日志导出报告 (1.16.0)\n# 生成时刻=%@\n# 设置侧目录=%@\n# 说明：下表逐项列出所有应当存在的运行日志路径及其在本进程中的真实状态。\n#       存在的条目会被复制到临时导出目录并一起分享；缺失的条目写明原因，不做任何虚构。\n#       跨进程可写/可读没有在 RootHide 上验证过，因此「未创建」既可能是没有写入，也可能是写到了\n#       另一个进程可写、本进程不可见的候选路径。\n#       本报告只描述文件是否存在与是否可读：它不能证明自动接听可用，也不能证明任何宿主已注入。\n\n存在 %lu 项，缺失 %lu 项，共 %lu 项。\n\n",NSDate.date,dir?:@"(设置侧目录不可用)",(unsigned long)found,(unsigned long)missing,(unsigned long)entries.count];
  for(NSDictionary *entry in entries){
   [report appendFormat:@"[%@] %@\n    分组：%@\n    路径：%@\n    状态：%@\n",[entry[@"exists"] boolValue]?@"存在":@"缺失",entry[@"label"],entry[@"group"],entry[@"path"],entry[@"note"]];
  }

@@ -139,11 +139,11 @@ for bad in ['NSClassFromString','SBIncomingCallViewController','SBCallAlertViewC
 # policy/answer wiring in Tweak.x
 for good in ['SubmitBlock','if(SubmitBlock){SubmitBlock(uuid,s);}else{','RegisterControls();','AACSBStart(env)','AnswerHostStart(answerHost)','AACSBRetryDiscoveryIfEmpty()','AACSBEnv *env=[AACSBEnv new]','LOG-ONLY primary path','已调用运行时发现的 UI 接听方法（尚未确认接通）','未发现可调用的 UI 接听路径','AACSBLogMethodOutcomes()']:
  assert good in t,good
-assert 'Loaded 1.15.0 answer host' in t and '1.15.0 EVIDENCE build' in t
+assert 'Loaded 1.16.0 answer host' in t and '1.16.0 EVIDENCE build' in t
 assert 'ABI gate relaxed' in t
 assert sb.count('AACSBAnswerHook')>=4
 # phone module keeps its 1.9.x/1.10.0 behaviour byte-for-byte
-assert 'Loaded 1.15.0 evidence build; retained CXCallObserver in MobilePhone' in t
+assert 'Loaded 1.16.0 evidence build; retained CXCallObserver in MobilePhone' in t
 assert 'inPhoneProcess' in t and 'ProcessTag=@"mobilephone";' in t
 # settings side shows the runtime-discovered result and never invents one
 for good in ['AACDiscoveryEntry','aac-springboard.discovery.txt','runtime-discovered','AACCountOccurrences','没有可读的发现文件','showDiscovery:']:
@@ -222,19 +222,21 @@ for good in ['@"mobilephone",@"springboard",@"incall",@"settings"','com.autoansw
  assert good in pc,good
 # version bumped everywhere, package id unchanged, filter is the four documented ids
 # ---- 1.13.0: version bump everywhere + full run-log export/share ------------------------
-assert 'Version: 1.15.0' in (r/'control').read_text() and 'Package: com.autoanswer.call' in (r/'control').read_text()
-assert 'PACKAGE_VERSION := 1.15.0' in (r/'Makefile').read_text()
+assert 'Version: 1.16.0' in (r/'control').read_text() and 'Package: com.autoanswer.call' in (r/'control').read_text()
+assert 'PACKAGE_VERSION := 1.16.0' in (r/'Makefile').read_text()
 assert 'INSTALL_TARGET_PROCESSES := SpringBoard MobilePhone InCallService' in (r/'Makefile').read_text()
-assert '1.15.0' in (r/'README.md').read_text() and '1.15.0' in pstr and '1.15.0' in pc and '1.15.0' in sb
-assert 'config[@"Version"]=@"1.15.0";' in s
-assert '设置模块已加载 1.15.0' in s
-assert 'config[@"Version"]=@"1.15.0";' in export_text, 'the exported configuration plist must carry the 1.15.0 version too'
+assert '1.16.0' in (r/'README.md').read_text() and '1.16.0' in pstr and '1.16.0' in pc and '1.16.0' in sb
+assert '1.15.0' in (r/'README.md').read_text(), 'the previous release must stay documented as history'
+assert 'config[@"Version"]=@"1.16.0";' in s
+assert '设置模块已加载 1.16.0' in s
+assert 'config[@"Version"]=@"1.16.0";' in export_text, 'the exported configuration plist must carry the 1.16.0 version too'
 # no stale 1.12.0 version stamp may survive in the shipped sources (historical prose about
 # the previous release is allowed only where it is explicitly marked as history).
 for path in ('control','Makefile'):
  assert '1.12.0' not in (r/path).read_text(), path
  assert '1.14.0' not in (r/path).read_text(), path
-assert 'PACKAGE_VERSION := 1.15.0' in (r/'Makefile').read_text()
+ assert '1.15.0' not in (r/path).read_text(), path
+assert 'PACKAGE_VERSION := 1.16.0' in (r/'Makefile').read_text()
 # --- run-log export / share (Task 2) ---
 for good in ['shareAllLogs:','showLogExport:','AACLogExportController','运行日志分享']:
  assert good in s or good in pstr,good
@@ -440,5 +442,110 @@ assert 'log-only: %@ 没有任何 ACTION 接听路径' in t
 assert 'no takeover scheduled: 本宿主是 LOG-ONLY' in t
 assert 'answersPaths' not in sb
 assert '接听归属判定 call=%@ owner=%@ role=%@ host=%@ answerPaths=%lu classification=[%@] why=%@ submitted=%@' in sb
+
+
+# ---- 1.16.0 TASK 1/TASK 2: chunked Darwin notification-name transport + request-on-demand ----
+# Device evidence that drove it (user's real 1.15.0 run, iOS 17.3 RootHide): the process-probe page
+# showed "incall (com.autoanswer.call.probe.incall) 到达 2 次" and "springboard 到达 2 次" (so the
+# InCallService dylib IS injected and its probes DO cross process boundaries), while the host
+# read-back page showed Hosts = ( springboard ), "[incall] 本进程未读到该宿主的任何键", both real
+# plist paths 不存在/不可见 and yet Settings read 12 keys of the same domain. So the only proven
+# cross-process channel is Darwin notifications, whose NAMES are arbitrary strings.
+chunk=(r/'AACChunkMsg.h').read_text();chunkmath=(r/'AACChunkMath.h').read_text()
+cm=(r/'tests/chunkmath.c').read_text();cmc=(r/'Preferences/AACChunkMsgController.h').read_text()
+workflow=(r/'.github/workflows/build.yml').read_text()
+for good in ['com.autoanswer.call.msg.','com.autoanswer.call.msgrequest.','AACChunkMsgPrefix','AACChunkMsgRequestPrefix',
+             'AACChunkMsgStructName','AACChunkMsgPayloadName','AACChunkMsgEndName','AACChunkMsgHeaderName','AACChunkMsgWordName',
+             'AACChunkMsgNameShapeText','AACChunkMsgBoundText','AACChunkMsgBase64UrlEncode','AACChunkMsgBase64UrlDecode',
+             'AACChunkMsgEnvelope','AACChunkMsgVerifyEnvelope','AACMSG1','AACChunkMsgPublish','AACChunkMsgPublishNameChannel',
+             'AACChunkMsgPublishStateChannel','AACChunkMsgStart','AACChunkMsgObserveStart','AACChunkMsgObserveStop',
+             'AACChunkMsgRefresh','AACChunkMsgTagReport','AACChunkMsgTagSummaryText','AACChunkMsgDump','AACChunkMsgPersist',
+             'AACChunkMsgRequestTag','AACChunkMsgRequestAll','notify_register_check','notify_get_state','notify_set_state',
+             'AACChunkMsgRingPerTag','notify_post','AACChunkMsgNameChannelNote','\u2026<msg-truncated>','AACChunkMsgSanitizeTag']:
+ assert good in chunk,good
+# bounds exist and are the documented numbers: chunk cap, total cap, seq/total encoding,
+# completeness + length + CRC verification, bounded ring per tag
+for good in ['AACChunkMsgMaxChunks=AAC_CHUNK_MAX_CHUNKS','AACChunkMsgEncodedBytes=AAC_CHUNK_ENCODED_BYTES',
+             'AACChunkMsgMaxTotalBytes=AAC_CHUNK_MAX_TOTAL_BYTES','AACChunkMsgMaxWords=AAC_CHUNK_MAX_WORDS',
+             'AACChunkMsgWordBytes=AAC_CHUNK_WORD_BYTES','AACChunkMsgMaxStateBytes=AAC_CHUNK_MAX_STATE_BYTES',
+             'AACChunkMsgRingPerTag=AAC_CHUNK_RING_PER_TAG']:
+ assert good in chunk,good
+for good in ['AACChunkSeqTotalValid','AACChunkCount','AACChunkLengthAt','AACChunkMaskComplete','AACChunkDecodedLength',
+             'AACChunkLengthsConsistent','AACChunkIsBase64UrlChar','AACChunkBytesNeeded','AACChunkPackState','AACChunkUnpackState',
+             'AACChunkCrc32','AACChunkAlphabetOk','AACChunkStartAt']:
+ assert good in chunkmath,good
+assert 'AAC_CHUNK_ENCODED_BYTES 900u' in chunkmath and 'AAC_CHUNK_MAX_CHUNKS 12u' in chunkmath
+assert 'AAC_CHUNK_MAX_TOTAL_BYTES 12288u' in chunkmath and 'AAC_CHUNK_MAX_WORDS 96u' in chunkmath and 'AAC_CHUNK_WORD_BYTES 6u' in chunkmath
+assert 'AAC_CHUNK_RING_PER_TAG 8u' in chunkmath
+# the transport must use the SAME constants as the tested math (no drift, no hand-copied number)
+assert 'AACChunkMsgMaxChunks=AAC_CHUNK_MAX_CHUNKS' in chunk and 'AACChunkMsgEncodedBytes=AAC_CHUNK_ENCODED_BYTES' in chunk
+assert 'chunk=[encoded substringWithRange:NSMakeRange(index*AACChunkMsgEncodedBytes,AACChunkLengthAt((unsigned)index,(unsigned)encoded.length))];' in chunk
+assert 'NSUInteger total=AACChunkCount((unsigned)encoded.length);' in chunk
+# seq/total encoding is real, and the receiver verifies completeness
+assert 'AACChunkMsgStructName(tag,index+1,total)' in chunk and 'AACChunkMsgPayloadName(tag,index+1,total,chunk)' in chunk
+assert 'BOOL nameComplete=total>0&&AACChunkMaskComplete(mask,(unsigned)total);' in chunk
+# length + CRC32 of the payload are declared in the envelope and verified on read-back
+assert 'crc32=%08x truncated=%@ utc=%@' in chunk
+assert 'if([result[@"declaredBytes"] unsignedLongLongValue]!=bodyData.length)' in chunk
+assert 'CRC32 不一致' in chunk and '长度不一致' in chunk
+# the ring buffer per tag is bounded and enforced; nothing unbounded is kept
+assert 'while(ring.count>AACChunkMsgRingPerTag)[ring removeObjectAtIndex:0];' in chunk
+# no '/' and no NUL may ever reach a notification name: every chunk is alphabet-checked
+assert 'if(!AACChunkAlphabetOk(chunk.UTF8String,(unsigned)chunk.length)){' in chunk
+assert 'return c == \'-\' || c == \'_\' || c == \'/\'' not in chunkmath
+# the state channel never writes a 0 state (0 means "never set") and reserves a commit name
+assert 'AACChunkMsgNextGeneration' in chunk and 'if(AACChunkMsgGeneration==0u)AACChunkMsgGeneration=1u;' in chunk
+assert 'headerCommitted' in chunk and 'AACChunkMsgHeaderName(tag)' in chunk
+assert 'AACChunkPackState(gen,word)' in chunk
+# the receiver registers only names it can enumerate (Darwin cannot wildcard) and says so honestly
+assert 'Darwin 通知不能通配' in chunk
+assert 'notify_register_dispatch(AACChunkMsgStructName(tag,seq,total).UTF8String' in chunk
+assert 'notify_register_dispatch(AACChunkMsgEndName(tag,total).UTF8String' in chunk
+for good in ['未观察到','不等于该宿主未注入','读不到不代表']:
+ assert good in chunk,good
+# the reassembled text is persisted next to the existing shared-log candidates
+assert 'AACSharedWriteNamed(tag,@"host-messages.txt",text,&error)' in chunk
+assert 'aac-%@.host-messages.txt' in chunk
+# the pure-arithmetic unit test exists, is real, and is wired into CI (compiled and executed)
+assert 'AACChunkMath.h' in cm and 'AACChunkCrc32' in cm and '0xCBF43926' in cm
+assert 'AACChunkBytesNeeded(AAC_CHUNK_MAX_STATE_BYTES) == AAC_CHUNK_MAX_WORDS' in cm
+assert 'cc -std=c11 tests/chunkmath.c -o /tmp/aac-chunkmath' in workflow and '/tmp/aac-chunkmath' in workflow
+assert 'test "$(dpkg-deb -f "$deb" Version)" = "1.16.0"' in workflow
+# sender wiring: every host publishes and answers the request-on-demand name
+assert 'AACChunkMsgStart(AACSBProcess(),^NSString *{return AACSBHostMessageText();});' in sb
+assert 'AACSBHostMessageText' in sb and 'AACSBHostMessagePublishNow' in sb and 'AACChunkMsgPublish(AACSBProcess(),AACSBHostMessageText(),@"discovery")' in sb
+assert 'AACChunkMsgStart(@"mobilephone"' in t
+assert 'AACChunkMsgStart(tag' not in t, 'the answer hosts start the transport exactly once, from AACSBStart'
+assert 'notify_register_dispatch(AACChunkMsgRequestName(t).UTF8String' in chunk
+assert 'AACChunkMsgRequestAll()' in cmc
+# the Settings entry must exist in the shipped plist with the exact label, and the page must show
+# per tag: chunks received/total, last update, completeness, decoded bytes and the reassembled text
+assert '跨进程分片消息（Darwin 名内载荷）' in pstr and 'showChunkMessages:' in pstr
+assert 'showChunkMessages:' in s and 'AACChunkMsgController' in s and 'showChunkMessages:(PSSpecifier *)s{' in s
+for good in ['跨进程分片消息（Darwin 名内载荷）','AACChunkMsgObserveStart','AACChunkMsgObserveStop','AACChunkMsgRefresh',
+             'AACChunkMsgTagReport','chunksReceived','chunksTotal','nameComplete','stateWordsNeeded','stateWordsMissing',
+             'stateVerified','stateText','stateBytes','AACChunkMsgTagSummaryText','AACChunkMsgDump','AACChunkMsgRequestAll',
+             'AACChunkMsgPublish(@"settings"','AACChunkMsgNameChannelNote','AACChunkMsgBoundText','AACChunkMsgKnownTags']:
+ assert good in cmc,good
+# TASK 2: the request-on-demand path is offered from the UI and posted by the receiver side
+assert 'AACChunkMsgRequestAll()' in cmc and '按需上报' in cmc and 'com.autoanswer.call.msgrequest.<tag>' in cmc
+# export: host-messages.txt is written into the run-log export and exposed per host per candidate
+assert 'host-messages.txt' in export_text and 'AACChunkMsgDump()' in export_text
+assert 'AACChunkMsgDump(),&why' in export_text
+assert '@"host-messages"' in export_text and 'AACSharedFileLeaf(host,@"host-messages.txt")' in export_text
+assert '@[@"跨进程分片消息读回",@"host-messages.txt"]' in export_text
+assert '@[@"log",@"txt",@"discovery.txt",@"host-messages.txt"]' in shared
+# NO CHANNEL WAS REMOVED: every pre-1.16.0 channel is still present and untouched
+for good in ['AACSharedLogCandidateDirs','AACSharedWriteNamed','AACSharedResolve','AACSharedViewerEntries',
+             'com.autoanswer.call.sharelog','com.autoanswer.call.hostreport','AACHostReportPublish','AACHostReportEnablePeriodic',
+             'AACHostReportDump','AACHostReportEntries']:
+ assert good in shared,good
+for good in ['com.autoanswer.call.probe.','com.autoanswer.call.pong.incall','com.autoanswer.call.pong.springboard',
+             'com.autoanswer.call.owner.','aac-incall.discovery.txt','aac-springboard.discovery.txt']:
+ assert good in probe or good in pc or good in sb or good in t or good in host,good
+assert 'AACHostReportEnablePeriodic(AACSBProcess(),^NSString *{return AACSBHostReportSummary();});' in sb, \
+ 'the CFPreferences host report publication must survive the new transport'
+assert 'AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"Loaded 1.16.0 EVIDENCE build; bundle=%@ process=%@ tag=%@",bundle,process,ProcessTag]);' in t
+print('1.16.0 chunked Darwin notification-name transport (12 x 900-char name chunks / 12288-byte decoded cap / seq+total + end marker / fixed-name 96 x 6-byte state slots with 16-bit generation + length + CRC32 / bounded 8-entry ring per tag / honest not-observed reporting), request-on-demand (com.autoanswer.call.msgrequest.<tag>), the Settings entry with per-tag chunks/update/completeness/bytes/text, the host-messages.txt export, the pure-arithmetic chunkmath unit test wired into CI, and the unchanged old channels: static checks passed')
 
 print('PASS (1.15.0): shared host report (own CFPreferences domain com.autoanswer.call.hostreport with per-host bounded keys + explicit truncation marker, published by every host after discovery and every 20 s, read back in the Settings log viewer / probe page / root list / run-log export with the real plist path shown, file channel kept, cross-process visibility NOT claimed) + ACTION/ACCESSOR/FORBIDDEN/UNSUPPORTED classification gating answerPaths (accessors hooked as evidence only, never registered, never the answer target, real-action selector patterns and in-call UI class families added to the discovery filters, accessor-only hosts role=LOG-ONLY) + version 1.15.0 everywhere - static checks only, NOT device runtime')

@@ -1,4 +1,5 @@
-"""Verify the built deb ships the four configured bundle ids, every host module, the 1.15.0 candidate
+"""Verify the built deb ships the four configured bundle ids, every host module, the 1.16.0 chunked
+Darwin notification-name message transport (plus the request-on-demand name), the 1.15.0 candidate
 classification (ACTION vs ACCESSOR; only ACTION counts as an answer path), the shared cross-process
 host-report domain (own CFPreferences domain, per-host bounded keys), the 1.14.0 ownership rule
 (claim-only demotion + bounded takeover), the 1.13.0 relaxed hook ABI strategy, the corrected CallKit
@@ -137,8 +138,8 @@ print('dylib 1.15.0 host-report/classification strings found: %d/%d'
       % (len(required_115) - len(missing_115), len(required_115)))
 if missing_115:
     sys.exit('artifact dylib missing 1.15.0 host-report/classification strings: %r' % (missing_115,))
-required_ownership = ('Loaded 1.15.0 answer host',
-                      'AutoAnswerCall 1.15.0 answer-host runtime discovery run',
+required_ownership = ('Loaded 1.16.0 answer host',
+                      'AutoAnswerCall 1.16.0 answer-host runtime discovery run',
                       'takeover after idle higher-priority owner',
                       'takeover cancelled by plugin stop generation',
                       'takeover not needed: a connection was observed',
@@ -159,6 +160,35 @@ required_ownership = ('Loaded 1.15.0 answer host',
                       # string literals and are deliberately not required to appear in the
                       # binary; their behaviour is checked by tests/source_checks.py.)
                       '\u5df2\u7ecf\u884c\u4f7f\u8fc7\u63a5\u7ba1\u6743')
+# 1.16.0 TASK 1/TASK 2: the chunked Darwin notification-name transport must really be IN the
+# dylib (not only in the source tree): the reserved name prefixes, the self-describing envelope
+# magic, the explicit truncation marker, the framing text with its documented hard bounds, the
+# request-on-demand name and the persisted file name.
+required_116 = ('com.autoanswer.call.msg.',
+                'com.autoanswer.call.msgrequest.',
+                'AACMSG1',
+                '\u2026<msg-truncated>',
+                'com.autoanswer.call.msg.<tag>.<seq>.<total>.<base64url',
+                '\u540d\u5185\u8f7d\u8377\u901a\u9053\uff1a\u6700\u591a 12 \u7247\uff0c\u6bcf\u7247\u6700\u591a 900 \u4e2a base64url \u5b57\u7b26',
+                '\u72b6\u6001\u69fd\u901a\u9053\uff1a96 \u69fd \u00d7 6 \u5b57\u8282 = 576 \u5b57\u8282',
+                '16 \u4f4d\u4ee3\u6b21',
+                'CRC32',
+                'host-messages.txt',
+                '\u5206\u7247\u6d88\u606f\u901a\u9053')
+missing_116 = [item for item in required_116 if not present(dylib, item)]
+print('dylib 1.16.0 chunked-transport strings found: %d/%d'
+      % (len(required_116) - len(missing_116), len(required_116)))
+if missing_116:
+    sys.exit('artifact dylib missing 1.16.0 chunked-transport strings: %r' % (missing_116,))
+# The framing bounds must be the documented ones, and the old channels must still be there.
+for literal in ('12 \u7247', '900', '12288', '96 \u69fd', '576'):
+    if not present(dylib, literal):
+        sys.exit('artifact dylib missing the documented bound literal %r' % literal)
+for kept in ('com.autoanswer.call.hostreport', 'com.autoanswer.call.sharelog',
+             'com.autoanswer.call.probe.', 'com.autoanswer.call.owner.'):
+    if not present(dylib, kept):
+        sys.exit('artifact dylib lost a pre-1.16.0 cross-process channel name: %r' % kept)
+
 missing_ownership = [item for item in required_ownership if not present(dylib, item)]
 print('dylib 1.14.0/1.15.0 ownership/HOOKED-list strings found: %d/%d'
       % (len(required_ownership) - len(missing_ownership), len(required_ownership)))
@@ -190,7 +220,13 @@ required_settings = ('AACProbeController', 'AACSharedLogController',
                      'AACLogExportController', 'AutoAnswerCall-export-',
                      'settings.log', 'configuration.plist', 'call-records.txt',
                      'shared-prefs-fallback.txt', 'probe-companion.txt', 'audio-library.plist',
-                     '运行导出报告', '运行日志导出报告')
+                     '运行导出报告', '运行日志导出报告',
+                     # 1.16.0 TASK 1/TASK 2 chunked Darwin transport surface
+                     '\u8de8\u8fdb\u7a0b\u5206\u7247\u6d88\u606f\uff08Darwin \u540d\u5185\u8f7d\u8377\uff09',
+                     'showChunkMessages:', 'AACChunkMsgController',
+                     'com.autoanswer.call.msg.', 'com.autoanswer.call.msgrequest.',
+                     'host-messages.txt',
+                     '\u540d\u5185\u8f7d\u8377\u901a\u9053\uff1a\u6700\u591a 12 \u7247')
 missing_settings = [item for item in required_settings if not present(settings, item)]
 print('settings binary evidence strings found: %d/%d'
       % (len(required_settings) - len(missing_settings), len(required_settings)))

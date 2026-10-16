@@ -6,6 +6,7 @@
 #import <dlfcn.h>
 #import "AACSharedLog.h"
 #import "AACAnswerHost.h"
+#import "AACChunkMsg.h"
 /* Host-parameterised answer module (1.14.0; 1.13.0 relaxed the hook ABI gate, 1.12.0 shipped
    the host table, 1.11.0 shipped this file SpringBoard-only). The SAME machinery runs in whichever host process the caller
    names through AACSBEnv.host: probe/pong Darwin names, discovery file name and the
@@ -237,8 +238,7 @@ static NSString *AACSBClassificationSummaryText(void){
 static NSString *AACSBHostReportSummary(void){
  return [NSString stringWithFormat:@"host=%@ tag=%@ pid=%d role=%@ owner=%@ answerPaths=%lu；分类：%@；候选类=%lu 跳过=%lu discoverRuns=%lu；判定原因：%@",AACSBDisplay(),AACSBProcess(),(int)getpid(),(AACSBRole==AACAnswerRoleOwner?@"OWNER":(AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY")),AACSBHostOwnerTagText(),(unsigned long)AACSBAnswerPathCount(),AACSBClassificationSummaryText(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBRejectedMethods,(unsigned long)AACSBDiscoverRuns,AACSBClaimReasonText()];
 }
-static NSDictionary *AACSBHostReportPublishNow(void){
- NSDictionary *facts=@{@"role":AACSBRole==AACAnswerRoleOwner?@"OWNER":(AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY"),
+static NSDictionary *AACSBHostReportPublishNow(void){ NSDictionary *facts=@{@"role":AACSBRole==AACAnswerRoleOwner?@"OWNER":(AACSBRole==AACAnswerRoleObserver?@"OBSERVER":@"LOG-ONLY"),
                        @"display":AACSBDisplay(),
                        @"hostTag":AACSBProcess(),
                        @"answerPaths":[NSString stringWithFormat:@"%lu",(unsigned long)AACSBAnswerPathCount()],
@@ -246,6 +246,24 @@ static NSDictionary *AACSBHostReportPublishNow(void){
                        @"accessorMethods":[NSString stringWithFormat:@"%lu",(unsigned long)AACSBHookAccessorCount],
                        @"classification":AACSBClassificationSummaryText()};
  return AACHostReportPublish(AACSBProcess(),AACSBHostReportSummary(),facts);
+}
+/* 1.16.0 TASK 1: the same bounded discovery summary is ALSO published through the chunked
+   Darwin message transport (AACChunkMsg.h): the name-embedded channel carries the text as
+   base64url chunks inside the notification names, and the fixed-name state-channel carries the
+   same text in 96 notification states. Device evidence that drove it (1.15.0 run, user's iOS
+   17.3 RootHide device): the InCallService probe DID arrive in Settings twice, so its messages
+   do cross the process boundary, while its report was NOT readable through the file/CFPreferences
+   channel. This function therefore adds the transport; it does not claim that the transport was
+   observed, and it does not weaken the file channel or the host-report domain. */
+static NSString *AACSBHookedBlockText(void);
+static NSString *AACSBHostMessageText(void){
+ NSString *hooked=@"",*invokable=@"";
+ @try{hooked=AACSBHookedBlockText()?:@"";}catch(NSException *e){hooked=@"（HOOKED 列表读取异常）";}
+ @try{invokable=AACSBInvokableSummary()?:@"";}catch(NSException *e){invokable=@"（INVOKABLE 列表读取异常）";}
+ return [NSString stringWithFormat:@"%@\n分类计数=%@ accessorsHooked=%lu accessorSkipped=%lu unsupportedSkipped=%lu\nINVOKED_BY_INVOCATION=%lu globalScanned=%lu\n%@\nINVOKABLE list: %@",AACSBHostReportSummary(),AACSBClassificationSummaryText(),(unsigned long)AACSBHookAccessorCount,(unsigned long)AACSBAccessorSkipped,(unsigned long)AACSBUnsupportedSkipped,(unsigned long)AACSBInvokedByInvocation,(unsigned long)AACSBGlobalScanned,hooked,invokable];
+}
+static NSDictionary *AACSBHostMessagePublishNow(void){
+ return AACChunkMsgPublish(AACSBProcess(),AACSBHostMessageText(),@"discovery");
 }
 /* 1.14.0 TASK 2: one explicit line per incoming call saying which host owns the answer, WHY,
    and whether a submission happened. The role is recomputed first, so the line is the
@@ -1017,6 +1035,15 @@ static void AACSBWriteDiscoveryFile(void){
   NSDictionary *report=AACSBHostReportPublishNow();
   AACSBLog([NSString stringWithFormat:@"host report published to the shared CFPreferences domain: domain=%@ keys=%@ synced=%@ summaryBytes=%@ logBytes=%@ totalBytes=%@ boundBytes=%@ tag=%@（跨进程可见性未验证：本行只报告本进程实际写入与同步结果，其他进程能否读到由它们各自的读回结果显示）",report[@"domain"],report[@"keys"],report[@"synced"],report[@"summaryBytes"],report[@"logBytes"],report[@"totalBytes"],report[@"boundBytes"],report[@"tag"]]);
  }@catch(NSException *e){AACSBLog([@"host report publication exception: " stringByAppendingString:e.reason?:@"unknown"]);}
+ /* 1.16.0 TASK 1: publish the SAME discovery summary right after every discovery run through the
+    chunked Darwin message transport as well (name-embedded chunks + fixed-name state slots), so
+    a receiver that was never able to read this host's files gets a second chance. Only the REAL
+    notify statuses are logged; nothing is assumed about another process reading it. */
+ @try{
+  NSDictionary *post=AACSBHostMessagePublishNow();
+  NSDictionary *name=post[@"nameChannel"],*state=post[@"stateChannel"];
+  AACSBLog([NSString stringWithFormat:@"分片消息已随发现结果发布：名内载荷通道 片=%@ 编码字节=%@ 发送=%@ 成功=%@ 失败=%@ 字母表合法=%@ 截断=%@；状态槽通道 代次=%@ 槽=%@ 发送=%@ 成功=%@ 失败=%@ 截断=%@（两条通道都未在设备上验证；名字形状见设置页）",name[@"chunkCount"],name[@"encodedBytes"],name[@"posts"],name[@"ok"],name[@"failed"],name[@"alphabetOk"],name[@"truncated"],state[@"generation"],state[@"wordCount"],state[@"posts"],state[@"ok"],state[@"failed"],state[@"truncated"]]);
+ }@catch(NSException *e){AACSBLog([@"chunked message publication exception: " stringByAppendingString:e.reason?:@"unknown"]);}
  AACSBRecord(AACSBAnswerPathCount()?[NSString stringWithFormat:@"%@ 运行时发现（非硬编码，objc_getClassList 枚举）：候选类=%lu，已挂钩方法=%lu（%@），NSInvocation 候选=%lu（%@），安全跳过=%lu；角色=%@（%@）",AACSBDisplay(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBHookCount,AACSBHookedSummary(),(unsigned long)AACSBInvocationCount,AACSBInvokableSummary(),(unsigned long)AACSBRejectedMethods,AACSBRole==AACAnswerRoleOwner?@"接听负责宿主":(AACSBRole==AACAnswerRoleObserver?@"观察者":@"仅日志"),AACSBClaimReasonText()]:[NSString stringWithFormat:@"%@ 运行时发现：候选类=%lu，但没有可挂钩或可调用的接听方法（跳过 %lu）；本宿主不可能接听（仅日志）%@；%@",AACSBDisplay(),(unsigned long)AACSBMatchedClasses,(unsigned long)AACSBRejectedMethods,AACSBOwnerTag.length?[NSString stringWithFormat:@"，接听由 %@ 负责",AACSBOwnerTag]:@"",AACSBClaimReasonText()],@{@"discovered":@(AACSBAnswerPathCount()>0)});
 }
 
@@ -1198,7 +1225,7 @@ static void AACSBDiscover(void){
  if(!AACSBHookedSelectors)AACSBHookedSelectors=[NSMutableArray new];
  if(!AACSBInvokableSelectors)AACSBInvokableSelectors=[NSMutableArray new];
  if(!AACSBHookDetails)AACSBHookDetails=[NSMutableArray new];
- [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# AutoAnswerCall 1.15.0 answer-host runtime discovery run %lu host=%@ tag=%@ (runtime-discovered; no hardcoded class name)",(unsigned long)AACSBDiscoverRuns,AACSBDisplay(),AACSBProcess()]];
+ [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# AutoAnswerCall 1.16.0 answer-host runtime discovery run %lu host=%@ tag=%@ (runtime-discovered; no hardcoded class name)",(unsigned long)AACSBDiscoverRuns,AACSBDisplay(),AACSBProcess()]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# discoveryFile=%@ roleTable=%@",AACSBHostDiscoveryFile(),AACAnswerRoleTableText()]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# classFamilyFilters=%@（真实来电 UI 类族，通配匹配）",[AACSBClassFamilyPatterns() componentsJoinedByString:@","]]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# realActionSelectorPatterns=%@（只有命中这些模式的候选才算 ACTION，才能成为接听路径）",[AACSBSelectorActionPatterns() componentsJoinedByString:@","]]];
@@ -1287,6 +1314,13 @@ static inline void AACSBStart(AACSBEnv *env){
     for every host, so the Settings process and the other hosts have a chance to read what a
     host that lives in its own container actually found. */
  AACHostReportEnablePeriodic(AACSBProcess(),^NSString *{return AACSBHostReportSummary();});
+ /* 1.16.0 TASK 1/TASK 2: the SAME discovery summary also goes out through the chunked Darwin
+    message transport (name-embedded base64url chunks + fixed-name state slots) and this host
+    answers com.autoanswer.call.msgrequest.<tag> by republishing immediately. The file channel
+    and the host-report domain above are untouched; nothing here claims the transport was
+    observed. */
+ AACChunkMsgStart(AACSBProcess(),^NSString *{return AACSBHostMessageText();});
+ AACSBLog([NSString stringWithFormat:@"分片消息通道：%@",AACChunkMsgBoundText()]);
  /* 1.13.0: the real call UI classes are often registered AFTER this dylib's constructor, so
     repeat the bounded enumeration on a timer as well as on a call event. This is how the
     relaxed gate gets a second chance without an unbounded scan. */

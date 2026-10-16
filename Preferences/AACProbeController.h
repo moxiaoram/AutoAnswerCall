@@ -3,7 +3,10 @@
 #import <notify.h>
 #import "../AACSharedLog.h"
 #import "AACLogViewerController.h"
-/* 进程探测 / 环境清单 (1.15.0；1.13.0 建立，evidence only).
+/* 进程探测 / 环境清单 (1.16.0；1.13.0 建立，evidence only).
+   1.16.0：本页的「到达 2 次」正是分片消息通道存在的理由（InCallService 的探测通知确实跨进程到达，
+   而它的文件/偏好上报读不回来）。新增的读回页见 AACChunkMsgController.h：
+   「跨进程分片消息（Darwin 名内载荷）」（名内 base64url 分片 + 固定名字状态槽 + 按需上报）。
    1.15.0 增加「宿主跨进程上报读回」一行：读回自有 CFPreferences 域 com.autoanswer.call.hostreport
    （每宿主键 + 真实 plist 路径 + 本进程实际读到的键数）。没有读到就是没有读到，不据此断言宿主未注入。
    Darwin notifications carry no payload, so this page registers one observer per
@@ -137,7 +140,7 @@ static inline NSUInteger AACCountOccurrences(NSString *needle,NSString *haystack
  if(section==0)return @"每个进程使用独立通知名 com.autoanswer.call.probe.<进程>；Darwin 通知无载荷，所以这里只按名称区分进程。未到达只表示本页没观察到，不等于该进程未注入。";
  if(section==2)return @"这是设置进程自己的读写结果；另一个进程中同一路径是否可写必须看该进程写入的日志，不能由此推断跨进程可见。";
  if(section==3)return @"这些文件是各宿主在设备上枚举 objc_getClassList 得到的真实类/方法名（含分类 ACTION/ACCESSOR/FORBIDDEN/UNSUPPORTED、HOOKED 与跳过原因），构建不保证这些私有类在 iOS 17.3 存在。接听由唯一负责宿主提交：角色表 InCallService(2) > SpringBoard(1) > 仅日志(0)。若某宿主显示 0 个已挂钩方法，它在该设备上只能退化为仅日志，插件不会谎报接听成功。";
- if(section==4)return @"本页不能证明接听可用；1.15.0 的 InCallService/SpringBoard 接听路径仍未在设备验证（1.15.0 修正的是候选分类：属性访问器 ACCESSOR 不再计入 answerPaths，只有 ACTION 才算接听路径，因此只有访问器的宿主是 LOG-ONLY 而不是 OWNER；1.14.0 修正的是归属判定），依赖运行时到底存在哪个私有 UI 类。";
+ if(section==4)return @"本页不能证明接听可用；1.16.0 新增的跨进程分片消息通道（名内载荷 12 片 × 900 字符 / 总解码 12288 字节 + 固定名字状态槽 96 槽 × 6 字节、16 位代次 + 长度 + CRC32，按需上报 com.autoanswer.call.msgrequest.<tag>）同样未在设备验证，请在「跨进程分片消息」页看本进程的真实读数；1.15.0 的 InCallService/SpringBoard 接听路径仍未在设备验证（1.15.0 修正的是候选分类：属性访问器 ACCESSOR 不再计入 answerPaths，只有 ACTION 才算接听路径，因此只有访问器的宿主是 LOG-ONLY 而不是 OWNER；1.14.0 修正的是归属判定），依赖运行时到底存在哪个私有 UI 类。";
  return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath{
