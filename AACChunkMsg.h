@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#include <stdlib.h> /* strtoul for the envelope length check */
 #import <notify.h>
 #import "AACChunkMath.h"
 #import "AACSharedLog.h"
@@ -131,7 +132,8 @@ static inline NSDictionary *AACChunkMsgVerifyEnvelope(NSData *envelopeData){
   unsigned crc=AACChunkCrc32(bodyData.bytes,(unsigned)bodyData.length);
   NSString *expectedCrc=fields[@"crc32"];
   NSString *actualCrc=[NSString stringWithFormat:@"%08x",crc];
-  result[@"declaredBytes"]=@((unsigned long long)(fields[@"bytes"]?strtoul(fields[@"bytes"].UTF8String,NULL,10):0));
+  id bytesField=fields[@"bytes"];
+ result[@"declaredBytes"]=@((unsigned long long)([bytesField isKindOfClass:NSString.class]?strtoul(((NSString *)bytesField).UTF8String,NULL,10):0));
   result[@"actualBytes"]=@((unsigned long long)bodyData.length);
   result[@"declaredCrc32"]=expectedCrc?:@"(missing)";
   result[@"actualCrc32"]=actualCrc;
@@ -312,8 +314,8 @@ static NSMutableArray *AACChunkMsgRequestTokens=nil;
 static inline void AACChunkMsgStart(NSString *tag,NSString *(^textBlock)(void)){
  @try{
   NSString *t=AACChunkMsgSanitizeTag(tag);
-  NSString *(^block)=[textBlock copy];
-  void (^publish)(NSString *)=^(NSString *why){
+  NSString *(^block)(void)=[textBlock copy];
+  void (^publish)(NSString *why)=^(NSString *why){
    @try{
     NSString *text=block?block():@"（无消息文本）";
     NSDictionary *post=AACChunkMsgPublish(t,text,why);

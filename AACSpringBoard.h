@@ -256,10 +256,11 @@ static NSDictionary *AACSBHostReportPublishNow(void){ NSDictionary *facts=@{@"ro
    channel. This function therefore adds the transport; it does not claim that the transport was
    observed, and it does not weaken the file channel or the host-report domain. */
 static NSString *AACSBHookedBlockText(void);
+static NSString *AACSBInvokableSummary(void);
 static NSString *AACSBHostMessageText(void){
  NSString *hooked=@"",*invokable=@"";
- @try{hooked=AACSBHookedBlockText()?:@"";}catch(NSException *e){hooked=@"（HOOKED 列表读取异常）";}
- @try{invokable=AACSBInvokableSummary()?:@"";}catch(NSException *e){invokable=@"（INVOKABLE 列表读取异常）";}
+ @try{hooked=AACSBHookedBlockText()?:@"";}@catch(NSException *e){hooked=@"（HOOKED 列表读取异常）";}
+ @try{invokable=AACSBInvokableSummary()?:@"";}@catch(NSException *e){invokable=@"（INVOKABLE 列表读取异常）";}
  return [NSString stringWithFormat:@"%@\n分类计数=%@ accessorsHooked=%lu accessorSkipped=%lu unsupportedSkipped=%lu\nINVOKED_BY_INVOCATION=%lu globalScanned=%lu\n%@\nINVOKABLE list: %@",AACSBHostReportSummary(),AACSBClassificationSummaryText(),(unsigned long)AACSBHookAccessorCount,(unsigned long)AACSBAccessorSkipped,(unsigned long)AACSBUnsupportedSkipped,(unsigned long)AACSBInvokedByInvocation,(unsigned long)AACSBGlobalScanned,hooked,invokable];
 }
 static NSDictionary *AACSBHostMessagePublishNow(void){
