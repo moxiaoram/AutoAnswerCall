@@ -164,6 +164,14 @@
 		</dict>
 		<dict>
 			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>导出持久配置（plist）</string>
+			<key>action</key>
+			<string>exportConfig:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
 			<string>1.8.0：音频最大5MB，复制至设置沙盒；本地试听不代表电话进程能读取，也不会注入通话上行。MobilePhone 可能被挂起，未保证锁屏后台接听或蜂窝事务权限。</string>

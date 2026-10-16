@@ -19,7 +19,7 @@ jobs:
           echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
 
       - name: Install build tools
-        run: brew install ldid dpkg
+        run: brew install ldid dpkg ripgrep
 
       - name: Policy regression
         run: cc -std=c11 tests/policy.c -lm -o /tmp/aac-policy && /tmp/aac-policy && python3 tests/source_checks.py
