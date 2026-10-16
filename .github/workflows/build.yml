@@ -71,6 +71,7 @@ jobs:
             tests.log
 
       - name: Upload deb
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: AutoAnswerCall-roothide-arm64e

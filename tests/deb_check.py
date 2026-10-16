@@ -33,10 +33,15 @@ for required in (b'objc_getClassList', b'com.autoanswer.call.probe.',
         sys.exit('artifact dylib missing 1.10.0 evidence string/symbol %r' % required)
 # 1.11.0: the SpringBoard discovery/hook answer path must really be compiled into the
 # dylib, and it must not carry a hardcoded guessed private class name.
-for required in (b'method_setImplementation', b'discovery.txt', b'runtime-discovered',
-                 b'com.autoanswer.call.pong.springboard', b'AACSBEnv', b'AACSBSelectorMatches'):
-    if required not in dylib:
-        sys.exit('artifact dylib missing 1.11.0 discovery/hook string %r' % required)
+required_discovery = (b'method_setImplementation', b'class_copyMethodList', b'discovery.txt',
+                      b'runtime-discovered', b'com.autoanswer.call.pong.springboard', b'AACSBEnv',
+                      b'LOG-ONLY primary path',
+                      b'answer-ish method invoked through our dynamic hook')
+missing_discovery = [item for item in required_discovery if item not in dylib]
+print('dylib 1.11.0 discovery strings found: %d/%d'
+      % (len(required_discovery) - len(missing_discovery), len(required_discovery)))
+if missing_discovery:
+    sys.exit('artifact dylib missing 1.11.0 discovery/hook strings: %r' % (missing_discovery,))
 for forbidden in (b'SBIncomingCallViewController', b'SBCallAlertViewController',
                   b'IncomingCallViewController', b'MSHookMessageEx'):
     if forbidden in dylib:
@@ -49,11 +54,15 @@ binary = bundle_dir / 'AutoAnswerCallPrefs'
 if not binary.is_file():
     sys.exit('artifact missing AutoAnswerCallPrefs binary')
 settings = binary.read_bytes()
-for required in (b'AACProbeController', b'AACSharedLogController',
-                 b'com.autoanswer.call.probe.', b'com.autoanswer.call.sharelog',
-                 b'aac-springboard.discovery.txt', b'runtime-discovered', b'AACDiscoveryEntry'):
-    if required not in settings:
-        sys.exit('artifact settings binary missing evidence string %r' % required)
+required_settings = (b'AACProbeController', b'AACSharedLogController',
+                     b'com.autoanswer.call.probe.', b'com.autoanswer.call.sharelog',
+                     b'aac-springboard.discovery.txt', b'runtime-discovered',
+                     b'com.autoanswer.call.pong.springboard')
+missing_settings = [item for item in required_settings if item not in settings]
+print('settings binary evidence strings found: %d/%d'
+      % (len(required_settings) - len(missing_settings), len(required_settings)))
+if missing_settings:
+    sys.exit('artifact settings binary missing evidence strings: %r' % (missing_settings,))
 # The Chinese page titles may be stored in a non-UTF-8 literal encoding; report the
 # encoding actually found instead of failing the artifact check on it.
 for title in ('\u8fdb\u7a0b\u63a2\u6d4b', '\u5171\u4eab\u65e5\u5fd7\u67e5\u770b\u5668'):
