@@ -336,7 +336,7 @@ static inline void AACChunkMsgStart(NSString *tag,NSString *(^textBlock)(void)){
   dispatch_source_set_event_handler(timer,^{publish(@"周期性发送");});
   AACChunkMsgTimer=timer;
   dispatch_resume(timer);
-  AACSharedAppend(t,[NSString stringWithFormat:@"分片消息通道已启动：每 %.0f 秒发送一次；名内载荷通道最多 %lu 片 / 每片 %lu 字符 / 总解码 %lu 字节，状态槽通道 %lu 槽 × %lu 字节 = %lu 字节；%s",AACChunkMsgIntervalSeconds,(unsigned long)AACChunkMsgMaxChunks,(unsigned long)AACChunkMsgEncodedBytes,(unsigned long)AACChunkMsgMaxTotalBytes,(unsigned long)AACChunkMsgMaxWords,(unsigned long)AACChunkMsgWordBytes,(unsigned long)AACChunkMsgMaxStateBytes,"两条通道都未在设备上验证"]);
+  AACSharedAppend(t,[NSString stringWithFormat:@"分片消息通道已启动：每 %.0f 秒发送一次；名内载荷通道最多 %lu 片 / 每片 %lu 字符 / 总解码 %lu 字节，状态槽通道 %lu 槽 × %lu 字节 = %lu 字节；接收方把通过「代次 + 长度 + CRC32」校验的重组文本写入它自己候选目录里的 aac-%@.host-messages.txt，并按 tag 保留最近 %lu 条；%s",AACChunkMsgIntervalSeconds,(unsigned long)AACChunkMsgMaxChunks,(unsigned long)AACChunkMsgEncodedBytes,(unsigned long)AACChunkMsgMaxTotalBytes,(unsigned long)AACChunkMsgMaxWords,(unsigned long)AACChunkMsgWordBytes,(unsigned long)AACChunkMsgMaxStateBytes,t,(unsigned long)AACChunkMsgRingPerTag,"两条通道都未在设备上验证"]);
  }@catch(NSException *e){AACSharedAppend(AACChunkMsgSanitizeTag(tag),[@"分片消息启动异常：" stringByAppendingString:e.reason?:@"unknown"]);}
 }
 /* ---------------- 接收端（设置进程；任何进程都可以调用，只读自己的进程视角） ----------------
