@@ -18,8 +18,8 @@ print('artifact filter bundles:', bundles)
 if bundles != ['com.apple.mobilephone']:
     sys.exit('artifact filter bundle id is not the official com.apple.mobilephone')
 dylib = dylib_path.read_bytes()
-if b'com.apple.MobilePhone' in dylib:
-    sys.exit('artifact dylib still contains the wrong-case bundle id')
 if b'com.apple.mobilephone' not in dylib:
     sys.exit('artifact dylib missing the official bundle id guard')
-print('artifact bundle id check passed')
+if b'MobilePhone' not in dylib:
+    sys.exit('artifact dylib missing the process-name compatibility fallback')
+print('artifact bundle id check passed (filter is lowercase only; dylib keeps the fallback)')
