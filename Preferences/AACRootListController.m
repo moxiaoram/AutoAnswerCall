@@ -142,7 +142,7 @@ AACAudioLibrary *library=AACAudioLibrary.shared;if(library.failure)[self log:lib
 - (void)stopPlugin:(PSSpecifier *)s{
  NSUserDefaults *d=Defaults();[d setBool:NO forKey:@"Enabled"];BOOL synced=[d synchronize];NSString *bridgeError=AACBridgePublishSettings();BOOL off=![d boolForKey:@"Enabled"];
  uint32_t posted=notify_post("com.autoanswer.call.stop");[self reloadSpecifiers];
- [self log:[NSString stringWithFormat:@"停止插件策略：本进程回读关闭=%d 同步=%d stop通知=%u；系统自动接听状态未知/未修改",off,synced,posted]];
+ [self log:[NSString stringWithFormat:@"停止插件策略：本进程回读关闭=%d 同步=%d 桥接=%@ stop通知=%u；系统自动接听状态未知/未修改",off,synced,bridgeError?:@"共享配置已写入",posted]];
  [self alert:off&&synced?@"插件策略配置已关闭":@"插件关闭配置未确认" message:@"仅关闭插件 Enabled，并通知电话模块取消尚未提交的等待；不撤回已提交的接听事务。未收到电话确认不能保证通知送达。iOS 系统自动接听状态：未知，未修改。若系统已开启，仍须手动关闭。"];
 }
 - (void)resumePlugin:(PSSpecifier *)s{NSUserDefaults *d=Defaults();[d setBool:YES forKey:@"Enabled"];[d setObject:@1 forKey:@"ConfigVersion"];BOOL synced=[d synchronize];NSString *bridgeError=AACBridgePublishSettings();BOOL on=[d boolForKey:@"Enabled"];notify_post("com.autoanswer.call.resume");[self log:synced&&on&&!bridgeError?@"已写入启用并发送恢复通知":@"启用写入未同步"];[self alert:synced&&on&&!bridgeError?@"插件策略已恢复":@"恢复未确认" message:@"已写入 Enabled=YES 并请求电话模块解除停止锁存。通知送达与跨进程可见性未经确认，系统独立自动接听开关不受影响。"];}
