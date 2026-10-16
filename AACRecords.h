@@ -2,7 +2,7 @@
 /* Foundation-only model, shared by MobilePhone and Settings. No preview writes. */
 static NSString *const AACRecordDomain=@"com.autoanswer.call.phone";
 static NSUInteger const AACRecordLimit=200;
-static NSArray *AACValidRecords(id value){
+static inline NSArray *AACValidRecords(id value){
  if(![value isKindOfClass:NSArray.class])return @[];
  NSMutableDictionary *unique=[NSMutableDictionary new];
  for(id r in value){
@@ -22,7 +22,7 @@ static NSString *AACRecordResult(NSDictionary *r){
  if([r[@"submitted"] boolValue])return @"已提交接听请求，未确认连接";
  return [r[@"status"] isKindOfClass:NSString.class]?r[@"status"]:@"观察到来电";
 }
-static NSArray *AACRecordUpdate(NSArray *items,NSString *ident,NSString *caller,NSString *status,NSDictionary *flags,NSDate *now){
+static inline NSArray *AACRecordUpdate(NSArray *items,NSString *ident,NSString *caller,NSString *status,NSDictionary *flags,NSDate *now){
  NSMutableArray *all=[AACValidRecords(items) mutableCopy];NSMutableDictionary *row=nil;NSUInteger index=NSNotFound;
  for(NSUInteger i=0;i<all.count;i++)if([all[i][@"id"] isEqual:ident]){row=[all[i] mutableCopy];index=i;break;}
  if(!row)row=[@{@"id":ident,@"timestamp":now,@"events":@[]} mutableCopy];
@@ -37,12 +37,12 @@ static NSArray *AACRecordUpdate(NSArray *items,NSString *ident,NSString *caller,
  if(index==NSNotFound)[all addObject:row];else all[index]=row;
  return AACValidRecords(all);
 }
-static NSArray *AACReadRecords(BOOL *synced,BOOL *present){
+static inline NSArray *AACReadRecords(BOOL *synced,BOOL *present){
  BOOL ok=CFPreferencesAppSynchronize((__bridge CFStringRef)AACRecordDomain);
  id value=CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("Records"),(__bridge CFStringRef)AACRecordDomain));
  if(synced)*synced=ok;if(present)*present=[value isKindOfClass:NSArray.class];return AACValidRecords(value);
 }
-static BOOL AACWriteRecords(NSArray *records){
+static inline BOOL AACWriteRecords(NSArray *records){
  CFPreferencesSetAppValue(CFSTR("Records"),(__bridge CFPropertyListRef)records,(__bridge CFStringRef)AACRecordDomain);
  return CFPreferencesAppSynchronize((__bridge CFStringRef)AACRecordDomain);
 }
