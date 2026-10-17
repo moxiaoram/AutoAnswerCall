@@ -82,7 +82,11 @@ static inline UIWindow *AACStopOverlayWindow(UIView **nativeAdd,CGRect *target){
   if(![scene isKindOfClass:UIWindowScene.class])continue;
   for(UIWindow *w in ((UIWindowScene *)scene).windows)if(![candidates containsObject:w])[candidates addObject:w];
  }
+ /* app.windows 在 iOS15+ 标记弃用；语义仍为“回退枚举所有窗口”，此处保持原行为，仅抑制 -Werror 的弃用告警。 */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
  for(UIWindow *w in app.windows)if(![candidates containsObject:w])[candidates addObject:w];
+#pragma clang diagnostic pop
  UIWindow *fallback=nil;
  for(UIWindow *w in candidates){
   if(w.hidden||w.alpha<0.05||w.bounds.size.width<200||w.bounds.size.height<350||!w.rootViewController)continue;
