@@ -28,7 +28,14 @@ int main(void){@autoreleasepool{
   if(order==0)race[@"accepted"]=@YES;AACCancelForObservedConnection(race);if(order==1)race[@"accepted"]=@YES;
   assert(!AACMayAutoplay(race));assert(!AACMaySubmit(race,0,YES,YES,NO));
  }
+ NSMutableDictionary *autoCall=[@{@"buttonTapped":@YES,@"submitted":@YES} mutableCopy];
+ assert(!AACMayAutoplay(autoCall)); /* no connection observed yet */
+ AACCancelForObservedConnection(autoCall);
+ assert(AACMayAutoplay(autoCall)); /* only local playback may now start */
+ autoCall[@"audioPlayed"]=@YES;assert(!AACMayAutoplay(autoCall));
+ NSMutableDictionary *manualAfterAttempt=[@{@"submitted":@YES} mutableCopy];
+ AACCancelForObservedConnection(manualAfterAttempt);assert(!AACMayAutoplay(manualAfterAttempt));
  assert(!AACMaySubmit(@{},0,YES,YES,NO));assert(!AACMaySubmit(@{},0,YES,NO,YES));assert(!AACMaySubmit(@{},0,NO,NO,NO));
- puts("PASS: pending timer -> observed manual/system connection -> cancelled UUID; live connected/ended/absent requery; accepted-before/after-connection ambiguity never autoplays; selected/imported audio untouched");
+ puts("PASS: manual/system connections never auto-play; connected after auto-button event permits one LOCAL playback only (not uplink); accepted transaction alone never auto-plays");
  puts("PASS: Foundation records UUID upsert, duplicate-event suppression, first timestamp, unknown caller, accepted != connected, late callback truth, sort, 200-record/24-event bounds, plist roundtrip, invalid data rejection (macOS model; NOT device runtime)");
  }return 0;}

@@ -21,4 +21,20 @@ static inline int AACNormalize(const char *s, char *out, size_t cap) {
 }
 static inline double AACBoundDelay(double x){return isfinite(x)?fmax(0,fmin(60,x)):0.5;}
 static inline int AACShouldRequest(int enabled,int mode,int outgoing,int connected,int ended,int excluded,int unknownWithList){return enabled&&mode==2&&!outgoing&&!connected&&!ended&&!excluded&&!unknownWithList;}
+/* 1.17.7: LOCAL playback after iOS handles the call is a separate policy from
+   requesting a tweak-owned answer. Mode 1 = all incoming calls, Mode 2 = exclude
+   listed callers. Unknown numbers with a non-empty exclusion list fail closed.
+   No mode bypasses the explicit playback switch or incoming/connected checks. */
+static inline int AACPlaybackRuleMatches(int enabled,int mode,int outgoing,int ended,
+    int excluded,int unknownWithList,int invalidList){
+ return enabled&&(mode==1||mode==2)&&!outgoing&&!ended&&
+        (mode==1||(!excluded&&!unknownWithList&&!invalidList));
+}
+static inline int AACShouldPlayForSystemConnection(int enabled,int mode,int outgoing,
+    int connected,int ended,int ringingSeen,int playAudio,
+    int excluded,int unknownWithList,int invalidList){
+ return playAudio&&connected&&ringingSeen&&
+        AACPlaybackRuleMatches(enabled,mode,outgoing,ended,excluded,unknownWithList,invalidList);
+}
+
 #endif

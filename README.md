@@ -1,10 +1,40 @@
-# AutoAnswerCall 1.17.0
+# AutoAnswerCall 1.17.7：系统接听后的本机播放策略修复（待真机验证）
 
-Package: com.autoanswer.call. BuildID is supplied in the delivery report using the compiled commit and successful CI run. No installation, live system-setting change, calls, or device runtime validation performed for 1.17.0; the new live-button discovery/tap path is unverified on device.
+修复了 1.17.6 中 `Mode=1` 被旧版 `AACShouldRequest(mode==2)` 拒绝的问题：系统自带自动接听仍负责接通，插件按当前设置在 SpringBoard 观察到**本次来电从响铃到接通**后，才尝试播放本机音频。模式 1 允许所有来电播放；模式 2 仅对排除名单以外的来电播放。模式 2 下排除名单非空而无法读取号码时仍不播放，避免误播。来电后、接通前修改配置会重新检查，不复用旧判断结果。
 
-## 1.17.0 Live-button discovery + simulated tap is the primary answer strategy — NOT device-verified
+停止按钮仍通过 InCallService 显示，只有本机音频确实启动且播放状态跨进程可见才出现。无法确认按钮在 iOS 17.3 锁屏界面必然显示。新增 `AUDIO_TEST route` 日志供检查本地输出路由，不改变通话音频会话。
 
-1.17.0 keeps every guard from 1.9.x through 1.16.0 and replaces the *primary* answer strategy. Method-name keyword discovery (the 1.15.0 ACTION/ACCESSOR classification) is **retained but known to be insufficient**.
+**仍不支持将 MP3 发送给来电对方。** `AVAudioPlayer` 播放本机声音，不是蜂窝通话麦克风上行注入。请勿用来电方是否听到作为判断本次本机播放逻辑是否执行的唯一依据。系统辅助功能的自动接听是全局功能，不受排除名单控制。本包是完整源码，未在 RootHide Theos / iOS 17.3 真机上编译或验证。
+
+具体见 `FIXES-1.17.7.md`。
+
+---
+
+# AutoAnswerCall 1.17.5：系统自动接听与人工介入测试
+
+**新流程：系统自动接听 → SpringBoard 检测已接通并尝试本机音频播放 → InCallService 显示「停止播放」→ 点击停止本机音频，通话保持连接、人工可以继续讲话。**
+
+**重要：这不是通话上行注入实现。** `AVAudioPlayer` 只启动本机播放器，无法保证来电方听见音频。锁屏 InCallService 窗口、RootHide 共享文件权限和通话音频路由必须真机确认。
+
+开启前请先在 iOS 辅助功能中打开系统「自动接听通话」；插件设置开启「启用插件策略」「接通后播放本地音频」「系统接听后本地音频＋停止按钮」（默认关闭），选好音频。按下通话界面的「停止播放」不会挂断电话或改变麦克风状态。详细修改见 `FIXES-1.17.5.md`。
+
+---
+
+# 1.17.4 系统接听后本地播放测试
+
+新增默认关闭的「系统接听后本机播放测试」开关。详见 [FIXES-1.17.4.md](FIXES-1.17.4.md)。
+本版本仅验证观察到通话连接后在 SpringBoard 使用 AVAudioPlayer 播放本地音频；
+**不会独立接听蜂窝电话，也不会将音频送入通话对方的上行声道**。
+
+---
+
+# AutoAnswerCall 1.17.2
+
+Package: com.autoanswer.call. BuildID is supplied in the delivery report using the compiled commit and successful CI run. No installation, live system-setting change, calls, or device runtime validation performed for 1.17.2; the new live-button discovery/tap path is unverified on device.
+
+## 1.17.2 Live-button discovery + simulated tap is the primary answer strategy — NOT device-verified
+
+1.17.2 keeps every guard from 1.9.x through 1.16.0 and replaces the *primary* answer strategy. Method-name keyword discovery (the 1.15.0 ACTION/ACCESSOR classification) is **retained but known to be insufficient**.
 
 DEVICE EVIDENCE THAT DROVE IT (the user's 1.16.0 chunked-transport read-back on the iOS 17.3 RootHide device, quoted because it is the authoritative record):
 - ALL THREE hosts are injected: `springboard pid=9061`, `mobilephone pid=9145`, `incall pid=9146`.
