@@ -184,7 +184,7 @@ static inline UIWindow *AACStopOverlayWindow(UIView **nativeAdd,CGRect *target){
 }
 static inline NSUUID *AACStopOverlayVerifiedUUID(void){
  NSUUID *connected=AACStopOverlayConnectedUUID();
- NSDictionary *state=AACAudioReadState();
+ NSDictionary *state=AACAudioReadState();(void)state;/* 该函数目前只做状态读取，保留调用以维持原有副作用，仅消除 -Werror 未使用告警 */
  if(connected)return connected; /* trusted active CXCallObserver UUID even when audio failed */
  if(![state[@"status"] isEqualToString:@"playing"]||![state[@"timestamp"] respondsToSelector:@selector(doubleValue)])return nil;
  double age=NSDate.date.timeIntervalSince1970-[state[@"timestamp"] doubleValue];
