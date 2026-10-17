@@ -8,8 +8,8 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME := AutoAnswerCall
 AutoAnswerCall_FILES := Tweak.x
 AutoAnswerCall_CFLAGS := -fobjc-arc
-PACKAGE_VERSION := 1.17.0
-AutoAnswerCall_FRAMEWORKS := Foundation UIKit AVFoundation CallKit
+PACKAGE_VERSION := 1.18.1
+AutoAnswerCall_FRAMEWORKS := Foundation UIKit AVFoundation CallKit QuartzCore AudioToolbox
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 

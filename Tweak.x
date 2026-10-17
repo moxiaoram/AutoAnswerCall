@@ -7,6 +7,10 @@
 #import "AACPolicy.h"
 #import "AACRecords.h"
 #import "AACCallLifecycle.h"
+#import "AACConfigBridge.h"
+#import "AACAudioHandoff.h"
+#import "AACPCMDecoder.h"
+#import "AACStopOverlay.h"
 #import "AACSharedLog.h"
 #import "AACProbe.h"
 #import "AACInventory.h"
@@ -28,6 +32,44 @@ static void Record(NSUUID *uuid,NSMutableDictionary *state,NSString *status,NSDi
 }
 static NSUInteger StopGeneration;
 static NSString *ProcessTag=@"unknown";
+/* 1.18.1 local-only system-answer compatibility test. SpringBoard is intentionally
+   the only playback host, since multiple injected hosts observing one connection
+   would otherwise all play. This is NOT phone-call uplink injection. */
+static NSUUID *PlayerCallUUID;
+static CFAbsoluteTime PlayerStartUptime;
+static NSString *PlayerPreviousCategory;
+static NSString *PlayerPreviousMode;
+static AVAudioSessionCategoryOptions PlayerPreviousOptions;
+static BOOL PlayerAudioSessionChanged;
+static BOOL PlayerObservedProgress;
+static BOOL PlayerInterruptionBegan;
+static BOOL PlayerPublishedProgress;
+
+static void Log(NSString *s);
+static CFAbsoluteTime PlayerLastHeartbeat;
+static id AACAudioInterruptWatch;
+static id AACAudioRouteWatch;
+static id AACAudioResetWatch;
+static void AACInstallAudioDiagnostics(void){
+ NSNotificationCenter *center=NSNotificationCenter.defaultCenter;
+ AACAudioInterruptWatch=[center addObserverForName:AVAudioSessionInterruptionNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){
+  if([n.userInfo[AVAudioSessionInterruptionTypeKey] integerValue]==AVAudioSessionInterruptionTypeBegan&&PlayerCallUUID){
+   PlayerInterruptionBegan=YES;
+  }
+  Log([NSString stringWithFormat:@"AUDIO_DIAG interruption type=%@ reason=%@ owned=%@ category=%@ mode=%@; interruptionFlag=%d (local output only)",n.userInfo[AVAudioSessionInterruptionTypeKey]?:@"missing",n.userInfo[AVAudioSessionInterruptionReasonKey]?:@"missing",PlayerCallUUID.UUIDString?:@"none",AVAudioSession.sharedInstance.category,
+   AVAudioSession.sharedInstance.mode,PlayerInterruptionBegan]);
+ }];
+ AACAudioRouteWatch=[center addObserverForName:AVAudioSessionRouteChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){
+  Log([NSString stringWithFormat:@"AUDIO_DIAG route-change reason=%@ owned=%@",n.userInfo[AVAudioSessionRouteChangeReasonKey]?:@"missing",PlayerCallUUID.UUIDString?:@"none"]);
+ }];
+ AACAudioResetWatch=[center addObserverForName:AVAudioSessionMediaServicesWereResetNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){
+  Log([NSString stringWithFormat:@"AUDIO_DIAG media-services-reset owned=%@",PlayerCallUUID.UUIDString?:@"none"]);
+ }];
+ Log(@"AUDIO_DIAG interruption/route/media-reset monitors installed; this is NOT phone-call uplink injection");
+}
+
+
+
 /* 1.13.0/1.14.0: the answer host installs its own submit step (runtime-discovered UI answer path,
    now with a relaxed ABI gate and an NSInvocation fallback for argument-taking methods).
    Left nil in the phone module, which keeps the 1.9.x/1.10.0 CXAnswerCallAction
@@ -77,13 +119,25 @@ static void Log(NSString *s);
    from unverified cross-process preference visibility. */
 static BOOL Stopped;
 static BOOL ConfigValid;
+/* iOS owns answering in the 1.18.1 system-companion build. Enabled controls
+   passive call observation, PlayAudio is the sole local-playback opt-in.
+   The legacy SystemAnswerPlaybackTest field is ignored for mode selection so an
+   old/missing duplicate switch can no longer silently block user-selected audio. */
+static BOOL AACSystemAnswerTestActive(NSDictionary *prefs){
+ return ConfigValid&&!Stopped&&[prefs[@"Enabled"] boolValue];
+}
+
 static NSDictionary *Prefs(void){
  BOOL synced=CFPreferencesAppSynchronize((__bridge CFStringRef)Domain);
- NSDictionary *p=CFBridgingRelease(CFPreferencesCopyMultiple(NULL,(__bridge CFStringRef)Domain,kCFPreferencesCurrentUser,kCFPreferencesAnyHost));
- /* Settings writes ConfigVersion on first load. Without it the domain is either
-    never configured or not visible here; both must fail closed, never default to enabled. */
- ConfigValid=(p!=nil && synced && p[@"ConfigVersion"]!=nil);
- if(!ConfigValid)Log([NSString stringWithFormat:@"CONFIG INVALID: synced=%d keys=%lu; automatic answering disabled until settings configuration is readable",synced,(unsigned long)(p.count?:0)]);
+ NSDictionary *native=CFBridgingRelease(CFPreferencesCopyMultiple(NULL,(__bridge CFStringRef)Domain,kCFPreferencesCurrentUser,kCFPreferencesAnyHost));
+ NSDictionary *bridged=AACBridgeRead();
+ /* A validated shared snapshot takes precedence: a sandboxed Settings suite can be
+    invisible in all injected processes despite synchronize returning YES. */
+ NSDictionary *p=bridged?:native;
+ ConfigValid=(bridged!=nil)||(native!=nil&&synced&&native[@"ConfigVersion"]!=nil&&
+    [native[@"Enabled"] isKindOfClass:NSNumber.class]&&[native[@"Mode"] isKindOfClass:NSNumber.class]&&
+    [native[@"Delay"] isKindOfClass:NSNumber.class]);
+ if(!ConfigValid)Log([NSString stringWithFormat:@"CONFIG INVALID: shared=%@ nativeSynced=%d nativeKeys=%lu path=%@; fail closed",bridged?@"readable":@"missing/unreadable",synced,(unsigned long)native.count,AACBridgeConfigPath()]);
  return p?:@{};
 }
 static void Log(NSString *s){
@@ -124,29 +178,289 @@ static BOOL Allowed(CXCall *call,NSDictionary *p){
  if(!ok)Log([NSString stringWithFormat:@"Eligibility: enabled=%d mode=%ld outgoing=%d connected=%d ended=%d excluded=%d unknownWithList=%d invalidList=%d",enabled,(long)mode,call.outgoing,call.hasConnected,call.hasEnded,excluded,hasList&&!number,invalid]);
  return ok;
 }
-static CXCall *Current(NSUUID *uuid){for(CXCall *c in Observer.calls)if([c.UUID isEqual:uuid])return c;return nil;}
-static void PlayLocal(void){
- NSDictionary *p=Prefs(); if(![p[@"PlayAudio"] boolValue])return; NSString *path=[p[@"AudioPath"] isKindOfClass:NSString.class]?p[@"AudioPath"]:nil;
- if(!path.length){Log(@"Local audio: no configured path; settings sandbox file is not shared by entitlement");return;}
- NSError *e=nil; Player=[[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:path] error:&e];
- if(!Player){Log([NSString stringWithFormat:@"Local audio source inaccessible/unsupported: %@",e.localizedDescription?:@"AVAudioPlayer returned nil"]);return;}
- if(![Player prepareToPlay]||![Player play])Log(@"Local audio playback returned NO; no uplink injection"); else Log(@"Local playback started only; no call uplink injection");
+/* The old Allowed() uses AACShouldRequest(mode == 2, !connected) and is ONLY
+   valid for submitting an answer action. Never use it to authorize playback on an
+   already-connected iOS-managed cellular call (Mode 1 was always rejected). */
+static BOOL AACPlaybackRulesAllow(CXCall *call,NSDictionary *prefs,NSString **reason){
+ if(reason)*reason=@"allowed";
+ if(!ConfigValid){if(reason)*reason=@"config-unreadable";return NO;}
+ if(Stopped){if(reason)*reason=@"plugin-stopped";return NO;}
+ if(!call){if(reason)*reason=@"call-missing";return NO;}
+ BOOL enabled=[prefs[@"Enabled"] boolValue];
+ NSInteger mode=[prefs[@"Mode"] integerValue];
+ if(!enabled){if(reason)*reason=@"plugin-disabled";return NO;}
+ if(mode!=1&&mode!=2){if(reason)*reason=@"invalid-playback-mode";return NO;}
+ if(call.outgoing){if(reason)*reason=@"outgoing-call";return NO;}
+ if(call.hasEnded){if(reason)*reason=@"call-ended";return NO;}
+ BOOL excluded=NO,invalid=NO,unknownWithList=NO;
+ if(mode==2){
+  NSString *raw=[prefs[@"Whitelist"] isKindOfClass:NSString.class]?prefs[@"Whitelist"]:@"";
+  BOOL hasList=[raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length>0;
+  NSString *number=hasList?Number(call):nil;
+  for(NSString *entry in [raw componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@",，;\n"]]){
+   NSString *trimmed=[entry stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+   if(!trimmed.length)continue;
+   NSString *normalized=Normal(trimmed);
+   if(!normalized)invalid=YES;
+   else if(number&&[normalized isEqualToString:number])excluded=YES;
+  }
+  unknownWithList=hasList&&!number;
+ }
+ BOOL allowed=AACPlaybackRuleMatches(enabled,(int)mode,call.outgoing,call.hasEnded,excluded,unknownWithList,invalid);
+ if(!allowed&&reason)*reason=invalid?@"invalid-exclusion-entry":(excluded?@"caller-excluded":(unknownWithList?@"caller-unknown-with-exclusion-list":@"rules-denied"));
+ return allowed;
 }
-static void ObserveConnection(NSUUID *uuid,NSMutableDictionary *s){
- BOOL submitted=[s[@"submitted"] boolValue];AACCancelForObservedConnection(s);
- /* 1.17.0 TASK 1: 按钮路径到底接通了吗——只有 CXCallObserver 的 hasConnected 才算证据。 */
+static CXCall *Current(NSUUID *uuid){for(CXCall *c in Observer.calls)if([c.UUID isEqual:uuid])return c;return nil;}
+/* One SpringBoard playback owner per call UUID. Manual handoff cannot hang up a call. */
+static void AACAudioStopOwned(NSString *reason,NSString *status){
+ if(!PlayerCallUUID)return;
+ NSUUID *owned=PlayerCallUUID;
+ [Player stop];Player=nil;PlayerCallUUID=nil;PlayerInterruptionBegan=NO;PlayerPublishedProgress=NO;
+ if(PlayerAudioSessionChanged){
+  NSError *restoreError=nil;
+  [[AVAudioSession sharedInstance] setCategory:PlayerPreviousCategory?:AVAudioSessionCategorySoloAmbient
+     mode:PlayerPreviousMode?:AVAudioSessionModeDefault options:PlayerPreviousOptions error:&restoreError];
+  Log([NSString stringWithFormat:@"AUDIO_TEST session-restore result=%@ error=%@",restoreError?@"failed":@"ok",restoreError.localizedDescription?:@"none"]);
+  PlayerAudioSessionChanged=NO;PlayerPreviousCategory=nil;PlayerPreviousMode=nil;
+ }
+ BOOL published=AACAudioPublishStatus(owned,status);
+ Log([NSString stringWithFormat:@"MANUAL_HANDOFF owner-stop uuid=%@ reason=%@ publish=%d status=%@; cellular call continues unchanged",
+      owned.UUIDString,reason,published,status]);
+}
+static void AACAudioPlaybackWatch(NSUUID *uuid){
+ if(!uuid||![PlayerCallUUID isEqual:uuid])return;
+ if(AACAudioStopMatches(uuid)){
+  AACAudioStopOwned(@"matching-stop-request",@"stopped");
+  return;
+ }
+ if(PlayerInterruptionBegan){
+  Log(@"AUDIO_TEST result=interrupted stage=audio-session-interruption-began; no sustained local playback and no cellular uplink");
+  AACAudioStopOwned(@"session-interrupted-began",@"interrupted");
+  return;
+ }
+ double elapsed=CFAbsoluteTimeGetCurrent()-PlayerStartUptime;
+ BOOL actualPlaying=(Player!=nil&&Player.isPlaying);
+ NSTimeInterval position=Player?Player.currentTime:0;
+ if(position>0.1){
+  PlayerObservedProgress=YES;
+  if(!PlayerPublishedProgress){
+   PlayerPublishedProgress=AACAudioPublishStatus(uuid,@"playing");
+   Log([NSString stringWithFormat:@"AUDIO_TEST verified-progress position=%.2f statePublished=%d",position,PlayerPublishedProgress]);
+  }
+ }
+ /* Heartbeat lets a UI host without CXCallObserver coverage verify the current call
+    via a recent shared state; only renew while playback actually progresses. */
+ if(actualPlaying&&PlayerObservedProgress&&elapsed>=1.0&&CFAbsoluteTimeGetCurrent()-PlayerLastHeartbeat>4.0){
+  PlayerLastHeartbeat=CFAbsoluteTimeGetCurrent();
+  if(!AACAudioPublishStatus(uuid,@"playing"))Log(@"AUDIO_DIAG heartbeat publish failed");
+ }
+ if(elapsed<3.0||(!actualPlaying&&PlayerObservedProgress&&elapsed<4.0)){
+  Log([NSString stringWithFormat:@"AUDIO_TEST playback-check elapsed=%.1f isPlaying=%d position=%.2f progressed=%d grace=1",elapsed,actualPlaying,position,PlayerObservedProgress]);
+ }else if(!actualPlaying){
+  BOOL naturallyFinished=(Player.duration>0&&position>=Player.duration-0.7);
+  Log([NSString stringWithFormat:@"AUDIO_TEST result=%@ stage=runtime elapsed=%.1f position=%.2f duration=%.2f; play-returned-success does NOT mean sustained playback",naturallyFinished?@"finished":@"interrupted",elapsed,position,Player.duration]);
+  AACAudioStopOwned(naturallyFinished?@"audio-finished":@"audio-interrupted-or-session-suppressed",naturallyFinished?@"finished":@"interrupted");return;
+ }
+ dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.65*NSEC_PER_SEC)),dispatch_get_main_queue(),^{AACAudioPlaybackWatch(uuid);});
+}
+static BOOL PlayLocal(NSUUID *uuid){
+ if(AACAudioStopMatches(uuid)){
+  Log([NSString stringWithFormat:@"AUDIO_TEST result=skipped reason=manual-takeover-before-play uuid=%@",uuid.UUIDString]);
+  return NO;
+ }
+ NSDictionary *p=Prefs();
+ if(!ConfigValid||Stopped||![p[@"Enabled"] boolValue]||![p[@"PlayAudio"] boolValue]){
+  Log(@"AUDIO_TEST result=skipped reason=disabled-or-config-unreadable-or-stopped");return NO;
+ }
+ NSString *path=[p[@"AudioPath"] isKindOfClass:NSString.class]?p[@"AudioPath"]:nil;
+ if(!path.length||![[NSFileManager defaultManager] isReadableFileAtPath:path]){
+  Log([NSString stringWithFormat:@"AUDIO_TEST result=failed stage=read host=%@ path=%@",ProcessTag,path?:@"(none)"]);return NO;
+ }
+ NSDictionary *attrs=[[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+ Log([NSString stringWithFormat:@"AUDIO_TEST stage=open host=%@ uuid=%@ bytes=%@ path=%@",ProcessTag,uuid.UUIDString,attrs[NSFileSize]?:@"unknown",path]);
+ @try{
+  if(PlayerCallUUID)AACAudioStopOwned(@"new-playback-replaces-previous",@"stopped");
+  NSError *e=nil;
+  AVAudioPlayer *newPlayer=[[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:path] error:&e];
+  if(!newPlayer){Log([NSString stringWithFormat:@"AUDIO_TEST result=failed stage=decode error=%@",e.localizedDescription?:@"AVAudioPlayer=nil"]);return NO;}
+  if(![newPlayer prepareToPlay]){Log(@"AUDIO_TEST result=failed stage=prepare");return NO;}
+  AVAudioSession *audioSession=AVAudioSession.sharedInstance;
+  NSMutableArray *routes=[NSMutableArray new];
+  for(AVAudioSessionPortDescription *port in audioSession.currentRoute.outputs){
+   [routes addObject:port.portType?:@"unknown"];
+  }
+  Log([NSString stringWithFormat:@"AUDIO_TEST route before category=%@ mode=%@ outputPorts=%@; never claims cellular uplink",
+       audioSession.category?:@"missing",audioSession.mode?:@"missing",[routes componentsJoinedByString:@","]]);
+  /* SoloAmbient is silenced by another nonmixable audio session (such as a call).
+     Playback+MixWithOthers is a local-output experiment, NOT telephony injection.
+     The category change is made only when PlayAudio is explicitly enabled. */
+  PlayerPreviousCategory=[audioSession.category copy];
+  PlayerPreviousMode=[audioSession.mode copy];
+  PlayerPreviousOptions=audioSession.categoryOptions;
+  NSError *sessionError=nil;
+  BOOL categoryOK=[audioSession setCategory:AVAudioSessionCategoryPlayback mode:AVAudioSessionModeDefault
+       options:AVAudioSessionCategoryOptionMixWithOthers error:&sessionError];
+  PlayerAudioSessionChanged=categoryOK;
+  Log([NSString stringWithFormat:@"AUDIO_TEST stage=configure-session category=%@ error=%@",categoryOK?@"ok":@"failed",sessionError.localizedDescription?:@"none"]);
+  if(categoryOK){
+   sessionError=nil;
+   BOOL active=[audioSession setActive:YES error:&sessionError];
+   Log([NSString stringWithFormat:@"AUDIO_TEST stage=activate-session result=%@ error=%@",active?@"ok":@"failed",sessionError.localizedDescription?:@"none"]);
+  }
+  BOOL started=[newPlayer play];
+  if(started){
+   Player=newPlayer;PlayerCallUUID=uuid;
+   PlayerStartUptime=CFAbsoluteTimeGetCurrent();PlayerLastHeartbeat=0;PlayerObservedProgress=NO;PlayerInterruptionBegan=NO;PlayerPublishedProgress=NO;
+   BOOL published=AACAudioPublishStatus(uuid,@"starting");
+   Log([NSString stringWithFormat:@"MANUAL_HANDOFF audio-start uuid=%@ statePublished=%d",uuid.UUIDString,published]);
+   AACAudioPlaybackWatch(uuid);
+  }
+  Log([NSString stringWithFormat:@"AUDIO_TEST result=%@ stage=play duration=%.2f host=%@; LOCAL output only, never claims caller/uplink delivery",started?@"started":@"failed",newPlayer.duration,ProcessTag]);
+  if(!started&&PlayerAudioSessionChanged){
+   NSError *restoreError=nil;
+   [audioSession setCategory:PlayerPreviousCategory?:AVAudioSessionCategorySoloAmbient mode:PlayerPreviousMode?:AVAudioSessionModeDefault options:PlayerPreviousOptions error:&restoreError];
+   PlayerAudioSessionChanged=NO;
+  }
+  return started;
+ }@catch(NSException *e){
+  Log([NSString stringWithFormat:@"AUDIO_TEST result=failed stage=exception reason=%@",e.reason?:@"unknown"]);return NO;
+ }
+}
+
+/* 1.18.1 opt-in: bounded offline PCM decode on a utility worker.
+   No AVAudioSession changes, no output devices, no injection, no audio saved. */
+static void AACStartPCMProbe(NSUUID *uuid,NSString *path){
+ if(!uuid)return;
+ if(!path.length){Log([NSString stringWithFormat:@"UPLINK_PCM_PROBE result=failed reason=no-audio-path uuid=%@ uplink=UNAVAILABLE sentFrames=0",uuid.UUIDString]);return;}
+ Log([NSString stringWithFormat:@"UPLINK_PCM_PROBE stage=begin uuid=%@ maxFrames=32000 sampleFormat=s16le-mono-16000 no-local-output=1",uuid.UUIDString]);
+ dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+  @autoreleasepool{
+   NSDictionary *report=AACPCMProbeFile(path,32000);
+   dispatch_async(dispatch_get_main_queue(),^{
+    Log([NSString stringWithFormat:@"UPLINK_PCM_PROBE result=%@ uuid=%@ frames=%@ durationMs=%@ peak=%@ rms=%@ error=%@ osStatus=%@ uplink=%@ sentFrames=%@ remoteAudible=NO reason=%@",
+       report[@"result"],uuid.UUIDString,report[@"frames"],report[@"durationMs"]?:@0,report[@"peak"]?:@0,
+       report[@"rms"]?:@0,report[@"error"]?:@"none",report[@"osStatus"]?:@0,
+       report[@"uplink"],report[@"sentFrames"],report[@"uplinkReason"]?:AACUplinkRouteReason()]);
+   });
+  }
+ });
+}
+
+static void ObserveConnection(CXCall *call,NSMutableDictionary *s){
+ NSUUID *uuid=call.UUID;
+ if([ProcessTag isEqualToString:@"incall"])AACStopOverlayUpdate();
+ BOOL submitted=[s[@"submitted"] boolValue];
+ BOOL alreadyConnected=[s[@"connectedObserved"] boolValue];
+ NSDictionary *prefs=Prefs();
+ BOOL systemTestActive=AACSystemAnswerTestActive(prefs);
+ BOOL ringingSeen=[s[@"systemTestSeen"] boolValue];
+ NSString *policyReason=nil;
+ /* Re-check against the LIVE connected call and the CURRENT settings, not the
+    Mode-2-only answer-eligibility flag captured during ringing. */
+ BOOL playbackRulesAllow=AACPlaybackRulesAllow(call,prefs,&policyReason);
+ BOOL pcmProbeMode=[prefs[@"UplinkPCMProbe"] boolValue];
+ BOOL pcmEligible=systemTestActive&&ringingSeen&&playbackRulesAllow&&pcmProbeMode&&
+        [ProcessTag isEqualToString:@"springboard"]&&call.hasConnected&&!call.hasEnded;
+ BOOL playbackSwitch=[prefs[@"PlayAudio"] boolValue]&&!pcmProbeMode;
+ BOOL playOnSystemConnect=systemTestActive&&ringingSeen&&playbackRulesAllow&&playbackSwitch&&
+      [ProcessTag isEqualToString:@"springboard"]&&![s[@"audioPlayed"] boolValue]&&
+      call.hasConnected&&!call.hasEnded;
+ AACCancelForObservedConnection(s);
+ if(alreadyConnected)return;
  if(SubmitBlock&&[s[@"buttonTapped"] boolValue]){AACButtonNoteConnected(YES);AACSBButtonPublishNow();}
- Record(uuid,s,submitted?@"观察到连接；请求与人工/系统接听归因不明，已抑制自动播放":@"请求提交前已连接：手动/系统/其他，已取消自动接听和自动播放",@{@"connected":@YES,@"beforeRequest":@(!submitted)});
- Log(submitted?@"Connected after submission: answer ownership ambiguous; autoplay suppressed; imported files retained":@"Connected before submission (manual/system/other): UUID timers invalidated, autoplay suppressed; imported files retained");
- if(AACMayAutoplay(s))PlayLocal();
+ BOOL legacyEligible=!systemTestActive&&![s[@"systemTestSeen"] boolValue]&&AACMayAutoplay(s);
+ BOOL eligible=playOnSystemConnect||legacyEligible;
+ if(!ringingSeen||[ProcessTag isEqualToString:@"springboard"]){
+  Record(uuid,s,submitted?@"已观察到连接（接听归因不明）":@"观察到系统/人工连接（无法判断是谁接听）",@{@"connected":@YES,@"beforeRequest":@(!submitted)});
+ }
+ Log([NSString stringWithFormat:@"SYSTEM_ANSWER_TEST connected host=%@ uuid=%@ ringingSeen=%d ringingRulesAllowed=%d connectedRulesAllowed=%d policyReason=%@ mode=%@ companionEnabled=%d singlePlaybackSwitch=%d selectedPlaybackHost=%d startEligible=%d attribution=unknown",
+     ProcessTag,uuid.UUIDString,ringingSeen,[s[@"systemTestEligible"] boolValue],playbackRulesAllow,policyReason?:@"unknown",prefs[@"Mode"]?:@"missing",systemTestActive,playbackSwitch,[ProcessTag isEqualToString:@"springboard"],eligible]);
+ if(systemTestActive&&!ringingSeen){
+  Log([NSString stringWithFormat:@"AUDIO_TEST result=skipped reason=ringing-not-observed host=%@ uuid=%@ (no playback on a call already connected before this process observed incoming)",ProcessTag,uuid.UUIDString]);
+ }else if(systemTestActive&&!playbackRulesAllow){
+  Log([NSString stringWithFormat:@"AUDIO_TEST result=skipped reason=playback-policy-rejected detail=%@ host=%@ uuid=%@",policyReason?:@"unknown",ProcessTag,uuid.UUIDString]);
+ }else if(systemTestActive&&!playbackSwitch){
+  Log(@"AUDIO_TEST result=skipped reason=single-playback-switch-off");
+ }else if(systemTestActive&&![ProcessTag isEqualToString:@"springboard"]){
+  Log([NSString stringWithFormat:@"AUDIO_TEST result=skipped reason=not-playback-owner host=%@",ProcessTag]);
+ }
+ if(pcmProbeMode){
+  Log([NSString stringWithFormat:@"UPLINK_PCM_PROBE gate host=%@ uuid=%@ eligible=%d ringingSeen=%d connectedRule=%d enabled=%d; deliberately no local AVAudioPlayer",
+     ProcessTag,uuid.UUIDString,pcmEligible,ringingSeen,playbackRulesAllow,systemTestActive]);
+  if(pcmEligible){
+   AACStartPCMProbe(uuid,[prefs[@"AudioPath"] isKindOfClass:NSString.class]?prefs[@"AudioPath"]:nil);
+  }
+ }
+ if(eligible){
+  s[@"audioPlayed"]=@YES; // One attempt per UUID, including an unsuccessful player start.
+  BOOL played=PlayLocal(uuid);
+  Record(uuid,s,played?@"接通后本地音频启动（对方是否听到未知）":@"接通后本地音频启动失败（请检查 AUDIO_TEST 日志）",@{@"connected":@YES,@"localAudioStarted":@(played),@"systemAnswerTest":@(playOnSystemConnect)});
+ }
+}
+
+/* Subscribe to UUID-specific peer signals while THIS call is active. The old fixed
+   buttontap.<host> notification could poison the next call; it is deliberately ignored. */
+static void AACWatchPeerTaps(NSUUID *uuid,NSMutableDictionary *state){
+ if(!SubmitBlock||!uuid||state[@"peerTapTokens"])return;
+ NSMutableArray *tokens=[NSMutableArray new];
+ state[@"peerTapTokens"]=tokens;
+ for(NSString *peerTag in @[@"incall",@"springboard"]){
+  if([peerTag isEqualToString:ProcessTag])continue;
+  NSString *notification=AACButtonTapNameForCall(peerTag,uuid.UUIDString);
+  if(!notification.length)continue;
+  int token=0;
+  uint32_t result=notify_register_dispatch(notification.UTF8String,&token,dispatch_get_main_queue(),^(int t){
+   AACButtonNotePeerTap(peerTag,uuid.UUIDString);
+   AACSBButtonPeerTapArrived(peerTag);
+   Log([NSString stringWithFormat:@"UUID-specific peer tap observed: host=%@ uuid=%@",peerTag,uuid.UUIDString]);
+  });
+  if(result==NOTIFY_STATUS_OK)[tokens addObject:@(token)];
+  else Log([NSString stringWithFormat:@"buttontap UUID observer registration failed host=%@ uuid=%@ result=%u",peerTag,uuid.UUIDString,result]);
+ }
+}
+static void AACUnwatchPeerTaps(NSUUID *uuid,NSMutableDictionary *state){
+ for(NSNumber *token in state[@"peerTapTokens"])notify_cancel(token.intValue);
+ [state removeObjectForKey:@"peerTapTokens"];
+ AACButtonForgetCall(uuid.UUIDString);
 }
 static void Changed(CXCall *call){
  NSUUID *uuid=call.UUID; if(!uuid)return; NSMutableDictionary *s=States[uuid];
  if(!s){s=[NSMutableDictionary dictionaryWithDictionary:@{@"scheduled":@NO,@"pending":@NO,@"attempted":@NO,@"accepted":@NO}];States[uuid]=s;}
  s[@"outgoing"]=@(call.outgoing);NSString *caller=Number(call);if(caller.length)s[@"caller"]=caller;
+ if(!call.outgoing&&!call.hasEnded)AACWatchPeerTaps(uuid,s);
  Log([NSString stringWithFormat:@"Call %@ outgoing=%d connected=%d ended=%d",uuid.UUIDString,call.outgoing,call.hasConnected,call.hasEnded]);
- if(call.hasEnded){AACCancelForObservedConnection(s);if(!call.hasConnected)s[@"connectedObserved"]=@NO;Record(uuid,s,@"通话已结束",(call.hasConnected?@{@"ended":@YES,@"connected":@YES}:@{@"ended":@YES}));s[@"pending"]=@NO;s[@"attempted"]=@YES;if(SubmitBlock)AACSBButtonNoteCallEnded(call.hasConnected);[States removeObjectForKey:uuid];return;}
- if(call.hasConnected){ObserveConnection(uuid,s);return;}
+ if(call.hasEnded){
+  if([PlayerCallUUID isEqual:uuid]){
+   AACAudioStopOwned(@"call-ended",@"ended");
+   Log(@"AUDIO_TEST call-ended: owned local player stopped");
+  }
+  if([ProcessTag isEqualToString:@"incall"])AACStopOverlayUpdate();
+  AACCancelForObservedConnection(s);
+  if(!call.hasConnected)s[@"connectedObserved"]=@NO;
+  NSString *endedStatus=call.hasConnected?@"通话已结束（观察到过连接，归因不明）":
+    ([s[@"buttonTapped"] boolValue]?@"通话已结束：已发送按钮事件，但未观察到连接":
+    ([s[@"submitted"] boolValue]?@"通话已结束：已尝试接听请求，但未观察到连接":
+    ([s[@"attempted"] boolValue]?@"通话已结束：已进入尝试流程，但没有有效接听动作":@"通话已结束：未开始接听流程（检查配置与宿主日志）")));
+  Record(uuid,s,endedStatus,(call.hasConnected?@{@"ended":@YES,@"connected":@YES}:@{@"ended":@YES,@"attempted":@([s[@"attempted"] boolValue])}));
+  s[@"pending"]=@NO;s[@"attempted"]=@YES;
+  if(SubmitBlock)AACSBButtonNoteCallEnded(call.hasConnected);
+  AACUnwatchPeerTaps(uuid,s);
+  [States removeObjectForKey:uuid];return;
+ }
+ if(call.hasConnected){ObserveConnection(call,s);return;}
+ if([s[@"systemTestSeen"] boolValue])return; // Never fall into active-answer path for this UUID.
+ NSDictionary *incomingPrefs=Prefs();
+ if(AACSystemAnswerTestActive(incomingPrefs)){
+  NSString *policyReason=nil;
+  BOOL eligible=AACPlaybackRulesAllow(call,incomingPrefs,&policyReason);
+  s[@"systemTestSeen"]=@YES;
+  s[@"systemTestEligible"]=@(eligible);
+  Log([NSString stringWithFormat:@"SYSTEM_ANSWER_TEST ringing host=%@ uuid=%@ playbackRulesAllowed=%d mode=%@ policyReason=%@; no answer request, waiting for iOS system/user to connect",ProcessTag,uuid.UUIDString,eligible,incomingPrefs[@"Mode"]?:@"missing",policyReason?:@"unknown"]);
+  if([ProcessTag isEqualToString:@"springboard"]){
+   Record(uuid,s,eligible?@"系统自动接听兼容测试：等待系统接通":@"系统兼容测试：此通来电不符合插件播放规则",@{@"systemAnswerTest":@YES});
+  }
+  return;
+ }
  if([s[@"scheduled"] boolValue]||[s[@"attempted"] boolValue])return;
  if(!Allowed(call,Prefs())){Record(uuid,s,@"跳过：插件关闭、模式或排除策略不符合（见共享日志：Eligibility 行）",nil);return;}
  /* A call event can arrive before the answer UI classes are loaded; retry the bounded
@@ -162,13 +476,28 @@ static void Changed(CXCall *call){
  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(delay*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
   if(generation!=StopGeneration){Log(@"Delayed answer cancelled by plugin stop generation");Record(uuid,s,@"取消：插件已停止",nil);return;}
   if(States[uuid]!=s){Log(@"Delayed answer dropped: call state no longer current");return;} s[@"scheduled"]=@NO; CXCall *live=Current(uuid);
-  if(live.hasConnected){ObserveConnection(uuid,s);return;}
+  if(live.hasConnected){ObserveConnection(live,s);return;}
   if(!AACMaySubmit(s,callGeneration,live!=nil,live.hasConnected,live.hasEnded)){Log(@"Delayed answer invalidated by UUID connection/end generation or absent call");return;}
   if(!live||!Allowed(live,Prefs())){Log(@"Delayed answer cancelled: call absent/state or settings changed");Record(uuid,s,@"取消：通话消失、状态或设置已改变",nil);return;}
+  if(AACSystemAnswerTestActive(Prefs())){
+   Log(@"SYSTEM_ANSWER_TEST delayed plugin answer suppressed: system handles answer");
+   s[@"systemTestSeen"]=@YES;
+   NSString *playbackReason=nil;
+   s[@"systemTestEligible"]=@(AACPlaybackRulesAllow(live,Prefs(),&playbackReason));
+   Log([NSString stringWithFormat:@"SYSTEM_ANSWER_TEST delayed-branch playbackPolicy=%@",playbackReason?:@"unknown"]);return;
+  }
   s[@"attempted"]=@YES;s[@"pending"]=@YES;
   /* 1.17.0 TASK 1: 延迟到期、通话仍是来电状态，现在做一次现场按钮发现（有界遍历，记录每一个
      候选），这样按钮路径才是一条真实接听路径，而且归属判定发生在它之后。 */
-  if(SubmitBlock)AACSBButtonProbeForIncomingCall(@"call");
+  if(SubmitBlock){
+   Log([NSString stringWithFormat:@"ANSWER_STAGE delay-expired host=%@ uuid=%@ configValid=%d connected=%d ended=%d",
+      ProcessTag,uuid.UUIDString,ConfigValid,live.hasConnected,live.hasEnded]);
+   if(SubmitBlock)AACSBButtonProbeForIncomingCall(@"call");
+   Log(AACSBAnswerOwnershipLine(uuid.UUIDString,NO,@"延迟到期且按钮扫描结束；若 owner=(none)，没有可执行接听入口"));
+  }else{
+   Log([NSString stringWithFormat:@"ANSWER_STAGE delay-expired host=%@ uuid=%@ route=CallKit-diagnostic-only (cellular authorization not guaranteed)",
+     ProcessTag,uuid.UUIDString]);
+  }
   /* 1.11.0: SpringBoard installs the runtime-discovered UI answer step here; the phone
      module leaves SubmitBlock nil and keeps the original transaction code untouched. */
   if(SubmitBlock){SubmitBlock(uuid,s);}else{
@@ -193,7 +522,17 @@ static void Changed(CXCall *call){
    present, so SpringBoard also owns record deletion. */
 static void RegisterControls(void){
  int resumeToken=0;uint32_t resumeStatus=notify_register_dispatch("com.autoanswer.call.resume",&resumeToken,dispatch_get_main_queue(),^(int t){Stopped=NO;Log(@"Explicit resume observed from settings; stop latch cleared");});if(resumeStatus!=NOTIFY_STATUS_OK)Log(@"Resume notification registration failed");
- int stopToken=0;uint32_t stopStatus=notify_register_dispatch("com.autoanswer.call.stop",&stopToken,dispatch_get_main_queue(),^(int t){StopGeneration++;Stopped=YES;for(NSMutableDictionary *s in States.allValues){if([s[@"scheduled"] boolValue]){s[@"scheduled"]=@NO;s[@"attempted"]=@YES;}}[Player stop];Log(@"Plugin stop observed; invalidated unsubmitted timers, existing transactions cannot be revoked; native system switch unaffected");});if(stopStatus!=NOTIFY_STATUS_OK)Log(@"Plugin stop notification registration failed; delayed preferences revalidation still applies");
+ int stopToken=0;uint32_t stopStatus=notify_register_dispatch("com.autoanswer.call.stop",&stopToken,dispatch_get_main_queue(),^(int t){StopGeneration++;Stopped=YES;for(NSMutableDictionary *s in States.allValues){if([s[@"scheduled"] boolValue]){s[@"scheduled"]=@NO;s[@"attempted"]=@YES;}}AACAudioStopOwned(@"settings-stop-plugin",@"stopped");Log(@"Plugin stop observed; invalidated unsubmitted timers, existing transactions cannot be revoked; native system switch unaffected");});if(stopStatus!=NOTIFY_STATUS_OK)Log(@"Plugin stop notification registration failed; delayed preferences revalidation still applies");
+ if([ProcessTag isEqualToString:@"springboard"]){
+  AACInstallAudioDiagnostics();
+  int audioToken=0;
+  uint32_t audioStatus=notify_register_dispatch(AACAudioStopRequested.UTF8String,&audioToken,dispatch_get_main_queue(),^(int t){
+   NSUUID *owned=PlayerCallUUID;
+   if(owned&&AACAudioStopMatches(owned))AACAudioStopOwned(@"UI-button-stop-request",@"stopped");
+   else Log([NSString stringWithFormat:@"MANUAL_HANDOFF ignore-stop-request no-matching-active-UUID owner=%@",owned.UUIDString?:@"(none)"]);
+  });
+  Log([NSString stringWithFormat:@"MANUAL_HANDOFF playback-owner stop listener=%u",audioStatus]);
+ }
  int clearToken=0;uint32_t clearStatus=notify_register_dispatch("com.autoanswer.call.records.clear",&clearToken,dispatch_get_main_queue(),^(int t){
   /* The loaded module owns deletion. Never trust a Settings-side empty read as acknowledgement. */
   for(NSMutableDictionary *state in States.allValues)state[@"recordsCleared"]=@YES;
@@ -220,7 +559,12 @@ static void RegisterControls(void){
 static void AnswerHostStart(NSDictionary *host){
  NSString *tag=host[@"tag"],*display=host[@"display"],*pong=host[@"pong"];
  Records=AACReadRecords(NULL,NULL);States=[NSMutableDictionary new];Controller=[CXCallController new];Observer=[CXCallObserver new];RetainedDelegate=[AACDelegate new];[Observer setDelegate:RetainedDelegate queue:dispatch_get_main_queue()];
- Log([NSString stringWithFormat:@"Loaded 1.17.0 answer host: %@ (tag=%@ probe=%@ pong=%@ discovery=%@); retained its own CXCallObserver in %@; runtime discovery of the real incoming-call UI starts now (ABI gate relaxed: zero-arg any-return -> MSHookMessageEx hook, arg-taking -> NSInvocation candidate)",display,tag,host[@"probe"],pong,host[@"discovery"],display]);
+ NSDictionary *startup=AACBridgeRead();
+ NSDictionary *effective=Prefs();
+ NSString *audio=effective[@"AudioPath"];
+ Log([NSString stringWithFormat:@"CONFIG_DIAG host=%@ bridge=%@ prefsValid=%d enabled=%@ mode=%@ delay=%@ playLocal=%@ systemPlaybackTest=%@ audioPath=%@ audioReadable=%d; if bridge absent Settings must re-open and synchronize",ProcessTag,startup?@"readable":@"missing/unreadable",ConfigValid,effective[@"Enabled"]?:@"missing",effective[@"Mode"]?:@"missing",effective[@"Delay"]?:@"missing",effective[@"PlayAudio"]?:@"missing",effective[@"SystemAnswerPlaybackTest"]?:@"missing",[audio isKindOfClass:NSString.class]?audio:@"(none)",[[NSFileManager defaultManager] isReadableFileAtPath:([audio isKindOfClass:NSString.class]?audio:@"")]]);
+
+ Log([NSString stringWithFormat:@"Loaded 1.18.1 answer host: %@ (tag=%@ probe=%@ pong=%@ discovery=%@); retained its own CXCallObserver in %@; runtime discovery of the real incoming-call UI starts now (ABI gate relaxed: zero-arg any-return -> MSHookMessageEx hook, arg-taking -> NSInvocation candidate)",display,tag,host[@"probe"],pong,host[@"discovery"],display]);
  Log([NSString stringWithFormat:@"接听归属角色表：%@；每个宿主都观察并记录，但只有一个宿主提交接听（InCallService 优先，其次 SpringBoard，否则仅日志）",AACAnswerRoleTableText()]);
  /* 1.16.0 TASK 1/TASK 2: the chunked Darwin message transport is started by AACSBStart (it owns
     the discovery summary text); this log line only states that it is part of every answer host. */
@@ -252,14 +596,9 @@ static void AnswerHostStart(NSDictionary *host){
   });
   if(claimStatus!=NOTIFY_STATUS_OK)Log([NSString stringWithFormat:@"owner-claim observer registration failed for %@ (status=%u)",claimName,claimStatus]);
  }
- /* 1.17.0 TASK 1: 观察其它宿主的「真的点击了接听按钮」通知。这是低优先级宿主在结算窗口后让出的
-    依据，也是「绝不双重点击」的机制。注册失败就直说：那样就无法据此让出，日志里会写明。 */
- for(NSString *tapName in AACButtonTapNames()){
-  int tapToken=0;uint32_t tapStatus=notify_register_dispatch(tapName.UTF8String,&tapToken,dispatch_get_main_queue(),^(int t){
-   for(NSString *tagName in @[@"incall",@"springboard"])if([AACButtonTapName(tagName) isEqualToString:tapName]){AACButtonNotePeerTap(tagName);AACSBButtonPeerTapArrived(tagName);return;}
-  });
-  if(tapStatus!=NOTIFY_STATUS_OK)Log([NSString stringWithFormat:@"buttontap 观察注册失败：%@（status=%u）：本宿主无法据此让出，可能与其他宿主双重点击（已在日志写明）",tapName,tapStatus]);
- }
+ /* UUID-specific buttontap registrations are managed per active call by AACWatchPeerTaps.
+    The former fixed-name registration is intentionally removed to prevent stale peer events
+    from suppressing a different call. */
  /* 1.17.0 TASK 1/TASK 2: 按钮路径是主策略。 */
  Log([NSString stringWithFormat:@"接听主策略（1.17.0）＝活体按钮发现＋模拟点击：%@；信号优先级 accessibilityIdentifier(%@) > accessibilityLabel(%@) > accessibilityValue(%@) > 标题(%@) > 本地化子串(%@) > 绿色左侧主按钮(%@)；黑名单作用于标识/标签/值/标题，红色主导控件一并列入，黑名单候选绝不点击",AACButtonRuleText(),AACButtonSignalText(AACButtonSignalAccessibilityIdentifier),AACButtonSignalText(AACButtonSignalAccessibilityLabel),AACButtonSignalText(AACButtonSignalAccessibilityValue),AACButtonSignalText(AACButtonSignalTitle),AACButtonSignalText(AACButtonSignalLocalization),AACButtonSignalText(AACButtonSignalGreenPrimary)]);
  int pingToken=0;uint32_t pingStatus=notify_register_dispatch("com.autoanswer.call.ping",&pingToken,dispatch_get_main_queue(),^(int t){Log([NSString stringWithFormat:@"Legacy Darwin ping observed in %@; answering on %@",display,pong]);uint32_t posted=notify_post(pong.UTF8String);if(posted!=NOTIFY_STATUS_OK)Log([NSString stringWithFormat:@"pong post failed status=%u",posted]);});
@@ -269,6 +608,9 @@ static void AnswerHostStart(NSDictionary *host){
     instead of a second, weaker copy. takeover=YES only when the observer branch decided to
     take over after an idle higher-priority owner. */
  void (^PerformAnswer)(NSUUID *,NSMutableDictionary *,BOOL) = ^(NSUUID *uuid,NSMutableDictionary *state,BOOL takeover){
+  if(AACSystemAnswerTestActive(Prefs())){
+   Log(@"SYSTEM_ANSWER_TEST blocked plugin answer submission after mode change");return;
+  }
   if(!AACSBClaimAnswerUUID(uuid.UUIDString)){
    Record(uuid,state,@"已拒绝重复提交：该通话 UUID 已由本宿主提交过接听",@{@"duplicate":@YES});
    Log([NSString stringWithFormat:@"duplicate answer submission refused for %@ (同一 UUID 只提交一次)",uuid.UUIDString]);
@@ -329,10 +671,14 @@ static void AnswerHostStart(NSDictionary *host){
     if(!liveCall){Log(@"button tap dropped: the call UUID is no longer observed");return;}
     if(liveCall.hasConnected){Log(@"button tap not needed: a connection was already observed");return;}
     if(liveCall.hasEnded){Log(@"button tap dropped: the call already ended");return;}
+    if(!Allowed(liveCall,Prefs())){
+     Log(@"button tap cancelled: current preferences or exclusion rule no longer permits answering");
+     Record(uuid,state,@"取消按钮尝试：设置或排除规则已变化",nil);return;
+    }
     NSString *buttonWhy=nil;
     NSString *mechanism=AACButtonTryTap(uuid.UUIDString,tag,higherPriorityTags,&buttonWhy);
     if(mechanism){
-     state[@"buttonTapped"]=@YES;state[@"buttonMechanism"]=mechanism;state[@"submitted"]=@YES;
+     state[@"buttonTapped"]=@YES;state[@"buttonMechanism"]=mechanism;state[@"submitted"]=@YES;state[@"buttonEventAt"]=NSDate.date;
      Record(uuid,state,@"已用活体按钮发现 + 模拟点击接听（尚未确认接通）",@{@"submitted":@YES,@"button":@YES});
      Log([NSString stringWithFormat:@"button path invoked; host=%@ mechanism=%@ detail=%@",display,mechanism,buttonWhy?:@""]);
      Log(@"this call is NOT yet confirmed: success is only reported when CXCallObserver reports hasConnected");
@@ -402,8 +748,25 @@ static void AnswerHostStart(NSDictionary *host){
   }
   PerformAnswer(uuid,state,NO);
  };
- AACSBStart(env);
- Log([NSString stringWithFormat:@"%@ discovery/ownership summary: %@",display,AACSBHostRoleText()]);
+ /* System auto-answer is proven to work on this iOS 17.3 device. Do not install
+    speculative legacy call-answer hooks; CallAssist already owns parts of TelephonyUI.
+    Keep call observation, process probes and cross-process reporting without hooking. */
+ SubmitBlock=nil;
+ Log(@"SYSTEM_COMPANION passive-only: legacy answer discovery/hooks DISABLED, iOS owns answering; only post-connection local playback and verified stop UI run");
+ AACHostReportEnablePeriodic(tag,^NSString *{
+  return [NSString stringWithFormat:@"host=%@ pid=%d role=SYSTEM-COMPANION answerHooks=0 answerSubmissions=0 uiStopHost=%d %@",
+    display,getpid(),[ProcessTag isEqualToString:@"incall"],
+    [ProcessTag isEqualToString:@"incall"]?AACStopOverlayReportSummary():@"ui=not-owner"];
+ });
+ AACChunkMsgStart(tag,^NSString *{
+  return [NSString stringWithFormat:@"host=%@ pid=%d role=SYSTEM-COMPANION action=observe-call-and-verify-native-Add; legacy-answer-hooks=disabled; %@",
+     display,getpid(),[ProcessTag isEqualToString:@"incall"]?AACStopOverlayReportSummary():@"ui=not-owner"];
+ });
+ if([ProcessTag isEqualToString:@"incall"]){
+  Log(@"MANUAL_HANDOFF call-screen host reached; if Settings sees no new incall log, injection/filter/runtime is the blocker");
+  AACStopOverlayStart(Observer,^(NSString *message){Log(message);});
+ }
+ Log([NSString stringWithFormat:@"%@ call-observer ready: SYSTEM-COMPANION; native Add is covered only for verified connected call and positive Add match",display]);
  Log(@"Initial observer snapshot processed with a fresh full delay from the observation instant, not from the real ringing start");
  for(CXCall *call in Observer.calls.copy){if(!call.hasEnded&&!call.hasConnected&&!call.outgoing){Log([NSString stringWithFormat:@"%@ snapshot incoming call scheduled from observation instant",display]);Changed(call);}}
 }
@@ -429,6 +792,9 @@ static void AnswerHostStart(NSDictionary *host){
  else if(inPhoneProcess)ProcessTag=@"mobilephone";
  else ProcessTag=[@"other-" stringByAppendingString:(bundle.length?bundle:process)];
  NSLog(@"[AutoAnswerCall] dylib constructor reached; bundle=%@ process=%@ tag=%@ answerHost=%@",bundle,process,ProcessTag,inAnswerHostProcess?answerHost[@"tag"]:@"none");
+ /* Synchronous startup evidence: a blocked main queue can prevent the previous delayed
+    start marker. If this line never appears in InCallService, view code was NOT injected. */
+ AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"CALLUI_BOOT 1.18.1 constructor pid=%d bundle=%@ executable=%@ tag=%@; before-main-queue",getpid(),bundle,process,ProcessTag]);
  if(!inAnswerHostProcess&&!inPhoneProcess){
   /* The filter is supposed to scope injection to the four configured ids; anything else
      is reported as evidence instead of guessing which module should run. */
@@ -436,7 +802,7 @@ static void AnswerHostStart(NSDictionary *host){
   return;
  }
  dispatch_async(dispatch_get_main_queue(),^{
-  AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"Loaded 1.17.0 EVIDENCE build; bundle=%@ process=%@ tag=%@",bundle,process,ProcessTag]);
+  AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"Loaded 1.18.1 EVIDENCE build; bundle=%@ process=%@ tag=%@",bundle,process,ProcessTag]);
   AACProbeStart(ProcessTag);
   if(inAnswerHostProcess){
    AACSharedAppend(ProcessTag,[NSString stringWithFormat:@"%@ answer host 1.17.0: runtime discovery + MSHookMessageEx hook + NSInvocation candidate answer path shared with SpringBoard (names discovered at runtime, never hardcoded; only ACTION methods count as answer paths, property ACCESSORS are evidence only; log-only when no ACTION path exists; every candidate method, its ACTION/ACCESSOR/FORBIDDEN/UNSUPPORTED classification and its outcome are written to the discovery file and published through the shared host-report domain)",answerHost[@"display"]]);
@@ -445,8 +811,14 @@ static void AnswerHostStart(NSDictionary *host){
    return;
   }
   if(inPhoneProcess){
+  AACSharedAppend(ProcessTag,@"MobilePhone process was injected NOW; probe silence while Settings is open does not prove absence, and MobilePhone is not the iOS 17 call-screen owner");
   Records=AACReadRecords(NULL,NULL);States=[NSMutableDictionary new];Controller=[CXCallController new];Observer=[CXCallObserver new];RetainedDelegate=[AACDelegate new];[Observer setDelegate:RetainedDelegate queue:dispatch_get_main_queue()];
-  Log(@"Loaded 1.17.0 evidence build; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed (this module is unchanged from 1.10.0)");
+ NSDictionary *startup=AACBridgeRead();
+ NSDictionary *effective=Prefs();
+ NSString *audio=effective[@"AudioPath"];
+ Log([NSString stringWithFormat:@"CONFIG_DIAG host=%@ bridge=%@ prefsValid=%d enabled=%@ mode=%@ delay=%@ playLocal=%@ systemPlaybackTest=%@ audioPath=%@ audioReadable=%d; if bridge absent Settings must re-open and synchronize",ProcessTag,startup?@"readable":@"missing/unreadable",ConfigValid,effective[@"Enabled"]?:@"missing",effective[@"Mode"]?:@"missing",effective[@"Delay"]?:@"missing",effective[@"PlayAudio"]?:@"missing",effective[@"SystemAnswerPlaybackTest"]?:@"missing",[audio isKindOfClass:NSString.class]?audio:@"(none)",[[NSFileManager defaultManager] isReadableFileAtPath:([audio isKindOfClass:NSString.class]?audio:@"")]]);
+
+  Log(@"Loaded 1.18.1 evidence build; retained CXCallObserver in MobilePhone; suspension/lockscreen delivery not guaranteed (this module is unchanged from 1.10.0)");
   /* 1.16.0 TASK 1: 电话模块也通过分片消息通道上报自己的真实读数（结论仍是 1.10.0 行为不变）。 */
   AACChunkMsgStart(@"mobilephone",^NSString *{
    NSDictionary *actual=Prefs();

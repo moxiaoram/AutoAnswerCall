@@ -6,11 +6,20 @@
 #import <notify.h>
 #import "../AACPolicy.h"
 #import "AACSystemControl.h"
+#import "../AACConfigBridge.h"
 static NSString * const Domain=@"com.autoanswer.call";
 static NSUInteger const Limit=5*1024*1024;
 static NSString *LocalDir(NSError **e){NSURL *u=[[NSFileManager defaultManager] URLForDirectory:NSApplicationSupportDirectory inDomain:NSUserDomainMask appropriateForURL:nil create:YES error:e]; if(!u)return nil;NSString *p=[u.path stringByAppendingPathComponent:@"AutoAnswerCall"];return [[NSFileManager defaultManager] createDirectoryAtPath:p withIntermediateDirectories:YES attributes:nil error:e]?p:nil;}
 static NSUserDefaults *Defaults(void){return [[NSUserDefaults alloc] initWithSuiteName:Domain];}
 static NSString *ErrorText(NSError *e,NSString *fallback){return e?[NSString stringWithFormat:@"%@ (%@/%ld)",e.localizedDescription?:fallback,e.domain,(long)e.code]:fallback;}
+static NSString *AACBridgePublishSettings(void){
+ NSUserDefaults *d=Defaults();NSMutableDictionary *values=[NSMutableDictionary new];
+ for(NSString *key in @[@"Enabled",@"Mode",@"Delay",@"Whitelist",@"PlayAudio",@"SystemAnswerPlaybackTest",@"UplinkPCMProbe",@"AudioPath",@"AudioName",@"SelectedAudioID"]){
+  id v=[d objectForKey:key];if(v)values[key]=v;
+ }
+ NSString *error=nil;return AACBridgePublish(values,&error)?nil:(error?:@"未知共享配置错误");
+}
+
 #import "AACAudioLibrary.h"
 #import "AACRecordsController.h"
 #import "AACLogViewerController.h"
@@ -39,8 +48,16 @@ static NSString *ErrorText(NSError *e,NSString *fallback){return e?[NSString str
 - (void)viewDidLoad{[super viewDidLoad];
  /* ConfigVersion is the phone side fail-closed marker: it must exist before
     automatic answering is allowed at all. */
- NSUserDefaults *vd=Defaults();if(![vd objectForKey:@"ConfigVersion"]){[vd setObject:@1 forKey:@"ConfigVersion"];[vd synchronize];}
-AACAudioLibrary *library=AACAudioLibrary.shared;if(library.failure)[self log:library.failure];[self log:@"设置模块已加载 1.17.0（接听主策略＝活体按钮发现＋模拟点击（层级遍历 ≤6000 节点/深度 ≤40/1.5 秒预算，信号优先级 accessibilityIdentifier>Label>Value>标题>本地化子串>绿色左侧主按钮弱信号，点击机制 1) sendActionsForControlEvents:UIControlEventTouchUpInside 2) 追加 UIControlEventTouchDown 3) allTargets/actionsForTarget+NSInvocation；拒绝/挂断关键字与红色主导控件一律黑名单不点；每个通话 UUID 每个宿主只点一次，1.2 秒结算窗口内看到更高优先级宿主的 buttontap 通知就让出）+ 方法名关键字发现保留但已知不足（真正的接听按钮方法名不含 answer/accept，1.16.0 分片回读证明三宿主全部 answerPaths=0）+ 双宿主运行时发现 + 候选分类 ACTION/ACCESSOR/FORBIDDEN/UNSUPPORTED（只有 ACTION 计入 answerPaths）+ 接听归属只认明确归属声明 + 有界接管 + 宿主跨进程上报域 + 跨进程分片消息（Darwin 名内载荷 + 固定名字状态槽，名内最多 12 片/每片 900 字符/总解码 12288 字节，状态槽 96×6=576 字节，16 位代次 + 长度 + CRC32，每 tag 环形缓冲 8 条；另有按需上报 com.autoanswer.call.msgrequest.<tag>）+ 全部运行日志分享版）；不代表任何宿主模块已加载"];NSDictionary *sharedChosen=AACSharedResolve(@"settings",NO);[self log:[NSString stringWithFormat:@"共享日志路径：%@（%@）；无候选可写时回退 CFPreferences，跨进程可见性不保证",sharedChosen[@"path"]?:@"没有可写候选",sharedChosen[@"label"]?:@"无"]];[self log:[NSString stringWithFormat:@"宿主跨进程上报域=%@；真实 plist 路径=%@；本进程此刻读到的条目：%@（读不到不代表该宿主未注入；跨进程可见性未验证）",AACHostReportDomain,[AACHostReportPlistPaths() componentsJoinedByString:@" | "],[[AACHostReportEntries() valueForKey:@"label"] componentsJoinedByString:@"；"]]]; __weak typeof(self) w=self;int token=0;uint32_t status=notify_register_dispatch("com.autoanswer.call.pong",&token,dispatch_get_main_queue(),^(int t){w.pong=NSDate.date;[w log:@"收到 MobilePhone Darwin pong；仅证明当时存活，不证明接听能力；本机证据显示电话进程从未应答，接听宿主为 InCallService（优先）/SpringBoard"];});if(status==NOTIFY_STATUS_OK){self.pongToken=token;self.observing=YES;}else [self log:[NSString stringWithFormat:@"pong registration failed %u",status]];}
+ NSUserDefaults *vd=Defaults();
+ if(![vd objectForKey:@"Enabled"])[vd setBool:YES forKey:@"Enabled"];
+ if(![vd objectForKey:@"Mode"])[vd setInteger:2 forKey:@"Mode"];
+ if(![vd objectForKey:@"Delay"])[vd setDouble:0.5 forKey:@"Delay"];
+ if(![vd objectForKey:@"Whitelist"])[vd setObject:@"" forKey:@"Whitelist"];
+ if(![vd objectForKey:@"PlayAudio"])[vd setBool:NO forKey:@"PlayAudio"];
+ /* 1.18.1: SystemAnswerPlaybackTest is a legacy key; PlayAudio is the only playback switch. */
+ [vd setObject:@2 forKey:@"ConfigVersion"];
+ [vd synchronize];
+AACAudioLibrary *library=AACAudioLibrary.shared;if(library.failure)[self log:library.failure];NSString *bridgeError=AACBridgePublishSettings();[self log:bridgeError?[NSString stringWithFormat:@"共享配置未建立: %@",bridgeError]:[NSString stringWithFormat:@"共享配置写入并回读: %@",AACBridgeConfigPath()]];[self log:@"设置模块已加载 1.18.1：系统负责自动接听；插件仅观察接通、本机播放与通话界面人工接管。播放不等于通话上行发送。请从宿主诊断确认 InCallService 界面代码确已运行。"];NSDictionary *sharedChosen=AACSharedResolve(@"settings",NO);[self log:[NSString stringWithFormat:@"共享日志路径：%@（%@）；无候选可写时回退 CFPreferences，跨进程可见性不保证",sharedChosen[@"path"]?:@"没有可写候选",sharedChosen[@"label"]?:@"无"]];[self log:[NSString stringWithFormat:@"宿主跨进程上报域=%@；真实 plist 路径=%@；本进程此刻读到的条目：%@（读不到不代表该宿主未注入；跨进程可见性未验证）",AACHostReportDomain,[AACHostReportPlistPaths() componentsJoinedByString:@" | "],[[AACHostReportEntries() valueForKey:@"label"] componentsJoinedByString:@"；"]]]; __weak typeof(self) w=self;int token=0;uint32_t status=notify_register_dispatch("com.autoanswer.call.pong",&token,dispatch_get_main_queue(),^(int t){w.pong=NSDate.date;[w log:@"收到 MobilePhone Darwin pong；仅证明当时存活，不证明接听能力；本机证据显示电话进程从未应答，接听宿主为 InCallService（优先）/SpringBoard"];});if(status==NOTIFY_STATUS_OK){self.pongToken=token;self.observing=YES;}else [self log:[NSString stringWithFormat:@"pong registration failed %u",status]];}
 - (void)dealloc{if(_observing)notify_cancel(_pongToken);}
 - (void)pickAudio:(PSSpecifier *)s{if(self.importing)return;AACAudioLibrary *lib=AACAudioLibrary.shared;if(lib.failure){[self alert:@"音频库不可写" message:lib.failure];return;}UIDocumentPickerViewController *p=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[[UTType typeWithIdentifier:@"public.audio"]] asCopy:YES];p.delegate=self;p.allowsMultipleSelection=YES;[self presentViewController:p animated:YES completion:nil];}
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller{[self log:@"音频导入已取消"];}
@@ -89,13 +106,25 @@ AACAudioLibrary *library=AACAudioLibrary.shared;if(library.failure)[self log:lib
  [self log:[NSString stringWithFormat:@"打开跨进程分片消息页：名字形状=%@；上限=%@；按需上报=%@",AACChunkMsgNameShapeText(),AACChunkMsgBoundText(),@"com.autoanswer.call.msgrequest.<tag>"]];
  [self.navigationController pushViewController:[[AACChunkMsgController alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
 }
-- (void)exportConfig:(PSSpecifier *)s{NSError *e=nil;NSString *dir=LocalDir(&e);NSString *path=[dir stringByAppendingPathComponent:@"configuration.plist"];NSMutableDictionary *config=[NSMutableDictionary new];NSUserDefaults *d=Defaults();for(NSString *k in @[@"Mode",@"Enabled",@"Delay",@"Whitelist",@"PlayAudio",@"AudioPath",@"AudioName",@"AudioSize",@"SelectedAudioID"]){id v=[d objectForKey:k];if(v)config[k]=v;}[config addEntriesFromDictionary:[self localMetadata]?:@{}];config[@"Version"]=@"1.17.0";if(!path||![config writeToURL:[NSURL fileURLWithPath:path] error:&e]){[self alert:@"导出失败" message:ErrorText(e,@"配置目标不可写")];return;}UIActivityViewController *a=[[UIActivityViewController alloc] initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];if(a.popoverPresentationController){a.popoverPresentationController.sourceView=self.view;a.popoverPresentationController.sourceRect=CGRectMake(self.view.bounds.size.width/2,self.view.bounds.size.height/2,1,1);}[self presentViewController:a animated:YES completion:nil];}
+- (void)exportConfig:(PSSpecifier *)s{NSError *e=nil;NSString *dir=LocalDir(&e);NSString *path=[dir stringByAppendingPathComponent:@"configuration.plist"];NSMutableDictionary *config=[NSMutableDictionary new];NSUserDefaults *d=Defaults();for(NSString *k in @[@"Mode",@"Enabled",@"Delay",@"Whitelist",@"PlayAudio",@"SystemAnswerPlaybackTest",@"UplinkPCMProbe",@"AudioPath",@"AudioName",@"AudioSize",@"SelectedAudioID"]){id v=[d objectForKey:k];if(v)config[k]=v;}[config addEntriesFromDictionary:[self localMetadata]?:@{}];config[@"Version"]=@"1.18.1";if(!path||![config writeToURL:[NSURL fileURLWithPath:path] error:&e]){[self alert:@"导出失败" message:ErrorText(e,@"配置目标不可写")];return;}UIActivityViewController *a=[[UIActivityViewController alloc] initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];if(a.popoverPresentationController){a.popoverPresentationController.sourceView=self.view;a.popoverPresentationController.sourceRect=CGRectMake(self.view.bounds.size.width/2,self.view.bounds.size.height/2,1,1);}[self presentViewController:a animated:YES completion:nil];}
 - (void)testAudio:(PSSpecifier *)s{
  NSURL *u=[self audioURL];NSError *e=nil;if(!u){[self alert:@"试听失败" message:@"未导入音频"];return;}
  self.player=[[AVAudioPlayer alloc] initWithContentsOfURL:u error:&e];
  if(!self.player||![self.player prepareToPlay]||![self.player play]){NSString *msg=ErrorText(e,@"播放器 prepare/play 返回 NO；文件可能不存在、格式不支持或音频路由不可用");[self log:[@"试听失败：" stringByAppendingString:msg]];[self alert:@"试听失败" message:msg];return;}[self log:@"设置模块本地试听开始；无通话上行注入，无电话模块运行证明"];
 }
 - (void)text:(NSString *)text title:(NSString *)title{UIViewController *c=[UIViewController new];UITextView *v=[[UITextView alloc] initWithFrame:CGRectZero];v.text=text;v.editable=NO;v.font=[UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightRegular];c.view=v;c.title=title;[self.navigationController pushViewController:c animated:YES];}
+- (id)readSharedValue:(PSSpecifier *)spec{
+ return [Defaults() objectForKey:[spec propertyForKey:@"key"]]?:[spec propertyForKey:@"default"];
+}
+- (void)setSharedValue:(id)value specifier:(PSSpecifier *)spec{
+ NSString *key=[spec propertyForKey:@"key"];
+ if(![@[@"Enabled",@"Mode",@"Whitelist",@"PlayAudio",@"SystemAnswerPlaybackTest",@"UplinkPCMProbe"] containsObject:key])return;
+ NSUserDefaults *d=Defaults();[d setObject:value forKey:key];[d setObject:@2 forKey:@"ConfigVersion"];
+ BOOL synced=[d synchronize];NSString *bridgeError=AACBridgePublishSettings();
+ [self log:[NSString stringWithFormat:@"设置修改 %@=%@ nativeSync=%d shared=%@",key,value,synced,bridgeError?:@"OK"]];
+ if([key isEqualToString:@"Enabled"])notify_post([value boolValue]?"com.autoanswer.call.resume":"com.autoanswer.call.stop");
+ if(!synced||bridgeError)[self alert:@"设置跨进程同步未确认" message:bridgeError?:@"设置域未能同步；自动接听可能因读不到配置而被禁用"];
+}
 - (id)readDelay:(PSSpecifier *)s{
  id v=[Defaults() objectForKey:@"Delay"];double seconds=v&&[v respondsToSelector:@selector(doubleValue)]?AACBoundDelay([v doubleValue]):0.5;
  return [NSDecimalNumber decimalNumberWithString:[@(seconds) stringValue]].stringValue;
@@ -106,18 +135,18 @@ AACAudioLibrary *library=AACAudioLibrary.shared;if(library.failure)[self log:lib
  /* ASCII decimal only: no units, exponent, NaN, Infinity, signs or partial parse. */
  double seconds=0;BOOL valid=AACParseDelay(text.UTF8String,&seconds);
  if(!valid){[self alert:@"秒数无效，未保存" message:@"请输入 0～60 的有限数字，可用小数点，例如 5 或 1.5。单位是秒；旧值保持不变。"];[self reloadSpecifiers];return;}
- NSUserDefaults *d=Defaults();[d setDouble:AACBoundDelay(seconds) forKey:@"Delay"];BOOL synced=[d synchronize];
+ NSUserDefaults *d=Defaults();[d setDouble:AACBoundDelay(seconds) forKey:@"Delay"];BOOL synced=[d synchronize];NSString *bridgeError=AACBridgePublishSettings();
  [self log:[NSString stringWithFormat:@"接听等待已设置为 %.15g 秒；配置同步=%d；仅从电话来电事件开始计时，不代表实测响铃时长",seconds,synced]];
- if(!synced)[self alert:@"秒数已写入本进程" message:@"配置同步失败，电话进程是否可见未确认。"];
+ if(!synced||bridgeError)[self alert:@"接听等待同步未确认" message:bridgeError?:@"设置同步失败"];
  [self reloadSpecifiers];
 }
 - (void)stopPlugin:(PSSpecifier *)s{
- NSUserDefaults *d=Defaults();[d setBool:NO forKey:@"Enabled"];BOOL synced=[d synchronize];BOOL off=![d boolForKey:@"Enabled"];
+ NSUserDefaults *d=Defaults();[d setBool:NO forKey:@"Enabled"];BOOL synced=[d synchronize];NSString *bridgeError=AACBridgePublishSettings();BOOL off=![d boolForKey:@"Enabled"];
  uint32_t posted=notify_post("com.autoanswer.call.stop");[self reloadSpecifiers];
- [self log:[NSString stringWithFormat:@"停止插件策略：本进程回读关闭=%d 同步=%d stop通知=%u；系统自动接听状态未知/未修改",off,synced,posted]];
+ [self log:[NSString stringWithFormat:@"停止插件策略：本进程回读关闭=%d 同步=%d 桥接=%@ stop通知=%u；系统自动接听状态未知/未修改",off,synced,bridgeError?:@"共享配置已写入",posted]];
  [self alert:off&&synced?@"插件策略配置已关闭":@"插件关闭配置未确认" message:@"仅关闭插件 Enabled，并通知电话模块取消尚未提交的等待；不撤回已提交的接听事务。未收到电话确认不能保证通知送达。iOS 系统自动接听状态：未知，未修改。若系统已开启，仍须手动关闭。"];
 }
-- (void)resumePlugin:(PSSpecifier *)s{NSUserDefaults *d=Defaults();[d setBool:YES forKey:@"Enabled"];[d setObject:@1 forKey:@"ConfigVersion"];BOOL synced=[d synchronize];BOOL on=[d boolForKey:@"Enabled"];notify_post("com.autoanswer.call.resume");[self log:synced&&on?@"已写入启用并发送恢复通知":@"启用写入未同步"];[self alert:synced&&on?@"插件策略已恢复":@"恢复未确认" message:@"已写入 Enabled=YES 并请求电话模块解除停止锁存。通知送达与跨进程可见性未经确认，系统独立自动接听开关不受影响。"];}
+- (void)resumePlugin:(PSSpecifier *)s{NSUserDefaults *d=Defaults();[d setBool:YES forKey:@"Enabled"];[d setObject:@1 forKey:@"ConfigVersion"];BOOL synced=[d synchronize];NSString *bridgeError=AACBridgePublishSettings();BOOL on=[d boolForKey:@"Enabled"];notify_post("com.autoanswer.call.resume");[self log:synced&&on&&!bridgeError?@"已写入启用并发送恢复通知":@"启用写入未同步"];[self alert:synced&&on&&!bridgeError?@"插件策略已恢复":@"恢复未确认" message:@"已写入 Enabled=YES 并请求电话模块解除停止锁存。通知送达与跨进程可见性未经确认，系统独立自动接听开关不受影响。"];}
 - (void)systemStatus:(PSSpecifier *)s{BOOL enabled=NO;NSString *e=nil;BOOL known=AACSystemRead(&enabled,&e);[self alert:@"iOS 系统自动接听状态" message:known?[NSString stringWithFormat:@"AXSettings 访问器当前回读：%@。与插件 Enabled 完全独立；未验证跨进程/实机接听行为。",enabled?@"开启":@"关闭"]:[NSString stringWithFormat:@"未知/不可用：%@。不能切换；请用原生页面。",e?:@"读取失败"]];}
 - (void)disableSystem:(PSSpecifier *)s{
  NSString *e=nil;BOOL before=NO;

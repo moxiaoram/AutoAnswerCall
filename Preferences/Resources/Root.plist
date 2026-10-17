@@ -7,10 +7,8 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>方案2需先关闭 iOS 自动接听；白名单是排除名单。号码不可得且名单非空时拒绝接听。公开 CXCall 不提供电话号码。方案1仅引导手动启用系统功能，不发送插件事务。</string>
 			<key>label</key>
-			<string>接听模式</string>
+			<string>接通后播放规则</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -24,17 +22,21 @@
 			<key>key</key>
 			<string>Mode</string>
 			<key>label</key>
-			<string>接听模式</string>
+			<string>接通后播放规则</string>
 			<key>validTitles</key>
 			<array>
-				<string>方案1：系统备选（全来电）</string>
-				<string>方案2：插件排除白名单（默认）</string>
+				<string>方案1：全部来电播放</string>
+				<string>方案2：排除名单以外的来电播放</string>
 			</array>
 			<key>validValues</key>
 			<array>
 				<integer>1</integer>
 				<integer>2</integer>
 			</array>
+			<key>get</key>
+			<string>readSharedValue:</string>
+			<key>set</key>
+			<string>setSharedValue:specifier:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -47,8 +49,10 @@
 			<string>Enabled</string>
 			<key>label</key>
 			<string>启用插件策略</string>
-			<key>subtitle</key>
-			<string>两种模式均读取；不控制 iOS 独立总开关</string>
+			<key>get</key>
+			<string>readSharedValue:</string>
+			<key>set</key>
+			<string>setSharedValue:specifier:</string>
 		</dict>
 		<dict>
 			<key>action</key>
@@ -69,10 +73,8 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>从电话模块收到首个符合条件的来电事件开始，等待下方 N 秒，再重新检查 Enabled、模式、通话状态和排除名单后请求接听。不是从实测铃声开始计时；观察器状态未知或无事件时不调度，不能推断此前已经响铃多久。没有 pong 不代表已验证接听。秒数仅控制方案2，不控制系统自动接听。</string>
 			<key>label</key>
-			<string>来电等待 N 秒后请求接听</string>
+			<string>旧接听方式的等待时间</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -102,17 +104,19 @@
 			<key>key</key>
 			<string>Whitelist</string>
 			<key>label</key>
-			<string>不自动接听白名单</string>
+			<string>排除播放号码（系统接听不受影响）</string>
 			<key>placeholder</key>
 			<string>完整号码，逗号分隔；不支持片段或通配符</string>
+			<key>get</key>
+			<string>readSharedValue:</string>
+			<key>set</key>
+			<string>setSharedValue:specifier:</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>可多选导入，每个文件最多5MB，追加不覆盖。音频库中点行选择，ⓘ 可试听/停止/逐项删除；只发布所选音频。旧单曲自动登记，原文件不搬移。音频仍位于设置沙盒，不保证电话进程可读，不是上行注入。</string>
 			<key>label</key>
-			<string>接听后音频</string>
+			<string>系统接通后本机音频</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -124,7 +128,27 @@
 			<key>key</key>
 			<string>PlayAudio</string>
 			<key>label</key>
-			<string>本地播放意愿（连接归因不明时禁播）</string>
+			<string>系统接听后播放本机音频（含停止按钮）</string>
+			<key>get</key>
+			<string>readSharedValue:</string>
+			<key>set</key>
+			<string>setSharedValue:specifier:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.autoanswer.call</string>
+			<key>key</key>
+			<string>UplinkPCMProbe</string>
+			<key>label</key>
+			<string>上行PCM解码验证（不外放、不发送）</string>
+			<key>get</key>
+			<string>readSharedValue:</string>
+			<key>set</key>
+			<string>setSharedValue:specifier:</string>
 		</dict>
 		<dict>
 			<key>action</key>
@@ -153,8 +177,6 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>系统状态必须单独读取，不能从插件开关推断。关闭按钮仅在 AXSettings 已核实签名且运行时 ABI 校验通过时调用原生 setter 并回读；不可用时明确报错，不写猜测偏好键。深链是否直达页面未在 iOS17.3 实机验证。手动路径：设置 → 辅助功能 → 触控 → 通话音频路由 → 自动接听通话。</string>
 			<key>label</key>
 			<string>iOS 原生自动接听（独立于插件）</string>
 		</dict>
@@ -201,12 +223,8 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>1.17.0：（新）接听主策略改为「活体按钮发现 + 模拟点击」。1.16.0 的分片回读证明：三个宿主全部注入，但三个宿主全部自报 role=LOG-ONLY、answerPaths=0（incall「0 个 ACTION（其中已挂钩 0、NSInvocation 候选 0），8 个 ACCESSOR 挂钩（仅证据）」，springboard 同形；mobilephone keys=0，fail-closed），状态槽通道可用（校验=通过，incall 88 槽 / 525 字节），而名内分片通道因 Darwin 通知不支持通配而收不到。结论：以「类名 + 选择器关键字」为唯一策略的方法名发现，在任何宿主里都找不到真正的接听动作，而且这是结构性的——真正的接听是一个 UI 按钮，它的响应走 UIControl 的 action 机制（sendActionsForControlEvents:），方法名里永远不会出现 answer/accept，关键字匹配在原理上就不可能命中它。因此 1.17.0：来电期间在每个拥有来电 UI 的宿主里遍历活体层级（窗口场景 → 已呈现/子视图控制器 → 子视图 → 响应者链，≤6000 节点、深度 ≤40、1.5 秒预算），按信号优先级收集候选 UIControl（accessibilityIdentifier &gt; accessibilityLabel &gt; accessibilityValue &gt; titleLabel.text/currentTitle &gt; 已知本地化子串 &gt; 「绿色主导且靠左的主按钮」弱信号），记录每一个候选的类名/标识/标签/标题/frame/颜色/命中信号；延迟到期后按 1) sendActionsForControlEvents:UIControlEventTouchUpInside 2) 追加 UIControlEventTouchDown 3) allTargets + actionsForTarget:forControlEvent: 经 NSInvocation 的顺序真正点击；拒绝/挂断关键字（decline/reject/hangup/end call/拒接/挂断/结束…）同时作用于标识/标签/值/标题，红色主导的控件一并列入黑名单，黑名单候选只记录绝不点击；每个通话 UUID 只点击一次，低优先级宿主在 1.2 秒结算窗口后若看到更高优先级宿主的 buttontap 通知就让出，绝不双重点击。方法名关键字发现（ACTION/ACCESSOR 分类）保留，但已知不足、不再是主策略。本版本未在设备上安装或验证，不能说明自动接听可用。
-
-1.15.0：（新）候选分类 ACTION / ACCESSOR / FORBIDDEN / UNSUPPORTED。设备证据（用户真实 1.14.0 SpringBoard 共享日志）：14:19:05 discovery: matchedClasses=150 hookedMethods=4 invokable=5 rejected=0 role=OWNER，但这 4 个 HOOKED 全是属性访问器而不是接听动作：-[INAnswerCallIntentResponse answeredCall]（0args+object）、-[_INPBAnswerCallIntentResponse hasAnsweredCall]（0args+BOOL）、-[_INPBAnswerCallIntentResponse answeredCall]（0args+object）、-[TPInComingCallUISnapshotViewController acceptButton]（0args+object）；5 个 INVOKABLE 候选也都是 setter/无关方法：-[CXCallControllerHost listener:shouldAcceptNewConnection:]、-[INAnswerCallIntentResponse setAnsweredCall:]、-[_INPBAnswerCallIntentResponse setAnsweredCall:]、-[TUCallNotificationManager answeringMachineStreamTokenChangedForCall:]、-[TPInComingCallUISnapshotViewController setAcceptButton:]。14:20:03 检测到真实来电（UUID A8059645-…），14:20:04 宿主因 InCallService 广播归属声明而自我降级，14:20:21 接管路径 submitted=yes，紧接着 hierarchy re-scan for the incoming-call UI object: windows=21 visited=1771 found=0 与 LOG-ONLY primary path in SpringBoard: no captured/rescanned UI object could answer；次要公开事务失败于 CallKit error 1 = unentitled（Apple：app lacks entitlement；tweak 不是 CallKit provider），14:20:27 通话未接听结束。结论：SpringBoard 没有真正的接听动作，挂钩类的实例在通话期间根本不存在（快照视图控制器不是真正的来电 UI）；InCallService 确实运行了插件并声称归属，但它的发现/日志文件在自己的容器里，设置进程看不到。因此 1.15.0：只有 ACTION（命中 handle*answer、didtap*answer、perform*answer、answer*call*action、invoke*answer、pickup、pick up、acceptcall、tapanswer 这些真实动作模式）才算接听路径；属性访问器（set&lt;Name&gt;: 或镜像 setter 的 has&lt;Name&gt;/is&lt;Name&gt;/&lt;Name&gt;）只作证据挂钩，绝不增加 answerPaths、绝不登记为 NSInvocation 候选、绝不被接听步骤当作目标；发现过滤器新增真实来电 UI 类族（TPInComingCallUI*、PHInCallUI*、ICSInCall*、CallBanner*、CallViewController*、InCall*ViewController）；只有访问器的宿主一律 role=LOG-ONLY（不再是 OWNER），接管逻辑对它直接跳过，InCallService 仍是优先宿主。1.15.0 同时新增宿主跨进程上报（TASK 1）：每个宿主在发现后与每 20 秒把「发现摘要 + 最近日志行」写入自有 CFPreferences 域 com.autoanswer.call.hostreport（每宿主键 Host.&lt;tag&gt;.summary / .log / .updated / .pid / .role / .answerPaths / .actionMethods / .accessorMethods / .classification / .display，每宿主载荷上限 6000 字符，超出即截断并写入标记 …&lt;truncated&gt;），设置页在「共享日志查看器」、进程探测页与运行日志导出里读回该域，显示真实 plist 路径（/var/mobile/Library/Preferences/com.autoanswer.call.hostreport.plist）与本进程实际读到的键数；原有按文件的多候选路径通道完全保留。不声称跨进程可见性：读不到就写读不到，并明确「读不到 ≠ 该宿主未注入」。历史（1.14.0）：修正接听归属判定（探测量达到不再让出接听）。设备证据（用户真实 SpringBoard 共享日志）：1.13.0 在 14:03:05 报 matchedClasses=150 hookedMethods=4 invokable=5 rejected=0 role=OWNER，14:05:08 真实来电被检测到并正确排定 6 秒延时，但 14:05:09 该宿主把自己改成 OBSERVER，理由是「incall 的探测通知在 90 秒内到达过本进程（存活证据）」，并写出 observer only, answer owned by incall；结果接听始终没有发生，InCallService 也没有提交，14:05:30 记录 Answer request observation timeout，14:05:36 通话结束。根因是让出接听看的是「对端探测通知的存在」，而探测只能证明对端进程存在，不能证明它发现了接听路径、广播了归属或会提交。1.14.0 起只有「明确归属声明」（com.autoanswer.call.owner.&lt;tag&gt;，落在 90 秒有界窗口内，且声明方优先级更高）才能拿走接听；探测量达到永不触发让出，只作为存在证据写进原因字符串。自己发现了接听路径且没有任何更高优先级归属声明的宿主保持 OWNER，并在延时结束时真的提交，提交前再判定一次并写出「接听归属判定 … owner=… why=… submitted=…」行；若更高优先级宿主广播了归属却在额外 12 秒内既没有提交也没有出现连接，本宿主可对同一通话 UUID 接管一次（takeover after idle higher-priority owner），每个 UUID 最多一次，且仍走同一套单次提交判定。1.14.0 采集证据、支持双宿主并放开了挂钩 ABI 门槛：注入范围现为 com.apple.mobilephone、com.apple.springboard、com.apple.InCallService、com.apple.incallservice 四个标识（手机号标识只允许小写 com.apple.mobilephone；两个 InCall 拼写仅覆盖大小写差异，重复或不存在的标识无害）。每个已加载模块在载入时及每约 20 秒发送一条按进程区分的 Darwin 通知（com.autoanswer.call.probe.&lt;进程&gt;）；每个接听宿主另有自己的 pong 名与自己的运行时发现文件（aac-incall.discovery.txt / aac-springboard.discovery.txt），设置页逐宿主标注来源与路径。接听只由一个宿主提交：角色表 InCallService(2) &gt; SpringBoard(1) &gt; 仅日志(0)，其余宿主只观察记录。共享日志会按顺序尝试多个绝对候选路径并记录命中哪一个；跨进程可写/可读并未验证，失败时回退到自有 CFPreferences 域且不声称可见。1.13.0 的挂钩门槛从「零参数且返回 void」放宽为「零参数且返回类型可安全直通（void/BOOL/对象/整数/浮点），改用 MSHookMessageEx（ElleKit/substrate 兼容层，dlsym 解析，不可用时回退 method_setImplementation）」，有显式参数的方法不挂钩而是在活实例上用 NSInvocation 传默认参数调用；每个候选方法在发现文件里都写明 HOOKED / INVOKABLE_BY_INVOCATION / CAPTURED / INVOKED_BY_INVOCATION / SKIPPED(原因)。本版本未在设备上安装或验证，不能说明自动接听可用。</string>
 			<key>label</key>
-			<string>证据采集（1.17.0）</string>
+			<string>诊断与运行日志</string>
 		</dict>
 		<dict>
 			<key>action</key>
@@ -243,16 +261,12 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>1.17.0 TASK 1/TASK 2：按钮路径是主策略，方法名关键字发现保留但已知不足。发现时机：来电被观测到时（phase=call）与延迟到期准备点击时（phase=tap）各做一次现场扫描，另外进程启动 8 秒后做一次基线扫描（基线扫描绝不算作接听路径）。遍历范围与上限：UIApplication.connectedScenes 里的每个 UIWindowScene 的窗口 → 响应者链（最多上溯 12 层）→ 根视图控制器（含 presentedViewController 与 childViewControllers）→ 视图树；节点上限 6000、深度上限 40、时间预算 1.5 秒、候选上限 32，超限安全停止并在报告里写明 budgetExceeded。信号优先级：accessibilityIdentifier 含 accept|answer|acceptcall|接听|应答|answer_call &gt; accessibilityLabel &gt; accessibilityValue &gt; 按钮标题（titleLabel.text / currentTitle）&gt; 已知本地化子串 &gt; 绿色主导（backgroundColor 或 backgroundImage 的平均色）且是同父控件里靠左的主按钮（同父至少两个 UIControl）的弱信号。安全黑名单：decline/reject/hangup/hang up/end call/disconnect/dismiss/ignore/voicemail/拒接/拒绝/挂断/结束… 命中 accessibilityIdentifier、accessibilityLabel、accessibilityValue 或按钮标题的候选一律不点；颜色为红色主导（r 通道比其它通道高出 0.18）的控件同样列入黑名单。可点击闸门：必须 enabled、userInteractionEnabled、非隐藏、alpha&gt;0.01 且有 window。点击机制按顺序尝试三种并在日志里写明实际用了哪一种：(1) sendActionsForControlEvents:UIControlEventTouchUpInside；(2) 该事件没有任何 target/action 时改用 UIControlEventTouchUpInside|UIControlEventTouchDown；(3) 仍无 target/action 可用时，用 allTargets + actionsForTarget:forControlEvent: 取到 target/action 对并用 NSInvocation 以默认参数（对象/指针=nil、标量=0，最多 3 个显式参数，参数类型必须能安全构造）调用。单次点击：每个通话 UUID 每个宿主最多点击一次（AACButtonClaimTapUUID），并且低优先级宿主会在 1.2 秒结算窗口后检查更高优先级宿主的 buttontap 通知（com.autoanswer.call.buttontap.&lt;tag&gt;），看到过就让出，绝不双重点击。诚实报告：候选数量、每个候选的完整信号、所选控件、所用点击机制、以及随后是否真的被 CXCallObserver 报告 hasConnected，都会写进该宿主的发现文件（aac-&lt;tag&gt;.discovery.txt 的 BUTTON 候选分节）、共享日志，并通过 1.16.0 的分片/状态槽通道一起发布；「点击机制成功」只表示事件被发出，绝不等于已接通。本版本未在设备上安装或验证，不能说明自动接听可用。</string>
 			<key>label</key>
-			<string>接听按钮发现（1.17.0，主策略）</string>
+			<string>旧模式：按钮发现（仅诊断）</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>1.16.0 TASK 1/TASK 2：把每个宿主的发现摘要通过 Darwin 通知名本身分片发出去。名内载荷通道：com.autoanswer.call.msg.&lt;tag&gt;.&lt;seq&gt;.&lt;total&gt;.&lt;base64url分片&gt;（最多 12 片，每片最多 900 个 base64url 字符，通知名里没有 '/'、没有 NUL；总解码上限 12288 字节；另有顺序结构名 com.autoanswer.call.msg.&lt;tag&gt;.&lt;seq&gt;.&lt;total&gt; 与结束标记 com.autoanswer.call.msg.&lt;tag&gt;.end.&lt;total&gt;）。状态槽通道：固定名字 com.autoanswer.call.msg.&lt;tag&gt;.w.&lt;0..95&gt;（96 槽 × 6 字节 = 576 字节）加提交名 com.autoanswer.call.msg.&lt;tag&gt;.hdr，每条消息带 16 位代次 + 字节长度 + CRC32，接收方必须「代次一致 + 长度一致 + CRC32 一致」才算完整；每个 tag 只保留最近 8 条（环形缓冲，有界）。设置进程只注册能被枚举出来的固定名字（每 tag 结构名 78 个 + 结束标记 12 个），状态槽按需读回；名内载荷通道的片内容写在名字里，无法被预先注册（Darwin 通知不支持通配），所以该通道通常只能给出到达片数/总片数、结束标记、最近更新时间与完整性，解码字节为 0——这一限制在页面上直接写明，内容由状态槽通道给出。TASK 2：设置页可以 POST com.autoanswer.call.msgrequest.&lt;tag&gt; 让该宿主立刻重发一次（通话刚结束即可取数，不必等 20 秒周期）。原有文件通道、宿主跨进程上报域（com.autoanswer.call.hostreport）与探测通知全部保留、未削弱。两条新通道都未在设备上验证；读不到就写「未观察到」，绝不据此断言某宿主未注入，也绝不断言自动接听可用。</string>
 			<key>label</key>
 			<string>跨进程分片消息（1.16.0，Darwin 名内载荷）</string>
 		</dict>
@@ -267,8 +281,6 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>汇总同一批次：逐宿主的共享日志（aac-incall.log / aac-springboard.log / aac-mobilephone.log / aac-settings.log）、逐宿主的运行时发现文件（aac-incall.discovery.txt / aac-springboard.discovery.txt）、逐宿主运行清单、设置模块日志、接听记录导出文本、导出的配置 plist、CFPreferences 回退域内容与模块伴随探测记录。每一项都按真实文件系统读数写出存在/大小/可读，缺失的写明原因（候选目录不可用、该目录里没有此文件、另一进程的跨进程可见性未验证），绝不虚构条目；存在的文件复制到临时目录后一次性交给系统分享面板，随附一份报告文本。分享只包含本插件自有日志与自有偏好域内容，不含任何凭据，也不代表自动接听可用。</string>
 			<key>label</key>
 			<string>运行日志分享（1.13.0）</string>
 		</dict>
@@ -323,8 +335,6 @@
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>1.16.0：新增跨进程分片消息通道（Darwin 名内载荷 12 片 × 900 字符 / 总解码 12288 字节上限 + 固定名字状态槽 96 槽 × 6 字节、16 位代次 + 长度 + CRC32、每 tag 环形缓冲 8 条，按需上报 com.autoanswer.call.msgrequest.&lt;tag&gt;），原有文件通道 / 宿主上报域 / 探测通知全部保留。历史 1.15.0：候选分类 ACTION / ACCESSOR / FORBIDDEN / UNSUPPORTED，只有 ACTION 计入 answerPaths（访问器只作证据、不挂钩为接听路径、不作为接管目标），发现过滤器新增真实来电 UI 类族，只有访问器的宿主一律 role=LOG-ONLY；新增宿主跨进程上报域 com.autoanswer.call.hostreport（每宿主键 + 每宿主 6000 字符上限 + 截断标记），并在设置页读回真实 plist 路径与本进程实际读到的键数（不声称跨进程可见性）。历史（1.14.0）：修正接听归属判定（探测量达到不再让出接听，只有明确归属声明才会），保留 1.13.0 的放开挂钩 ABI 门槛与全部运行日志分享。设备证据（用户真实 SpringBoard 共享日志）：1.13.0 在 14:03:05 自报 matchedClasses=150 hookedMethods=4 invokable=5 rejected=0 role=OWNER（挂钩确实生效），14:05:08 检测到真实来电并排好 6 秒延时，14:05:09 却把自己降为 OBSERVER（理由：incall 的探测通知在 90 秒内到达过本进程（存活证据））并写出 observer only, answer owned by incall；接听没有发生，InCallService 也没有提交，14:05:30 Answer request observation timeout，14:05:36 通话结束。1.14.0 的规则：只有明确归属声明（com.autoanswer.call.owner.&lt;tag&gt;，90 秒有界窗口内，且声明方优先级更高）能让出接听；探测量达到只证明进程存在，永不触发让出，只写进原因字符串；只有发现了接听路径又没有遇到更高优先级归属声明的宿主保持 OWNER 并在延时结束时真的提交，提交前再次判定并写出「接听归属判定 … owner=… why=… submitted=…」行；更高优先级宿主广播归属后若在额外 12 秒内既无提交也无连接，本宿主可对同一 UUID 接管一次（takeover after idle higher-priority owner），每 UUID 最多一次且仍走单次提交判定，绝不出现同一 UUID 的两次提交。发现文件与日志最前面新增紧凑 HOOKED list 块（类+选择器+机制+NSInvocation 候选），摘要改为分块写出（总预算 6000 字符、每块低于共享日志单行 2000 字符上限），被挂钩的方法名不会再被截断隐藏。1.14.0 同时保留：放开后的挂钩 ABI 门槛与全部运行日志分享。挂钩不再是「零参数 void」这一条窄门：零参数且返回类型可安全直通的方法用 MSHookMessageEx 挂钩并原样直通，带参数的方法只登记为 NSInvocation 候选（活实例 + 默认参数调用，结果写入 INVOKED_BY_INVOCATION 行），每个候选的处置与原因都写在发现文件里。运行日志新增「分享全部运行日志」与「运行日志文件：逐项查看 / 分享」：把逐宿主共享日志、运行时发现文件、运行清单、设置日志、接听记录、配置 plist 与 CFPreferences 转储汇总成清单，逐项写出存在/缺失原因，存在的文件复制后一次性交给系统分享，缺失的绝不虚构。CallKit 错误含义已按 Apple 文档更正：com.apple.CallKit.error.requesttransaction code 1 = unentitled（本进程没有执行该事务的权利），不是 unknownCallUUID——requestTransaction 是请求通话提供者执行动作，CXAnswerCallAction 由 CallKit 提供者执行，因此公开事务路径对 tweak 进程无效，只保留一次带含义说明的诊断尝试。音频最大5MB且仍位于设置沙盒；本地试听不代表电话进程能读取，也不会注入通话上行。InCallService 与 SpringBoard 使用同一套运行时发现 + 动态挂钩逻辑：只有发现了可挂钩接听方法、且没有更高优先级接听宿主存活的那个宿主执行接听；其余宿主只观察记录，并明确写出 observer only, answer owned by &lt;宿主&gt;。设备证据（1.11.0，19:46:53 实测）：SpringBoard 的检测、延时与策略层工作正常，但它没有可挂钩的接听 UI，公开事务回退失败于 com.apple.CallKit.error.requesttransaction code 1 = unentitled（Apple 文档：The app doesn't have the entitlement to perform the actions in the requested transaction），因此公开事务路径在本设备上无效，只做一次带含义说明的诊断尝试。共享日志路径与进程探测结果均为本机实际读数，未在设备安装验证，不构成自动接听可用的证据。</string>
 		</dict>
 	</array>
 </dict>
