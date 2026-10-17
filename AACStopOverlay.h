@@ -200,7 +200,7 @@ static void AACStopOverlayUpdate(void);
 @implementation AACStopOverlayHandler
 - (void)stopPressed:(id)sender{
  NSUUID *connected=AACStopOverlayVerifiedUUID();
- NSDictionary *state=AACAudioReadState();
+ NSDictionary *state=AACAudioReadState();(void)state;/* 保留状态读取调用，仅消除 -Werror 未使用告警 */
  if(!connected){
   AACStopOverlayLog(@"MANUAL_HANDOFF reject=no-verified-call; native Add remains unchanged");
   AACStopOverlayUpdate();return;
@@ -226,7 +226,7 @@ static void AACStopOverlayUpdate(void){
  AACStopOverlayInventory();
  NSDictionary *cfg=AACBridgeRead();
  BOOL optIn=[cfg[@"Enabled"] boolValue]&&[cfg[@"PlayAudio"] boolValue];
- NSDictionary *state=AACAudioReadState();
+ NSDictionary *state=AACAudioReadState();(void)state;/* 保留状态读取调用，仅消除 -Werror 未使用告警 */
  NSUUID *connected=AACStopOverlayVerifiedUUID();
  BOOL playing=connected&&[state[@"uuid"] isEqualToString:connected.UUIDString]&&
      [state[@"status"] isEqualToString:@"playing"];
