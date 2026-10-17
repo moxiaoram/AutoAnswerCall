@@ -65,12 +65,7 @@ static inline NSArray *AACLogViewerProcesses(void){return @[@"incall",@"springbo
  if(section==2)return [NSString stringWithFormat:@"宿主跨进程上报读回（自有 CFPreferences 域 %@）",AACHostReportDomain];
  return @"旧的 CFPreferences 回退域";
 }
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section{
- if(section==0)return @"标签写明命中的候选路径。没有可读路径时会明确写出“没有可读”，不会回退成伪造内容。";
- if(section==1)return @"这些结果只反映设置进程自身；另一进程是否可写/可读必须看它自己写下的记录。";
- if(section==2)return @"每个宿主在发现后与每 20 秒把「发现摘要 + 最近日志行」写入这个自有域（每宿主有独立键，载荷有上限并带截断标记）。本页只显示设置进程实际读到的键数与真实 plist 路径；读不到空域不代表该宿主未注入，也不代表接听可用。";
- return @"回退域 com.autoanswer.call.sharelog 的跨进程可见性不保证，也未被本版本验证。";
-}
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section{return nil;}
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath{
  UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];cell.detailTextLabel.numberOfLines=3;cell.textLabel.numberOfLines=2;
  if(indexPath.section==0){
