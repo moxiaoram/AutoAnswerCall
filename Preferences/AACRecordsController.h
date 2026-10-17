@@ -36,7 +36,7 @@
 }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section{return self.records.count;}
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section{return [NSString stringWithFormat:@"最近 %lu 条（最多200条）",(unsigned long)self.records.count];}
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section{return [NSString stringWithFormat:@"%@\n%@\n公开 CXCall 不提供号码；不可得时显示未知。请求接受不等于已连接，观察连接也不能确定由插件接听。点击记录查看事件时间。",self.readStatus?:@"",self.phoneStatus?:@""];}
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section{return nil;}
 - (NSString *)dateText:(NSDate *)date{if(![date isKindOfClass:NSDate.class])return @"时间未知";NSDateFormatter *f=[NSDateFormatter new];f.dateFormat=@"yyyy-MM-dd HH:mm:ss ZZZZ";return [f stringFromDate:date];}
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath{
  UITableViewCell *c=[tableView dequeueReusableCellWithIdentifier:@"record"];if(!c)c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"record"];
