@@ -1,10 +1,10 @@
-# AutoAnswerCall 1.17.0
+# AutoAnswerCall 1.17.2
 
-Package: com.autoanswer.call. BuildID is supplied in the delivery report using the compiled commit and successful CI run. No installation, live system-setting change, calls, or device runtime validation performed for 1.17.0; the new live-button discovery/tap path is unverified on device.
+Package: com.autoanswer.call. BuildID is supplied in the delivery report using the compiled commit and successful CI run. No installation, live system-setting change, calls, or device runtime validation performed for 1.17.2; the new live-button discovery/tap path is unverified on device.
 
-## 1.17.0 Live-button discovery + simulated tap is the primary answer strategy — NOT device-verified
+## 1.17.2 Live-button discovery + simulated tap is the primary answer strategy — NOT device-verified
 
-1.17.0 keeps every guard from 1.9.x through 1.16.0 and replaces the *primary* answer strategy. Method-name keyword discovery (the 1.15.0 ACTION/ACCESSOR classification) is **retained but known to be insufficient**.
+1.17.2 keeps every guard from 1.9.x through 1.16.0 and replaces the *primary* answer strategy. Method-name keyword discovery (the 1.15.0 ACTION/ACCESSOR classification) is **retained but known to be insufficient**.
 
 DEVICE EVIDENCE THAT DROVE IT (the user's 1.16.0 chunked-transport read-back on the iOS 17.3 RootHide device, quoted because it is the authoritative record):
 - ALL THREE hosts are injected: `springboard pid=9061`, `mobilephone pid=9145`, `incall pid=9146`.
