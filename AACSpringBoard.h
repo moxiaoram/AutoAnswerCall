@@ -7,7 +7,7 @@
 #import "AACSharedLog.h"
 #import "AACAnswerHost.h"
 #import "AACChunkMsg.h"
-/* 1.17.0 TASK 1/TASK 2: 活体按钮发现 + 模拟点击（主策略）。它在被包含前不依赖本文件的任何符号；
+/* 1.17.2 TASK 1/TASK 2: 活体按钮发现 + 模拟点击（主策略）。它在被包含前不依赖本文件的任何符号；
    本文件只负责把它的日志接到共享日志、把它的报告写进发现文件并发布出去。 */
 #import "AACButtonScan.h"
 /* Host-parameterised answer module (1.14.0; 1.13.0 relaxed the hook ABI gate, 1.12.0 shipped
@@ -107,7 +107,7 @@ static NSString *AACSBHostDisplay=nil;
 static NSString *AACSBOwnerTag=nil;
 static NSString *AACSBRoleReason=nil;
 static NSMutableSet *AACSBSubmittedUUIDs=nil;
-/* 1.17.0 TASK 1: 本宿主是否在「当前这次来电」里发现了可点击的接听按钮。这是按钮路径计入
+/* 1.17.2 TASK 1: 本宿主是否在「当前这次来电」里发现了可点击的接听按钮。这是按钮路径计入
    answerPaths 的唯一开关，通话结束后立刻清除。 */
 static BOOL AACSBButtonPathActive=NO;
 
@@ -119,7 +119,7 @@ static void AACSBCapture(id object,SEL selector);
 static void AACSBWriteDiscoveryFile(void);
 static NSDictionary *AACSBHostReportPublishNow(void);
 static NSDictionary *AACSBHostMessagePublishNow(void);
-/* 1.17.0 TASK 1: 把按钮发现模块的日志接到本模块的共享日志上。必须在任何一次按钮扫描之前执行，
+/* 1.17.2 TASK 1: 把按钮发现模块的日志接到本模块的共享日志上。必须在任何一次按钮扫描之前执行，
    因此在 AACSBStart 一开始就调用（另外每次扫描前也会再设一次，幂等且廉价）。 */
 static void AACSBInstallButtonLogSink(void){AACButtonLogSink=^(NSString *message){AACSBLog(message);};}
 /* Defined together with the 1.15.0 ACTION/ACCESSOR classifier further down; declared here
@@ -157,7 +157,7 @@ static NSUInteger AACSBAnswerPathCount(void){
  NSUInteger count=0;
  for(NSUInteger i=0;i<AACSBHookCount;i++)if(AACSBHookRecords[i].countsAsPath)count++;
  for(NSUInteger i=0;i<AACSBInvocationCount;i++)if(AACSBInvocationRecords[i].countsAsPath)count++;
- /* 1.17.0 TASK 1: 活体按钮也是一条真实的接听路径，而且现在是主策略。只在来电期间的扫描
+ /* 1.17.2 TASK 1: 活体按钮也是一条真实的接听路径，而且现在是主策略。只在来电期间的扫描
     （phase=call/tap）里找到非黑名单、可点击的候选控件时置位；进程启动时的基线扫描绝不计入，
     AACSBButtonPathActive 会在通话结束时清除，因此一个过期候选不会让下一次通话误判。
    方法名关键字发现（ACTION）仍然是并行保留的路径，只是已知不足。 */
@@ -279,7 +279,7 @@ static NSDictionary *AACSBHostReportPublishNow(void){ NSDictionary *facts=@{@"ro
    observed, and it does not weaken the file channel or the host-report domain. */
 static NSString *AACSBHookedBlockText(void);
 static NSString *AACSBInvokableSummary(void);
-/* 1.17.0 TASK 1/TASK 2: 按钮发现分节（与上面的 ACTION/ACCESSOR 方法分类相互独立）。这段文本
+/* 1.17.2 TASK 1/TASK 2: 按钮发现分节（与上面的 ACTION/ACCESSOR 方法分类相互独立）。这段文本
    会被写进发现文件、逐行写进共享日志，并随 1.16.0 的分片/状态槽通道一起发布。@try 包裹：
    报告文本的拼接异常绝不能影响接听流程本身。 */
 static NSString *AACSBButtonSectionText(void){
@@ -287,7 +287,7 @@ static NSString *AACSBButtonSectionText(void){
 }
 /* 本宿主在当前这次来电里找到的可点击接听按钮候选数量（0 表示按钮路径在本宿主里不成立）。 */
 static NSUInteger AACSBButtonLiveCandidates(void){return AACButtonLiveCandidateCount;}
-static NSString *AACSBButtonSummaryLine(void){ @try{return [NSString stringWithFormat:@"# BUTTON_PATH 活体按钮接听路径=%@（1.17.0 主策略）；%@",AACSBButtonPathActive?@"有（本次来电里发现可点击的接听按钮）":@"无（本次来电里没有发现可点击的接听按钮）",AACButtonRuleText()];}@catch(NSException *e){return @"# BUTTON_PATH 不可用";}
+static NSString *AACSBButtonSummaryLine(void){ @try{return [NSString stringWithFormat:@"# BUTTON_PATH 活体按钮接听路径=%@（1.17.2 主策略）；%@",AACSBButtonPathActive?@"有（本次来电里发现可点击的接听按钮）":@"无（本次来电里没有发现可点击的接听按钮）",AACButtonRuleText()];}@catch(NSException *e){return @"# BUTTON_PATH 不可用";}
 }
 /* 来电期间的按钮发现：真实遍历活体层级、记录每一个候选、并把发现文件与两条发布通道刷新一次。
    找到候选时广播归属声明，让更低优先级宿主按结算窗口让出（避免双重点击）。 */
@@ -1082,7 +1082,7 @@ static void AACSBWriteDiscoveryFile(void){
  }else{
   [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# CONCLUSIVE: 本宿主发现到的 ACTION 接听路径=0，因此本宿主不可能接听（role 必须是 LOG-ONLY，不是 OWNER）；本宿主有 %lu 个 ACCESSOR 挂钩（%lu 个 ACCESSOR 被跳过、%lu 个 UNSUPPORTED 被跳过），这些都只是属性访问器/无关方法，绝不能当作接听路径。请以下一次设备来电时的日志确认其他宿主是否可接听。",(unsigned long)AACSBHookAccessorCount,(unsigned long)AACSBAccessorSkipped,(unsigned long)AACSBUnsupportedSkipped]];
  }
- /* 1.17.0 TASK 2: BUTTON 候选分节（独立于上面的 ACTION/ACCESSOR 方法分类），写进发现文件本体，
+ /* 1.17.2 TASK 2: BUTTON 候选分节（独立于上面的 ACTION/ACCESSOR 方法分类），写进发现文件本体，
     因此也会随发现文件一起被分享/发布。 */
  [AACSBDiscoveryLines addObject:AACSBButtonSummaryLine()];
  [AACSBDiscoveryLines addObject:AACSBButtonSectionText()];
@@ -1101,7 +1101,7 @@ static void AACSBWriteDiscoveryFile(void){
  /* 1.14.0 TASK 2: the compact HOOKED list is logged line by line first (each line is far below
     the 2000-char shared-log line cap), then the digest follows in bounded chunks. */
  for(NSString *blockLine in [hookedBlock componentsSeparatedByString:@"\n"])AACSBLog(blockLine);
- /* 1.17.0 TASK 2: 按钮分节同样逐行写出（每行都远低于共享日志单行 2000 字符上限），因此候选、
+ /* 1.17.2 TASK 2: 按钮分节同样逐行写出（每行都远低于共享日志单行 2000 字符上限），因此候选、
     所选控件、所用机制与是否接通都不会被摘要预算截掉。 */
  @try{for(NSString *buttonLine in [AACSBButtonSectionText() componentsSeparatedByString:@"\n"])AACSBLog(buttonLine);}@catch(NSException *e){AACSBLog([@"button section log exception: " stringByAppendingString:e.reason?:@"unknown"]);}
  AACSBLog([NSString stringWithFormat:@"%@ 接听归属判定（发现时）：owner=%@ role=%@ submitted=no why=%@",AACSBDisplay(),AACSBHostOwnerTagText(),AACSBHostRoleText(),AACSBClaimReasonText()]);
@@ -1304,7 +1304,7 @@ static void AACSBDiscover(void){
  if(!AACSBHookedSelectors)AACSBHookedSelectors=[NSMutableArray new];
  if(!AACSBInvokableSelectors)AACSBInvokableSelectors=[NSMutableArray new];
  if(!AACSBHookDetails)AACSBHookDetails=[NSMutableArray new];
- [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# AutoAnswerCall 1.17.0 answer-host runtime discovery run %lu host=%@ tag=%@ (runtime-discovered; no hardcoded class name)",(unsigned long)AACSBDiscoverRuns,AACSBDisplay(),AACSBProcess()]];
+ [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# AutoAnswerCall 1.17.2 answer-host runtime discovery run %lu host=%@ tag=%@ (runtime-discovered; no hardcoded class name)",(unsigned long)AACSBDiscoverRuns,AACSBDisplay(),AACSBProcess()]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# discoveryFile=%@ roleTable=%@",AACSBHostDiscoveryFile(),AACAnswerRoleTableText()]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# classFamilyFilters=%@（真实来电 UI 类族，通配匹配）",[AACSBClassFamilyPatterns() componentsJoinedByString:@","]]];
  [AACSBDiscoveryLines addObject:[NSString stringWithFormat:@"# realActionSelectorPatterns=%@（只有命中这些模式的候选才算 ACTION，才能成为接听路径）",[AACSBSelectorActionPatterns() componentsJoinedByString:@","]]];
@@ -1405,7 +1405,7 @@ static inline void AACSBStart(AACSBEnv *env){
     relaxed gate gets a second chance without an unbounded scan. */
  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(3.0*NSEC_PER_SEC)),dispatch_get_main_queue(),^{AACSBRetryDiscoveryIfEmpty();});
  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(12.0*NSEC_PER_SEC)),dispatch_get_main_queue(),^{AACSBRetryDiscoveryIfEmpty();});
- /* 1.17.0 TASK 2: 进程启动后 8 秒做一次基线按钮扫描（不算接听路径：AACSBButtonPathActive 只由
+ /* 1.17.2 TASK 2: 进程启动后 8 秒做一次基线按钮扫描（不算接听路径：AACSBButtonPathActive 只由
     来电期间的扫描置位），它只提供证据——层级能不能被遍历、本次进程里有多少 UIControl 候选。
     真正的按钮路径判定发生在来电期间。 */
  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(8.0*NSEC_PER_SEC)),dispatch_get_main_queue(),^{

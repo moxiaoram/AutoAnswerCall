@@ -37,7 +37,12 @@
   if(!path||![metadata writeToURL:[NSURL fileURLWithPath:path] error:&e]){self.failure=ErrorText(e,@"所选音频元数据不可写");return NO;}
   for(NSString *k in metadata)[d setObject:metadata[k] forKey:k];
  }else{if(path&&[[NSFileManager defaultManager] fileExistsAtPath:path]&&![[NSFileManager defaultManager] removeItemAtPath:path error:&e]){self.failure=ErrorText(e,@"清除元数据失败");return NO;}for(NSString *k in @[@"AudioPath",@"AudioName",@"AudioSize",@"SelectedAudioID"])[d removeObjectForKey:k];}
- if(![d synchronize]){self.failure=@"所选音频配置同步失败；电话侧可见性未确认";return NO;}return YES;
+ if(![d synchronize]){self.failure=@"所选音频配置同步失败；电话侧可见性未确认";return NO;}
+ #ifndef AAC_LIBRARY_MODEL_ONLY
+ NSString *bridgeError=AACBridgePublishSettings();
+ if(bridgeError)NSLog(@"[AutoAnswerCall] audio selected in Settings, but shared source unavailable to call hosts: %@",bridgeError);
+#endif
+ return YES;
 }
 - (BOOL)remove:(NSDictionary *)item{
  if(self.failure)return NO;NSMutableArray *backup=[self.items mutableCopy];NSString *previous=self.selected;BOOL wasSelected=[previous isEqual:item[@"id"]];[self.items removeObject:item];
