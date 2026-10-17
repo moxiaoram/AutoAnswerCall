@@ -41,7 +41,7 @@ for name in ['AACRecordsController.h','AACProbeController.h','AACLogExportContro
     txt=(root/'Preferences'/name).read_text()
     assert '- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section{return nil;}' in txt,name
 assert 'cell.detailTextLabel.text=' in (root/'Preferences/AACProbeController.h').read_text()
-assert 'PACKAGE_VERSION := 1.17.2' in (root/'Makefile').read_text()
-assert 'Version: 1.17.2' in (root/'control').read_text()
+assert 'PACKAGE_VERSION := 1.17.3' in (root/'Makefile').read_text()
+assert 'Version: 1.17.3' in (root/'control').read_text()
 assert 'runs-on: macos-15' in (root/'.github/workflows/build.yml').read_text()
 print('PASS: 1.17.2 fixes (UUID-specific notifications, claim rollback, event exceptions, settings recheck, outcome clarity, grey footers removed)')
