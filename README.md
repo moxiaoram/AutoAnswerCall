@@ -1,10 +1,28 @@
-# AutoAnswerCall 1.17.0
+# AutoAnswerCall 1.17.5：系统自动接听与人工介入测试
 
-Package: com.autoanswer.call. BuildID is supplied in the delivery report using the compiled commit and successful CI run. No installation, live system-setting change, calls, or device runtime validation performed for 1.17.0; the new live-button discovery/tap path is unverified on device.
+**新流程：系统自动接听 → SpringBoard 检测已接通并尝试本机音频播放 → InCallService 显示「停止播放」→ 点击停止本机音频，通话保持连接、人工可以继续讲话。**
 
-## 1.17.0 Live-button discovery + simulated tap is the primary answer strategy — NOT device-verified
+**重要：这不是通话上行注入实现。** `AVAudioPlayer` 只启动本机播放器，无法保证来电方听见音频。锁屏 InCallService 窗口、RootHide 共享文件权限和通话音频路由必须真机确认。
 
-1.17.0 keeps every guard from 1.9.x through 1.16.0 and replaces the *primary* answer strategy. Method-name keyword discovery (the 1.15.0 ACTION/ACCESSOR classification) is **retained but known to be insufficient**.
+开启前请先在 iOS 辅助功能中打开系统「自动接听通话」；插件设置开启「启用插件策略」「接通后播放本地音频」「系统接听后本地音频＋停止按钮」（默认关闭），选好音频。按下通话界面的「停止播放」不会挂断电话或改变麦克风状态。详细修改见 `FIXES-1.17.5.md`。
+
+---
+
+# 1.17.4 系统接听后本地播放测试
+
+新增默认关闭的「系统接听后本机播放测试」开关。详见 [FIXES-1.17.4.md](FIXES-1.17.4.md)。
+本版本仅验证观察到通话连接后在 SpringBoard 使用 AVAudioPlayer 播放本地音频；
+**不会独立接听蜂窝电话，也不会将音频送入通话对方的上行声道**。
+
+---
+
+# AutoAnswerCall 1.17.2
+
+Package: com.autoanswer.call. BuildID is supplied in the delivery report using the compiled commit and successful CI run. No installation, live system-setting change, calls, or device runtime validation performed for 1.17.2; the new live-button discovery/tap path is unverified on device.
+
+## 1.17.2 Live-button discovery + simulated tap is the primary answer strategy — NOT device-verified
+
+1.17.2 keeps every guard from 1.9.x through 1.16.0 and replaces the *primary* answer strategy. Method-name keyword discovery (the 1.15.0 ACTION/ACCESSOR classification) is **retained but known to be insufficient**.
 
 DEVICE EVIDENCE THAT DROVE IT (the user's 1.16.0 chunked-transport read-back on the iOS 17.3 RootHide device, quoted because it is the authoritative record):
 - ALL THREE hosts are injected: `springboard pid=9061`, `mobilephone pid=9145`, `incall pid=9146`.
