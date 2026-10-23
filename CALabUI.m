@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import "CALabCore.h"
+#import "CAObserve.h"
 
 static NSString * const CAPrefs = @"ClashAssist.settings.v1";
 @interface CALabWindow : UIWindow
@@ -78,7 +79,7 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
         [root.trailingAnchor constraintEqualToAnchor:self.panel.trailingAnchor constant:-12],
         [root.topAnchor constraintEqualToAnchor:self.panel.topAnchor constant:10],
         [root.bottomAnchor constraintEqualToAnchor:self.panel.bottomAnchor constant:-10]]];
-    UILabel *heading = [self label:@"本地模拟实验 0.2.0 · 非真实对局" size:16];
+    UILabel *heading = [self label:@"调用观测 0.3.0 · 模拟功能独立" size:16];
     UIButton *close = [self button:@"收起" action:@selector(toggle) color:UIColor.darkGrayColor];
     [close.widthAnchor constraintEqualToConstant:66].active = YES;
     UIStackView *header = [[UIStackView alloc] initWithArrangedSubviews:@[heading,close]]; header.spacing = 8;
@@ -115,6 +116,9 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
     UIStackView *loopRow = [[UIStackView alloc] initWithArrangedSubviews:@[[self label:@"结算后继续模拟搜索" size:14],self.loop]];
     [content addArrangedSubview:loopRow];
     [content addArrangedSubview:[self label:@"固定模拟兵力：8；每 0.7 秒推进一个模拟秒。状态及收益仅存在本工具内。" size:12]];
+    [content addArrangedSubview:[self button:@"观测手动操作 60 秒（不自动战斗）" action:@selector(observe) color:UIColor.systemOrangeColor]];
+    [content addArrangedSubview:[self button:@"复制调用计数报告" action:@selector(copyObservation) color:UIColor.darkGrayColor]];
+    [content addArrangedSubview:[self label:@"观测只统计三处候选调用；开启后请收起面板手动操作。停止按钮停止计数，Hook 透传至游戏退出。" size:12]];
     self.logView = [UITextView new]; self.logView.editable = NO; self.logView.scrollEnabled = NO;
     self.logView.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];
     self.logView.backgroundColor = [UIColor colorWithWhite:0.12 alpha:1]; self.logView.textColor = UIColor.whiteColor;
@@ -209,12 +213,26 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
     if (![self running]) { [self.timer invalidate]; self.timer = nil; [self setRunningControls:NO]; }
 }
 - (void)stop:(NSString *)reason {
+    CAObserveStop();
     [self.timer invalidate]; self.timer = nil;
     CALab s = self.lab; CALabStop(&s,[reason isEqualToString:@"background"] ? "background" : "manual"); self.lab = s;
     [self setRunningControls:NO]; [self.view endEditing:YES];
     [self record:[self reasonName]]; [self updateStatus];
 }
-- (void)manualStop { [self stop:@"manual"]; }
+- (void)observe {
+    [self stop:@"manual"];
+    NSString *error=nil;
+    if(CAObserveStart(&error)) {
+        self.status.text=@"手动操作观测中（60秒）· 收起面板手动操作，随后复制调用计数报告";
+        [self record:@"已开启真实调用计数：未执行任何自动游戏操作"];
+    } else { self.status.text=error?:@"观测启动失败"; [self record:self.status.text]; }
+}
+- (void)copyObservation {
+    NSData *data=[NSJSONSerialization dataWithJSONObject:CAObserveSnapshot() options:NSJSONWritingPrettyPrinted error:nil];
+    UIPasteboard.generalPasteboard.string=[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    self.status.text=@"真实调用计数报告已复制（候选命中不等于接口验证通过）";
+}
+- (void)manualStop { CAObserveStop(); [self stop:@"manual"]; }
 - (void)copyLog {
     UIPasteboard.generalPasteboard.string = [@"ClashAssist 0.2.0 LOCAL SYNTHETIC ONLY\n" stringByAppendingString:[self.events componentsJoinedByString:@"\n"]];
     self.status.text = @"本地模拟日志已复制";

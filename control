@@ -1,8 +1,8 @@
 Package: com.minis.clashassist
-Name: ClashAssist Local Lab
-Version: 0.2.0
+Name: ClashAssist Observation Lab
+Version: 0.3.0
 Architecture: iphoneos-arm64e
-Description: Offline synthetic resource and battle-flow simulator. No live game automation.
+Description: Manual-action call observation and separate synthetic simulator. No automatic game actions.
 Maintainer: Minis
 Author: Minis
 Section: Tweaks
