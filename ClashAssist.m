@@ -67,7 +67,7 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
     self.scroll.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     [self.panel addSubview:self.scroll];
     UILabel *title = [UILabel new];
-    title.text = @"部落辅助 · 诊断版 0.1.0";
+    title.text = @"部落辅助 · 诊断版 0.1.1";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont boldSystemFontOfSize:18];
     title.frame = CGRectMake(16, 14, 290, 28);
@@ -117,7 +117,8 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
         [b setTitle:actions[i] forState:UIControlStateNormal];
         [b setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
         [b addTarget:self action:selectors[i] forControlEvents:UIControlEventTouchUpInside];
-        [self.scroll addSubview:b];
+        if (i == 2) { b.tag = 700; [self.panel addSubview:b]; }
+        else { [self.scroll addSubview:b]; }
         if (i == 1) { self.startButton = b; b.enabled = NO; b.alpha = 0.45; }
         y += 50;
     }
@@ -129,6 +130,13 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
     [nc addObserver:self selector:@selector(inactive:) name:UIApplicationWillResignActiveNotification object:nil];
     [self refreshStatus:@"已停止"];
 }
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+    return UIInterfaceOrientationMaskLandscape;
+}
+- (BOOL)shouldAutorotate { return YES; }
+- (UIInterfaceOrientation)preferredInterfaceOrientationForPresentation {
+    return UIInterfaceOrientationLandscapeRight;
+}
 - (void)refreshStatus:(NSString *)reason {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?";
     self.status.text = [NSString stringWithFormat:@"注入成功 · 游戏 %@\n%@ · 战斗接口未验证\n当前未采集资源或战斗状态；自动化未启用。", version, reason];
@@ -136,11 +144,38 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     CGRect safe = UIEdgeInsetsInsetRect(self.view.bounds, self.view.safeAreaInsets);
-    CGFloat w = MIN(332, MAX(1, safe.size.width - 16));
-    CGFloat h = MIN(620, MAX(1, safe.size.height - 16));
+    CGFloat w = MIN(500, MAX(1, safe.size.width - 32));
+    CGFloat h = MIN(500, MAX(1, safe.size.height - 16));
     self.panel.frame = CGRectMake(CGRectGetMidX(safe)-w/2, CGRectGetMidY(safe)-h/2, w, h);
-    self.scroll.frame = self.panel.bounds;
-    self.scroll.contentSize = CGSizeMake(332, self.scroll.contentSize.height);
+    CGFloat bottomHeight = 52;
+    self.scroll.frame = CGRectMake(0, 0, w, MAX(1,h-bottomHeight));
+    UIButton *stop = (UIButton *)[self.panel viewWithTag:700];
+    stop.frame = CGRectMake(16, MAX(0,h-bottomHeight), MAX(1,w-32), 44);
+    CGFloat contentW = MAX(1,w-32);
+    self.status.frame = CGRectMake(16, 48, contentW, 104);
+    for (UIView *sub in self.scroll.subviews) {
+        if ([sub isKindOfClass:UITextField.class]) {
+            CGRect f = sub.frame;
+            f.origin.x = MAX(16,w-146);
+            f.size.width = MIN(130, MAX(1,w-32));
+            sub.frame = f;
+        } else if ([sub isKindOfClass:UISwitch.class]) {
+            CGRect f = sub.frame; f.origin.x = MAX(16,w-72); sub.frame = f;
+        } else if ([sub isKindOfClass:UIButton.class] && sub != self.bubble) {
+            UIButton *button = (UIButton *)sub;
+            if (button == self.startButton || [button.currentTitle isEqualToString:@"保存配置"]) {
+                CGRect f = button.frame; f.size.width = contentW; button.frame = f;
+            } else if ([button.currentTitle isEqualToString:@"收起"]) {
+                CGRect f = button.frame; f.origin.x = MAX(16,w-56); button.frame = f;
+            }
+        } else if ([sub isKindOfClass:UILabel.class]) {
+            UILabel *label = (UILabel *)sub;
+            if (label != self.status && label.numberOfLines != 1) {
+                CGRect f = label.frame; f.size.width = contentW; label.frame = f;
+            }
+        }
+    }
+    self.scroll.contentSize = CGSizeMake(w, 700);
     [self clampBubble];
 }
 - (void)clampBubble {
@@ -228,7 +263,7 @@ __attribute__((constructor)) static void CAInitialize(void) {
             CAInstance = [CAController new];
             [NSNotificationCenter.defaultCenter addObserver:CAInstance selector:@selector(active:) name:UIApplicationDidBecomeActiveNotification object:nil];
             [CAInstance attach];
-            NSLog(@"[ClashAssist] 0.1.0 loaded; battle adapter unavailable");
+            NSLog(@"[ClashAssist] 0.1.1 loaded; battle adapter unavailable");
         });
     }
 }

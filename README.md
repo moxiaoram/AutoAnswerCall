@@ -1,4 +1,6 @@
-# ClashAssist 0.1.0：RootHide 注入诊断版
+# ClashAssist 0.1.1：RootHide 注入诊断版
+
+0.1.1 修复：控制器声明游戏横屏方向，悬浮面板按窗口安全区计算布局，停止按钮固定底部，其余内容可滚动。尚需设备再次安装验证。
 
 目标：iOS 17.3 RootHide；只注入 com.supercell.magic.china。分析基线为 18.116.1。当前为诊断版，不是自动战斗完成版。
 

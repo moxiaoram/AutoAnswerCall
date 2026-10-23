@@ -1,6 +1,6 @@
 Package: com.minis.clashassist
 Name: ClashAssist Diagnostics
-Version: 0.1.0
+Version: 0.1.1
 Architecture: iphoneos-arm64e
 Description: Version-bound floating controls and diagnostics for ClashofClans 18.116.1; battle adapter unavailable
 Maintainer: Minis

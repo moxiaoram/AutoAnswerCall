@@ -8,6 +8,6 @@ TWEAK_NAME := ClashAssist
 ClashAssist_FILES := ClashAssist.m
 ClashAssist_CFLAGS := -fobjc-arc -Wall -Wextra
 ClashAssist_FRAMEWORKS := Foundation UIKit
-PACKAGE_VERSION := 0.1.0
+PACKAGE_VERSION := 0.1.1
 
 include $(THEOS_MAKE_PATH)/tweak.mk
