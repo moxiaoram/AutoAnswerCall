@@ -1,4 +1,4 @@
-name: Build RootHide diagnostics
+name: Build RootHide observation lab
 on:
   workflow_dispatch:
   push:

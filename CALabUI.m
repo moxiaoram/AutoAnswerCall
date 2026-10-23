@@ -79,12 +79,12 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
         [root.trailingAnchor constraintEqualToAnchor:self.panel.trailingAnchor constant:-12],
         [root.topAnchor constraintEqualToAnchor:self.panel.topAnchor constant:10],
         [root.bottomAnchor constraintEqualToAnchor:self.panel.bottomAnchor constant:-10]]];
-    UILabel *heading = [self label:@"调用观测 0.3.1 · 模拟功能独立" size:16];
+    UILabel *heading = [self label:@"调用观测 0.3.2 · 真实战斗后端未接入" size:16];
     UIButton *close = [self button:@"收起" action:@selector(toggle) color:UIColor.darkGrayColor];
     [close.widthAnchor constraintEqualToConstant:66].active = YES;
     UIStackView *header = [[UIStackView alloc] initWithArrangedSubviews:@[heading,close]]; header.spacing = 8;
     [root addArrangedSubview:header];
-    self.status = [self label:@"就绪 · 所有资源和战斗均为本地生成" size:12];
+    self.status = [self label:@"就绪 · 真实自动战斗后端未接入" size:12];
     self.status.textColor = UIColor.systemYellowColor; [root addArrangedSubview:self.status];
     self.scroll = [UIScrollView new]; self.scroll.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     self.scroll.alwaysBounceVertical = YES; [root addArrangedSubview:self.scroll];
@@ -115,6 +115,7 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
     self.loop = [UISwitch new]; self.loop.on = [saved[@"loop"] boolValue];
     UIStackView *loopRow = [[UIStackView alloc] initWithArrangedSubviews:@[[self label:@"结算后继续模拟搜索" size:14],self.loop]];
     [content addArrangedSubview:loopRow];
+    [content addArrangedSubview:[self label:@"当前仅本地模拟：不会读取真实对手资源，也不会搜索、下兵或结束真实对局。真实模式须接入并验证游戏后端。" size:12]];
     [content addArrangedSubview:[self label:@"固定模拟兵力：8；每 0.7 秒推进一个模拟秒。状态及收益仅存在本工具内。" size:12]];
     [content addArrangedSubview:[self button:@"观测手动操作 60 秒（不自动战斗）" action:@selector(observe) color:UIColor.systemOrangeColor]];
     [content addArrangedSubview:[self button:@"复制调用计数报告" action:@selector(copyObservation) color:UIColor.darkGrayColor]];
@@ -191,7 +192,7 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
 }
 - (NSString *)reasonName {
     NSDictionary *names = @{@"search-limit":@"达到搜索上限",@"battle-limit":@"达到战斗上限",
-        @"single-complete":@"单次流程完成",@"battle-timeout":@"模拟战斗超时",@"battle-complete":@"模拟战斗完成",
+        @"single-complete":@"单次流程完成",@"battle-timeout":@"模拟战斗超时",@"battle-complete":@"模拟战斗完成", @"no-resource-growth":@"连续 5 秒资源未增长",
         @"filtered":@"资源不达标",@"matched":@"资源筛选通过",@"manual":@"手动停止",
         @"background":@"离开前台停止",@"invalid-config":@"配置错误",@"deploying":@"逐个部署模拟单位",
         @"fighting":@"模拟收益变化",@"searching":@"寻找模拟样本"};
@@ -234,7 +235,7 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
 }
 - (void)manualStop { CAObserveStop(); [self stop:@"manual"]; }
 - (void)copyLog {
-    UIPasteboard.generalPasteboard.string = [@"ClashAssist 0.2.0 LOCAL SYNTHETIC ONLY\n" stringByAppendingString:[self.events componentsJoinedByString:@"\n"]];
+    UIPasteboard.generalPasteboard.string = [@"ClashAssist 0.3.2 LOCAL SYNTHETIC ONLY\n" stringByAppendingString:[self.events componentsJoinedByString:@"\n"]];
     self.status.text = @"本地模拟日志已复制";
 }
 - (void)viewDidLayoutSubviews { [super viewDidLayoutSubviews]; [self clampBubble]; }

@@ -1,0 +1,10 @@
+PASS: AND resource filter, deployment, five-second no-growth settlement
+PASS: looping stops at global battle limit
+PASS: impossible threshold stops at search limit
+PASS: per-battle timeout covers deployment and total search cap covers loops
+PASS: stop in every active phase prevents all further progress
+PASS: invalid configuration refused
+PASS: event-driven search filter, deployment, resource monitor, and settlement transitions
+PASS: event-driven clock enforces timeout and resumes search after settlement
+PASS: observed resource growth resets the five-second timer; no growth settles after five samples
+PASS: resource snapshots remain correct above 32-bit counters

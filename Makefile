@@ -9,6 +9,6 @@ ClashAssist_FILES := CALabUI.m CAObserve.m
 ClashAssist_LIBRARIES := substrate
 ClashAssist_CFLAGS := -fobjc-arc -Wall -Wextra
 ClashAssist_FRAMEWORKS := Foundation UIKit
-PACKAGE_VERSION := 0.3.1
+PACKAGE_VERSION := 0.3.2
 
 include $(THEOS_MAKE_PATH)/tweak.mk

@@ -1,8 +1,8 @@
 Package: com.minis.clashassist
 Name: ClashAssist Observation Lab
-Version: 0.3.1
+Version: 0.3.2
 Architecture: iphoneos-arm64e
-Description: Manual-action call observation and separate synthetic simulator. No automatic game actions.
+Description: Manual-action call observation and separate synthetic simulator. No automatic game actions; verified game backend not connected.
 Maintainer: Minis
 Author: Minis
 Section: Tweaks
