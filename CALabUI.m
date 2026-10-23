@@ -80,7 +80,7 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v2";
         [root.trailingAnchor constraintEqualToAnchor:self.panel.trailingAnchor constant:-12],
         [root.topAnchor constraintEqualToAnchor:self.panel.topAnchor constant:10],
         [root.bottomAnchor constraintEqualToAnchor:self.panel.bottomAnchor constant:-10]]];
-    UILabel *heading = [self label:@"ClashAssist 0.4.0 · 战斗调度与诊断" size:16];
+    UILabel *heading = [self label:@"ClashAssist 0.4.2 · 日志证据基线与安全调度" size:16];
     UIButton *close = [self button:@"收起" action:@selector(toggle) color:UIColor.darkGrayColor];
     [close.widthAnchor constraintEqualToConstant:66].active = YES;
     UIStackView *header = [[UIStackView alloc] initWithArrangedSubviews:@[heading,close]]; header.spacing = 8;
@@ -100,7 +100,8 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v2";
     NSDictionary *saved = [NSUserDefaults.standardUserDefaults dictionaryForKey:CAPrefs];
     NSArray *rows = @[@[@"gold",@"最低金币",@500000],@[@"elixir",@"最低圣水",@500000],
         @[@"dark",@"最低黑水",@0],@[@"maxSearch",@"总搜索上限",@50],
-        @[@"maxUnits",@"单场最多部署单位",@100],@[@"timeout",@"主动结束战斗秒数（1–1800）",@180]];
+        @[@"maxUnits",@"单场最多部署单位",@100],@[@"maxBattles",@"本次最多完成战斗数",@10],
+        @[@"noGrowth",@"连续无战利品增长秒数（默认5）",@5],@[@"timeout",@"单场最长秒数（1–1800）",@180]];
     for (NSArray *row in rows) {
         UILabel *label = [self label:row[1] size:14];
         UITextField *field = [UITextField new]; field.borderStyle = UITextBorderStyleRoundedRect;
@@ -113,7 +114,7 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v2";
         UIStackView *line = [[UIStackView alloc] initWithArrangedSubviews:@[label,field]]; line.spacing = 8;
         [content addArrangedSubview:line];
     }
-    [content addArrangedSubview:[self label:@"真实接口由已验证后端提供。未注册后端时启动会报错；一次启动只处理一场战斗，结算后停止。长按悬浮按钮可停止后续指令。" size:12]];
+    [content addArrangedSubview:[self label:@"真实接口必须由已验证后端提供。设计流程：筛选对手、逐个部署、连续无战利品增长达到阈值则请求结束、确认结算后回家并进入下一轮；受战斗数/搜索数上限限制。未注册后端时不会执行游戏动作。长按悬浮按钮可停止后续指令。" size:12]];
     [content addArrangedSubview:[self button:@"观测调用 300 秒" action:@selector(observe) color:UIColor.systemOrangeColor]];
     [content addArrangedSubview:[self button:@"复制详细调用诊断 JSON" action:@selector(copyObservation) color:UIColor.darkGrayColor]];
     [content addArrangedSubview:[self label:@"最多保留最近 8192 条记录：入口/返回配对、相对时间、调用耗时、线程 ID、嵌套深度、调用点模块偏移，以及前一至两个参数机器字的十六进制值（可能是指针，不解引用）。分享报告前请注意地址信息。以下人工标记按钮会记录标记并自动收起面板。" size:12]];
@@ -162,15 +163,18 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v2";
             self.status.text = @"配置错误：请输入 0–999999999 的整数"; return NO;
         }
         uint32_t n = (uint32_t)text.longLongValue;
-        if ([@[@"maxSearch",@"maxUnits",@"timeout"] containsObject:key] && (n<1 || n>10000)) {
-            self.status.text = @"次数和超时必须在 1–10000 之间"; return NO;
+        if ([@[@"maxSearch",@"maxUnits",@"maxBattles"] containsObject:key] && (n<1 || n>10000)) {
+            self.status.text = @"搜索数、部署数和战斗数必须在 1–10000 之间"; return NO;
+        }
+        if ([key isEqualToString:@"noGrowth"] && (n<1 || n>300)) {
+            self.status.text = @"无战利品增长秒数必须在 1–300 之间"; return NO;
         }
         values[key] = @(n);
     }
     if ([values[@"timeout"] unsignedIntValue]>1800) { self.status.text=@"战斗秒数必须为 1–1800"; return NO; }
     *out = (CABattleConfig){.minGold=[values[@"gold"] unsignedLongLongValue], .minElixir=[values[@"elixir"] unsignedLongLongValue],
         .minDark=[values[@"dark"] unsignedLongLongValue], .maxSearch=[values[@"maxSearch"] unsignedIntValue],
-        .maxUnits=[values[@"maxUnits"] unsignedIntValue], .actionTimeout=20, .battleTimeout=[values[@"timeout"] doubleValue]};
+        .maxUnits=[values[@"maxUnits"] unsignedIntValue], .maxBattles=[values[@"maxBattles"] unsignedIntValue], .actionTimeout=20, .battleTimeout=[values[@"timeout"] doubleValue], .noLootGrowthTimeout=[values[@"noGrowth"] doubleValue]};
     [NSUserDefaults.standardUserDefaults setObject:values forKey:CAPrefs];
     [self.view endEditing:YES]; return YES;
 }
@@ -209,7 +213,7 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v2";
 }
 - (NSDictionary *)completeReport {
     CAEvent(@"report.export",@{});
-    return @{@"schemaVersion":@1,@"pluginVersion":@"0.4.0",@"observation":CAObserveSnapshot(),
+    return @{@"schemaVersion":@1,@"pluginVersion":@"0.4.2",@"observation":CAObserveSnapshot(),
         @"runtime":[CABattleRuntime.shared snapshot],@"journal":CAEventSnapshot()};
 }
 - (void)exportReport {
@@ -263,7 +267,7 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v2";
 - (void)markNextRound { [self markAndHide:CAObserveMarkerNextRoundVisible label:@"下一轮/新对手已显示"]; }
 - (void)manualStop { [self stop:@"manual"]; }
 - (void)copyLog {
-    UIPasteboard.generalPasteboard.string = [@"ClashAssist 0.4.0 UI EVENTS\n" stringByAppendingString:[self.events componentsJoinedByString:@"\n"]];
+    UIPasteboard.generalPasteboard.string = [@"ClashAssist 0.4.2 UI EVENTS\n" stringByAppendingString:[self.events componentsJoinedByString:@"\n"]];
     self.status.text = @"界面日志已复制；完整报告请使用诊断导出";
 }
 - (void)viewDidLayoutSubviews { [super viewDidLayoutSubviews]; [self clampBubble]; }

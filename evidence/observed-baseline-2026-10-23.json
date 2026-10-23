@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "sourceReport": "部落冲突日志.json",
+  "captureTimeUTC": "2026-10-23T16:21:05Z",
+  "sourcePluginVersion": "0.4.0",
+  "targetBuildVersion": "18.116.1",
+  "osVersion": "iOS 17.3 (21D50)",
+  "observationDurationMs": 186866.03875,
+  "timelineRecords": 135,
+  "retainedRecords": 135,
+  "droppedRecords": 0,
+  "hookCounters": {
+    "普通按钮分发": {
+      "hits": 0,
+      "mainThreadHits": 0,
+      "returnedFromOriginal": 0
+    },
+    "结束确认候选": {
+      "hits": 0,
+      "mainThreadHits": 0,
+      "returnedFromOriginal": 0
+    },
+    "统一命令提交候选": {
+      "hits": 67,
+      "mainThreadHits": 67,
+      "returnedFromOriginal": 67
+    }
+  },
+  "candidateSignatureVerification": {
+    "verified": 0,
+    "total": 3
+  },
+  "manualActionMarkers": 0,
+  "realWorldStateSamples": 0,
+  "cumulativeLootSamples": 0,
+  "runtimeAtCapture": {
+    "backend": "not-connected",
+    "running": false,
+    "searches": 0,
+    "confirmedDeployed": 0
+  },
+  "unifiedCandidateCallerFrequency": [
+    40,
+    13,
+    5,
+    3,
+    2,
+    2,
+    1,
+    1
+  ],
+  "interpretation": {
+    "supported": [
+      "统一命令提交候选在本次观测中命中67次，且均在主线程并返回原函数",
+      "其余两个候选Hook本次未命中",
+      "三个候选的函数签名均未验证",
+      "没有人工操作标记或真实战利品采样",
+      "采集时运行后端未连接"
+    ],
+    "notSupported": [
+      "不能确认任何候选Hook对应搜索、部署或结束战斗",
+      "不能从调用次数推断真实兵力部署次数",
+      "不能读取或推断对手资源、累计战利品、剩余兵力或场景",
+      "不能据此生成安全的游戏内调用参数"
+    ]
+  },
+  "privacy": {
+    "rawArgumentWordsIncluded": false,
+    "pointerValuesIncluded": false,
+    "callerOffsetsIncluded": false
+  }
+}

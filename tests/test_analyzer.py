@@ -26,6 +26,16 @@ class AnalyzerTests(unittest.TestCase):
                 self.assertIn("Most common observed caller offsets",result.stdout)
                 self.assertIn("Call pairing",result.stdout)
                 if "journal" in data: self.assertIn("missing backend",result.stdout)
+    def test_evidence_findings_report_missing_markers_and_backend(self):
+        observation={"timeline":[],"installDiagnostics":[{"signatureVerified":False}],
+                     "hooks":[{"name":"a","hits":0},{"name":"b","hits":4}]}
+        envelope={"observation":observation,"runtime":{"backend":"not-connected"}}
+        findings=analyzer.evidence_findings(envelope, observation)
+        joined="\n".join(findings)
+        self.assertIn("人工操作标记",joined)
+        self.assertIn("函数签名均未验证",joined)
+        self.assertIn("后端未注册",joined)
+        self.assertIn("战利品累计值",joined)
     def test_invalid_json(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/"bad.json"; path.write_text("{")

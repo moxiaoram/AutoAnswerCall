@@ -9,7 +9,7 @@
 @property(nonatomic,readonly) NSString *expectedBuildVersion;
 // Validate exact image UUID, signatures, lifecycle, thread and plan prerequisites.
 - (BOOL)validate:(NSError **)error;
-// Fresh observed game state, not generated values. Errors must fail closed.
+// Fresh observed game state, not generated values. CAWorld.gold/elixir/dark are remaining opponent loot; loot*Earned are cumulative gains for the current battle. Errors must fail closed.
 - (BOOL)readWorld:(CAWorld *)world error:(NSError **)error;
 // YES = request accepted only; core waits for observed confirmation.
 - (BOOL)searchOpponent:(NSError **)error;
@@ -18,6 +18,8 @@
 - (BOOL)deployOneUnit:(NSError **)error;
 // Handle end/confirm flow, then observe settlement; do not claim success here.
 - (BOOL)endBattle:(NSError **)error;
+// Navigate from confirmed settlement back to the home scene; do not assume success until readWorld reports CAHome.
+- (BOOL)returnHome:(NSError **)error;
 // Cancel all deferred submissions/confirmation steps on stop/error/settlement.
 // Already accepted game commands cannot be undone. Must be idempotent.
 - (void)cancelPendingActions;

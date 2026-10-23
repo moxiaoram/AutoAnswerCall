@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline summary for ClashAssist 0.4.0 diagnostic JSON. No network access."""
+"""Offline summary for ClashAssist 0.4.1 diagnostic JSON. No network access."""
 import argparse
 import json
 import math
@@ -36,6 +36,39 @@ def summarize_calls(timeline):
             "p95Ms": durations[max(0, math.ceil(len(durations)*0.95)-1)] if durations else None,
             "maxMs": max(durations) if durations else None}
 
+
+
+def evidence_findings(envelope, observation):
+    """Evidence-limited interpretation; never maps offsets to game actions."""
+    findings = []
+    timeline = observation.get("timeline", [])
+    markers = [e for e in timeline if isinstance(e, dict) and e.get("kind") == "人工操作标记"]
+    if not markers:
+        findings.append("未发现人工操作标记：无法把调用时间线与搜索/下兵/结束动作可靠对齐。")
+    diagnostics = observation.get("installDiagnostics", [])
+    if diagnostics and not any(d.get("signatureVerified") is True for d in diagnostics if isinstance(d, dict)):
+        findings.append("候选 Hook 的函数签名均未验证；指纹匹配不等于 ABI/参数语义已确认。")
+    hooks = [h for h in observation.get("hooks", []) if isinstance(h, dict)]
+    nonzero = [h for h in hooks if isinstance(h.get("hits"), (int, float)) and h.get("hits", 0) > 0]
+    if len(nonzero) == 1:
+        findings.append("本次只有一个候选 Hook 有命中；不能从这份报告确认搜索、部署和结束三个独立入口。")
+    runtime = envelope.get("runtime", {}) if isinstance(envelope, dict) else {}
+    if isinstance(runtime, dict) and runtime.get("backend") in ("not-connected", "未接入"):
+        findings.append("报告中的自动战斗后端未注册；运行时未执行真实搜索/部署/结束操作。")
+    has_loot = any(any(k in e for k in ("lootGoldEarned", "lootElixirEarned", "lootDarkEarned")) for e in timeline if isinstance(e, dict))
+    journal = envelope.get("journal", {}) if isinstance(envelope, dict) else {}
+    if isinstance(journal, dict):
+        for entry in journal.get("events", []):
+            fields = entry.get("fields", {}) if isinstance(entry, dict) else {}
+            world = fields.get("world", {}) if isinstance(fields, dict) else {}
+            if isinstance(world, dict) and any(k in world for k in ("lootGoldEarned", "lootElixirEarned", "lootDarkEarned")):
+                has_loot = True
+                break
+    if not has_loot:
+        findings.append("时间线没有真实战利品累计值；无法计算五秒无增长区间。")
+    if not findings:
+        findings.append("有人工标记和更多观测字段可供进一步对齐，但仍需人工验证操作结果。")
+    return findings
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -108,6 +141,11 @@ def main():
     print("\nCall pairing / wrapper durations (retained entries only)")
     print(json.dumps(summarize_calls(timeline), ensure_ascii=False))
     print("Missing pairs may be overwritten, in flight, or stopped; do not infer a crash.")
+
+    print("\nEvidence-limited findings")
+    print("-" * 72)
+    for finding in evidence_findings(envelope, data):
+        print("- " + finding)
     print(f"\nTimeline entries: {len(timeline)}")
     print("-" * 72)
     for event in timeline:
@@ -150,10 +188,11 @@ def main():
     print("\nInstall diagnostics")
     print("-" * 72)
     for item in data.get("installDiagnostics", []):
-        print("{name}: offset={offset} readable={readable} fingerprint={fingerprintMatched} installed={hookInstalled}".format(
+        print("{name}: offset={offset} readable={readable} fingerprint={fingerprintMatched} signatureVerified={signatureVerified} installed={hookInstalled}".format(
             name=item.get("name", item.get("status", "unknown")),
             offset=item.get("offset", "n/a"), readable=item.get("readable", "n/a"),
             fingerprintMatched=item.get("fingerprintMatched", "n/a"),
+            signatureVerified=item.get("signatureVerified", "n/a"),
             hookInstalled=item.get("hookInstalled", "n/a")))
 
     print("\nInterpretation guardrails")

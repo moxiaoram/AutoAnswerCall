@@ -1,5 +1,6 @@
 #import "CABattleRuntime.h"
 #import "CAEventLog.h"
+#import "CAObservedEvidence.h"
 #import <UIKit/UIKit.h>
 #import <math.h>
 
@@ -14,7 +15,7 @@
 @implementation CABattleRuntime
 + (instancetype)shared { static CABattleRuntime *value; static dispatch_once_t once; dispatch_once(&once, ^{ value=[self new]; }); return value; }
 - (BOOL)running { return CABattleRunning(&_battle); }
-- (NSString *)statusText { return [NSString stringWithFormat:@"后端：%@ · 阶段 %u · %@ · 搜索 %u · 已确认下兵 %u",self.backend.backendName ?: @"未接入",(unsigned)_battle.phase,_battle.reason ? [NSString stringWithUTF8String:_battle.reason] : @"就绪",_battle.searches,_battle.deployed]; }
+- (NSString *)statusText { return [NSString stringWithFormat:@"后端：%@ · 阶段 %u · %@ · 搜索 %u · 已确认下兵 %u · 已完成战斗 %u/%u",self.backend.backendName ?: @"未接入",(unsigned)_battle.phase,_battle.reason ? [NSString stringWithUTF8String:_battle.reason] : @"就绪",_battle.searches,_battle.deployed,_battle.battlesCompleted,_battle.config.maxBattles]; }
 - (BOOL)fail:(NSString *)message error:(NSError **)error {
     if (error) *error=[NSError errorWithDomain:@"ClashAssist.Battle" code:1 userInfo:@{NSLocalizedDescriptionKey:message}];
     CAEvent(@"runtime.error",@{@"message":message,@"runID":self.runID ?: @""}); return NO;
@@ -22,7 +23,12 @@
 - (BOOL)registerBackend:(id<CAVerifiedGameBackend>)backend error:(NSError **)error {
     if (!NSThread.isMainThread || self.running) return [self fail:@"注册后端须在主线程且任务已停止" error:error];
     if (!backend || ![backend conformsToProtocol:@protocol(CAVerifiedGameBackend)]) return [self fail:@"后端不符合接口" error:error];
-    self.backend=backend; CAEvent(@"backend.registered",@{@"name":backend.backendName ?: @""}); return YES;
+    self.backend=backend;
+    CAEvent(@"backend.registered",@{@"name":backend.backendName ?: @"",
+        @"expectedBundleID":backend.expectedBundleID ?: @"",
+        @"expectedBuildVersion":backend.expectedBuildVersion ?: @"",
+        @"evidenceBaseline":CAObservedEvidenceSummary()});
+    return YES;
 }
 - (BOOL)read:(CAWorld *)world error:(NSError **)error {
     *world=(CAWorld){0};
@@ -31,17 +37,20 @@
     return YES;
 }
 - (NSDictionary *)worldFields:(CAWorld)w {
-    return @{@"scene":@(w.scene),@"revision":@(w.revision),@"opponentID":@(w.opponentID),@"gold":@(w.gold),@"elixir":@(w.elixir),@"dark":@(w.dark),@"remainingUnits":@(w.remainingUnits),@"deployedUnits":@(w.deployedUnits)};
+    return @{@"scene":@(w.scene),@"revision":@(w.revision),@"opponentID":@(w.opponentID),@"gold":@(w.gold),@"elixir":@(w.elixir),@"dark":@(w.dark),@"remainingUnits":@(w.remainingUnits),@"deployedUnits":@(w.deployedUnits),@"lootGoldEarned":@(w.lootGoldEarned),@"lootElixirEarned":@(w.lootElixirEarned),@"lootDarkEarned":@(w.lootDarkEarned)};
 }
 - (void)perform:(CAAction)action {
     if (action==CANoAction) return;
     NSString *actionID=NSUUID.UUID.UUIDString; self.pendingActionID=actionID;
-    CAEvent(@"action.request",@{@"runID":self.runID,@"actionID":actionID,@"action":@(action),@"revision":@(_battle.commandRevision)});
+    CAEvent(@"action.request",@{@"runID":self.runID,@"actionID":actionID,@"action":@(action),
+        @"revision":@(_battle.commandRevision),@"phase":@(_battle.phase),
+        @"reason":[NSString stringWithUTF8String:_battle.reason ?: ""]});
     NSError *error=nil; BOOL accepted=NO;
     switch (action) {
         case CASearch: accepted=[self.backend searchOpponent:&error]; break;
         case CADeployOne: accepted=[self.backend deployOneUnit:&error]; break;
         case CAEndBattle: accepted=[self.backend endBattle:&error]; break;
+        case CAReturnHome: accepted=[self.backend returnHome:&error]; break;
         default: break;
     }
     CAEvent(@"action.result",@{@"runID":self.runID,@"actionID":actionID,@"accepted":@(accepted),@"error":error.localizedDescription ?: @"",@"errorDomain":error.domain ?: @"",@"errorCode":@(error.code)});
@@ -50,16 +59,31 @@
 - (BOOL)start:(CABattleConfig)config error:(NSError **)error {
     if (!NSThread.isMainThread || self.running) return [self fail:@"任务已运行或当前不在主线程" error:error];
     self.runID=NSUUID.UUID.UUIDString;
-    if (!self.backend) return [self fail:@"未接入真实游戏后端：需要准确构建版本、已验证函数签名及状态读取接口；不会运行模拟" error:error];
-    if (UIApplication.sharedApplication.applicationState!=UIApplicationStateActive) return [self fail:@"游戏须在前台" error:error];
-    NSString *bundle=NSBundle.mainBundle.bundleIdentifier, *build=NSBundle.mainBundle.infoDictionary[@"CFBundleVersion"];
-    if (!self.backend.expectedBuildVersion.length || ![bundle isEqual:self.backend.expectedBundleID] || ![build isEqual:self.backend.expectedBuildVersion]) return [self fail:@"游戏构建版本与后端不匹配" error:error];
+    NSString *bundle=NSBundle.mainBundle.bundleIdentifier ?: @"";
+    NSString *build=NSBundle.mainBundle.infoDictionary[@"CFBundleVersion"] ?: @"";
+    UIApplicationState appState=UIApplication.sharedApplication.applicationState;
+    CAEvent(@"runtime.preflight",@{@"runID":self.runID,
+        @"backendRegistered":@(self.backend != nil),
+        @"bundleID":bundle, @"buildVersion":build, @"applicationState":@(appState),
+        @"evidenceBaseline":CAObservedEvidenceSummary()});
+    if (!self.backend) {
+        NSString *message=@"未接入真实游戏后端：现有日志没有已验证的操作签名或真实状态样本；为避免猜测调用，任务保持停止";
+        CAEvent(@"runtime.start.blocked",@{@"runID":self.runID, @"reason":@"backend-not-connected",
+            @"missingCapabilities":@[@"fresh-scene-state",@"opponent-loot",@"cumulative-loot",@"remaining-troops",@"verified-search",@"verified-single-unit-deploy",@"verified-end-and-settlement",@"verified-return-home"]});
+        return [self fail:message error:error];
+    }
+    if (appState!=UIApplicationStateActive) return [self fail:@"游戏须在前台" error:error];
+    if (!self.backend.expectedBuildVersion.length || ![bundle isEqual:self.backend.expectedBundleID] || ![build isEqual:self.backend.expectedBuildVersion]) {
+        CAEvent(@"backend.build-mismatch",@{@"runID":self.runID, @"actualBundleID":bundle, @"actualBuildVersion":build,
+            @"expectedBundleID":self.backend.expectedBundleID ?: @"", @"expectedBuildVersion":self.backend.expectedBuildVersion ?: @""});
+        return [self fail:@"游戏构建版本与后端不匹配" error:error];
+    }
     if (![self.backend validate:error]) { CAEvent(@"backend.validation.failed",@{@"error":(error && *error) ? (*error).localizedDescription : @"validation failed"}); return NO; }
     CAWorld world;
     if (![self read:&world error:error]) return [self fail:(error && *error) ? (*error).localizedDescription : @"读取游戏状态失败" error:error];
     double now=NSProcessInfo.processInfo.systemUptime;
     CAAction action=CABattleStart(&_battle,config,world,now);
-    CAEvent(@"run.start",@{@"runID":self.runID,@"world":[self worldFields:world],@"config":@{@"minGold":@(config.minGold),@"minElixir":@(config.minElixir),@"minDark":@(config.minDark),@"maxSearch":@(config.maxSearch),@"maxUnits":@(config.maxUnits),@"actionTimeout":@(config.actionTimeout),@"battleTimeout":@(config.battleTimeout)}});
+    CAEvent(@"run.start",@{@"runID":self.runID,@"world":[self worldFields:world],@"config":@{@"minGold":@(config.minGold),@"minElixir":@(config.minElixir),@"minDark":@(config.minDark),@"maxSearch":@(config.maxSearch),@"maxUnits":@(config.maxUnits),@"maxBattles":@(config.maxBattles),@"actionTimeout":@(config.actionTimeout),@"battleTimeout":@(config.battleTimeout),@"noLootGrowthTimeout":@(config.noLootGrowthTimeout)}});
     [self perform:action];
     if (!self.running) return [self fail:self.statusText error:error];
     uint64_t generation=++self.runGeneration;
@@ -88,5 +112,5 @@
     ++self.runGeneration; [self.timer invalidate]; self.timer=nil;
     if (self.running) { [self.backend cancelPendingActions]; _battle.phase=CAIdle; _battle.reason="stopped"; CAEvent(@"run.stopped",@{@"runID":self.runID ?: @"",@"reason":reason}); }
 }
-- (NSDictionary *)snapshot { return @{@"backend":self.backend.backendName ?: @"not-connected",@"runID":self.runID ?: @"",@"running":@(self.running),@"phase":@(_battle.phase),@"reason":[NSString stringWithUTF8String:_battle.reason ?: "idle"],@"searches":@(_battle.searches),@"confirmedDeployed":@(_battle.deployed)}; }
+- (NSDictionary *)snapshot { return @{@"backend":self.backend.backendName ?: @"not-connected",@"runID":self.runID ?: @"",@"running":@(self.running),@"phase":@(_battle.phase),@"reason":[NSString stringWithUTF8String:_battle.reason ?: "idle"],@"searches":@(_battle.searches),@"confirmedDeployed":@(_battle.deployed),@"battlesCompleted":@(_battle.battlesCompleted),@"maxBattles":@(_battle.config.maxBattles)}; }
 @end

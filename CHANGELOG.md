@@ -1,10 +1,16 @@
-# 0.4.0
+# 0.4.2
 
-- Remove all shipped synthetic battle state/data and simulator UI.
-- Add a confirmed-state battle controller and main-thread runtime with a verified-backend protocol; explicitly reject starting without an implementation.
-- Require exact bundle/build validation, fresh world observations, changed opponent identity after searching, exactly one confirmed deployment per request, and observed settlement.
-- Add structured run/action/state logs, bounded asynchronous JSONL writes, full JSON file export and 5-second observation checkpoints.
-- Serialize ring records/session changes and prevent late returns crossing sessions; expand to 8192 records / 300 seconds.
-- Add retained-call pairing and duration analysis; retain support for old JSON reports.
-- Replace simulator tests with 20 confirmed-state controller groups and four analyzer tests; update CI.
-- Concrete game API implementation and live-game validation remain unavailable.
+- Inject sanitized observed-log baseline into source and runtime diagnostics.
+- Add `runtime.preflight` and `runtime.start.blocked` events with missing backend capabilities.
+- Add backend expected/actual build details and action phase/reason fields to diagnostics.
+- Add tests for observed evidence counts, missing live-state evidence, and absence of raw pointers/callsite offsets in the shareable fixture.
+- Preserve fail-closed behavior when no backend is connected. No live-game action backend is added.
+
+# 0.4.1
+
+- Analyze the supplied report and document the evidence: only the unified-command candidate hit (67 calls); the other two candidates had zero hits; all candidate signatures remained unverified; no manual markers or loot values were recorded; runtime backend was not connected.
+- Add cumulative battle-loot fields separate from opponent's currently available resources.
+- End request can be issued after five seconds without cumulative loot growth while a fresh observation confirms the fight is still active; retain a per-battle hard timeout.
+- Add a bounded multi-battle loop: confirm settlement, request return home, confirm home, then search again until maxBattles/maxSearch.
+- Reset per-battle counters and fail closed on regressions/timeouts.
+- Add evidence-limited report findings to offline analyzer and tests.

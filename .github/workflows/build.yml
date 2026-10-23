@@ -1,4 +1,4 @@
-name: Build ClashAssist 0.4.0 diagnostic lab
+name: Build ClashAssist 0.4.1
 on:
   workflow_dispatch:
   push:
@@ -13,7 +13,7 @@ jobs:
           brew install ldid dpkg
           git clone --depth 1 --recursive https://github.com/roothide/theos.git "$RUNNER_TEMP/theos"
           echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
-      - name: Test confirmed-state battle controller
+      - name: Test loot-growth and bounded-loop controller
         run: |
           set -euo pipefail
           mkdir -p build
@@ -47,7 +47,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ClashAssist-0.4.0-RootHide-diagnostics
+          name: ClashAssist-0.4.1-RootHide-source-validation
           path: |
             packages/*.deb
             build/*.log

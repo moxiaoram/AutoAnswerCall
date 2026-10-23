@@ -1,7 +1,14 @@
-# Status · ClashAssist 0.4.0
+# Status · ClashAssist 0.4.2
 
-Implemented: removed synthetic simulator; 8192-entry serialized hook timeline; session isolation; 300-second capture; periodic disk checkpoints; structured rolling JSONL journal; full JSON export; confirmed-state single-battle scheduler and explicit backend registration contract; exact build gate; timeout/error stop behavior; offline analyzer and regression tests.
+Implemented and locally tested:
+- Sanitized facts from the supplied report are embedded in `evidence/observed-baseline-2026-10-23.json`.
+- Runtime logs the evidence baseline, current app/build preflight, missing backend capabilities, backend registration details, build mismatch, and action request phase/reason.
+- Existing generic state machine distinguishes opponent's remaining loot from cumulative battle loot; handles no-growth timeout, hard timeout, settlement confirmation, home confirmation, and bounded next-round transitions.
+- Offline report analyzer and diagnostic checks remain included.
+- Evidence-baseline tests verify the captured counts and ensure no raw pointers or guessed action mappings are included.
 
-Missing: concrete verified game backend implementing search / deployment / ending / world-state reads. No real automated battle can run from this repository alone.
+Not implemented:
+- Real-game state reader or live-game action backend. No verified API/ABI, scene reader, loot reader, troop counter, search, deploy, end-battle, or return-home interface is available from the supplied report.
 
-Unverified: iOS compilation, package generation, on-device injection/UI, existing candidate Hook signatures, target-game compatibility, actual game actions. Candidate offsets and raw argument words must not be treated as verified callable APIs.
+Not verified:
+- Theos/iOS build, `.deb` packaging, injection, device runtime, or live-game operation.

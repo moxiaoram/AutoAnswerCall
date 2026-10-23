@@ -9,6 +9,6 @@ ClashAssist_FILES := CALabUI.m CAObserve.m CABattleRuntime.m CAEventLog.m
 ClashAssist_LIBRARIES := substrate
 ClashAssist_CFLAGS := -fobjc-arc -Wall -Wextra
 ClashAssist_FRAMEWORKS := Foundation UIKit
-PACKAGE_VERSION := 0.4.0
+PACKAGE_VERSION := 0.4.2
 
 include $(THEOS_MAKE_PATH)/tweak.mk
