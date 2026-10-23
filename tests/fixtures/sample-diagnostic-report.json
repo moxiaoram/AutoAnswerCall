@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 2,
+  "scope": "manual-action-observation-only",
+  "sessionID": "SYNTHETIC-EXAMPLE-ONLY",
+  "active": false,
+  "startedAt": "2026-01-01T00:00:00.000Z",
+  "durationMs": 900,
+  "stopReason": "manual",
+  "environment": {"bundleID": "example.synthetic", "bundleVersion": "0.0", "buildVersion": "0", "osVersion": "synthetic fixture"},
+  "hooks": [
+    {"name": "普通按钮分发", "hits": 1, "mainThreadHits": 1, "returnedFromOriginal": 1},
+    {"name": "结束确认候选", "hits": 1, "mainThreadHits": 1, "returnedFromOriginal": 1},
+    {"name": "统一命令提交候选", "hits": 2, "mainThreadHits": 2, "returnedFromOriginal": 2}
+  ],
+  "installDiagnostics": [],
+  "callerSummary": [
+    {"hook": "统一命令提交候选", "callerOffset": "0x1234", "calls": 2, "mainThreadCalls": 2}
+  ],
+  "timelineInfo": {"totalRecords": 8, "retainedRecords": 8, "droppedOldestRecords": 0},
+  "timeline": [
+    {"seq": 1, "elapsedMs": 0.1, "kind": "观测生命周期", "phase": "start", "threadID": 1, "mainThread": true, "depth": 0, "callerOffset": "outside-target-image", "callerInsideTargetImage": false},
+    {"seq": 2, "elapsedMs": 100.0, "kind": "人工操作标记", "phase": "marker", "marker": "即将点击搜索对手", "markerCode": 1, "threadID": 1, "mainThread": true, "depth": 0, "callerOffset": "outside-target-image", "callerInsideTargetImage": false},
+    {"seq": 3, "elapsedMs": 102.0, "kind": "普通按钮分发", "phase": "enter", "callID": 1, "threadID": 1, "mainThread": true, "depth": 1, "callerOffset": "0x1234", "callerInsideTargetImage": true, "arg1Present": true, "arg2Present": true, "arg1RawHex": "0x1000", "arg2RawHex": "0x2000"},
+    {"seq": 4, "elapsedMs": 104.0, "kind": "普通按钮分发", "phase": "return", "callID": 1, "threadID": 1, "mainThread": true, "depth": 1, "callerOffset": "0x1234", "callerInsideTargetImage": true, "durationMs": 2.0},
+    {"seq": 5, "elapsedMs": 200.0, "kind": "人工操作标记", "phase": "marker", "marker": "对手战场/搜索结果已显示", "markerCode": 2, "threadID": 1, "mainThread": true, "depth": 0, "callerOffset": "outside-target-image", "callerInsideTargetImage": false},
+    {"seq": 6, "elapsedMs": 300.0, "kind": "统一命令提交候选", "phase": "enter", "callID": 3, "threadID": 1, "mainThread": true, "depth": 1, "callerOffset": "0x1234", "callerInsideTargetImage": true, "arg1Present": true, "arg2Present": false, "arg1RawHex": "0x3000", "arg2RawHex": "0x0"},
+    {"seq": 7, "elapsedMs": 302.0, "kind": "统一命令提交候选", "phase": "return", "callID": 3, "threadID": 1, "mainThread": true, "depth": 1, "callerOffset": "0x1234", "callerInsideTargetImage": true, "durationMs": 2.0},
+    {"seq": 8, "elapsedMs": 900.0, "kind": "观测生命周期", "phase": "stop", "threadID": 1, "mainThread": true, "depth": 0, "callerOffset": "outside-target-image", "callerInsideTargetImage": false}
+  ],
+  "privacy": {"rawArgumentsLogged": false, "rawPointersLogged": false, "memoryDereferenced": false, "screenCaptured": false, "networkCaptured": false},
+  "note": "SYNTHETIC TEST FIXTURE ONLY; not a real game report."
+}

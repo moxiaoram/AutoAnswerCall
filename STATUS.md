@@ -1,18 +1,7 @@
-# 0.3.2 状态
+# Status · ClashAssist 0.4.0
 
-## 已完成
+Implemented: removed synthetic simulator; 8192-entry serialized hook timeline; session isolation; 300-second capture; periodic disk checkpoints; structured rolling JSONL journal; full JSON export; confirmed-state single-battle scheduler and explicit backend registration contract; exact build gate; timeout/error stop behavior; offline analyzer and regression tests.
 
-- 资源筛选、部署、资源观测、无增长结束、单场时钟和结算的事件驱动状态机入口。
-- 任一资源快照变化重置无增长计时；全部 8 个单位部署后，连续 5 个无增长采样进入结算。
-- 每场开始时重置观测基线；使用 64 位观测计数，避免 32 位截断。
-- 保留模拟模式的循环、总搜索上限、总战斗上限、单场超时、手动停止和后台停止。
-- C 单元测试覆盖模拟循环、超时、无增长结束、事件驱动循环恢复和 64 位资源快照。
+Missing: concrete verified game backend implementing search / deployment / ending / world-state reads. No real automated battle can run from this repository alone.
 
-## 尚未完成
-
-- 真实游戏资源读取器。
-- 真实搜索、下兵、结束战斗的后端适配器。
-- 游戏函数签名、调用约束、结束/结算条件的版本级验证。
-- RootHide deb 的 macOS/Theos 构建和 iOS 真机验证。
-
-现有 `CAObserve.m` 仍是被动调用计数 Hook。0.3.2 不会主动调用未经验证的游戏函数，不会模拟触摸，也不宣称可自动完成真实对局。
+Unverified: iOS compilation, package generation, on-device injection/UI, existing candidate Hook signatures, target-game compatibility, actual game actions. Candidate offsets and raw argument words must not be treated as verified callable APIs.

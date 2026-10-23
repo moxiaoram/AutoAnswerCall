@@ -1,8 +1,9 @@
 #import <UIKit/UIKit.h>
-#import "CALabCore.h"
+#import "CABattleRuntime.h"
+#import "CAEventLog.h"
 #import "CAObserve.h"
 
-static NSString * const CAPrefs = @"ClashAssist.settings.v1";
+static NSString * const CAPrefs = @"ClashAssist.settings.v2";
 @interface CALabWindow : UIWindow
 @end
 @implementation CALabWindow
@@ -21,12 +22,12 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
 @property(nonatomic,strong) UITextView *logView;
 @property(nonatomic,strong) NSMutableArray<NSString *> *events;
 @property(nonatomic,strong) NSMutableDictionary<NSString *,UITextField *> *fields;
-@property(nonatomic,strong) UISwitch *loop;
 @property(nonatomic,strong) UIButton *startButton;
 @property(nonatomic,strong) UIButton *saveButton;
 @property(nonatomic,strong) UIScrollView *scroll;
 @property(nonatomic,strong) NSTimer *timer;
-@property(nonatomic,assign) CALab lab;
+@property(nonatomic,strong) NSURL *exportURL;
+@property(nonatomic,copy) NSString *lastRuntimeStatus;
 @property(nonatomic,assign) CGPoint dragOrigin;
 @property(nonatomic,assign) BOOL dragging;
 - (void)attach;
@@ -57,7 +58,7 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
     for (NSLayoutConstraint *c in self.bubble.constraints.copy) if (c.firstAttribute == NSLayoutAttributeHeight) c.active = NO;
     [self.bubble addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(pan:)]];
     [self.bubble addGestureRecognizer:[[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(longPress:)]];
-    self.bubble.accessibilityLabel = @"本地模拟实验，点击面板，长按停止";
+    self.bubble.accessibilityLabel = @"战斗诊断，点击面板，长按停止";
     [self.view addSubview:self.bubble];
     self.panel = [UIView new]; self.panel.backgroundColor = [UIColor colorWithWhite:0.06 alpha:0.97];
     self.panel.layer.cornerRadius = 14; self.panel.clipsToBounds = YES; self.panel.hidden = YES;
@@ -79,7 +80,7 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
         [root.trailingAnchor constraintEqualToAnchor:self.panel.trailingAnchor constant:-12],
         [root.topAnchor constraintEqualToAnchor:self.panel.topAnchor constant:10],
         [root.bottomAnchor constraintEqualToAnchor:self.panel.bottomAnchor constant:-10]]];
-    UILabel *heading = [self label:@"调用观测 0.3.2 · 真实战斗后端未接入" size:16];
+    UILabel *heading = [self label:@"ClashAssist 0.4.0 · 战斗调度与诊断" size:16];
     UIButton *close = [self button:@"收起" action:@selector(toggle) color:UIColor.darkGrayColor];
     [close.widthAnchor constraintEqualToConstant:66].active = YES;
     UIStackView *header = [[UIStackView alloc] initWithArrangedSubviews:@[heading,close]]; header.spacing = 8;
@@ -97,9 +98,9 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
         [content.bottomAnchor constraintEqualToAnchor:self.scroll.contentLayoutGuide.bottomAnchor],
         [content.widthAnchor constraintEqualToAnchor:self.scroll.frameLayoutGuide.widthAnchor]]];
     NSDictionary *saved = [NSUserDefaults.standardUserDefaults dictionaryForKey:CAPrefs];
-    NSArray *rows = @[@[@"gold",@"模拟最低金币",@500000],@[@"elixir",@"模拟最低圣水",@500000],
-        @[@"dark",@"模拟最低黑水",@0],@[@"maxSearch",@"总搜索上限",@50],
-        @[@"maxBattles",@"战斗次数上限",@10],@[@"timeout",@"每场超时（模拟秒）",@180]];
+    NSArray *rows = @[@[@"gold",@"最低金币",@500000],@[@"elixir",@"最低圣水",@500000],
+        @[@"dark",@"最低黑水",@0],@[@"maxSearch",@"总搜索上限",@50],
+        @[@"maxUnits",@"单场最多部署单位",@100],@[@"timeout",@"主动结束战斗秒数（1–1800）",@180]];
     for (NSArray *row in rows) {
         UILabel *label = [self label:row[1] size:14];
         UITextField *field = [UITextField new]; field.borderStyle = UITextBorderStyleRoundedRect;
@@ -112,35 +113,48 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
         UIStackView *line = [[UIStackView alloc] initWithArrangedSubviews:@[label,field]]; line.spacing = 8;
         [content addArrangedSubview:line];
     }
-    self.loop = [UISwitch new]; self.loop.on = [saved[@"loop"] boolValue];
-    UIStackView *loopRow = [[UIStackView alloc] initWithArrangedSubviews:@[[self label:@"结算后继续模拟搜索" size:14],self.loop]];
-    [content addArrangedSubview:loopRow];
-    [content addArrangedSubview:[self label:@"当前仅本地模拟：不会读取真实对手资源，也不会搜索、下兵或结束真实对局。真实模式须接入并验证游戏后端。" size:12]];
-    [content addArrangedSubview:[self label:@"固定模拟兵力：8；每 0.7 秒推进一个模拟秒。状态及收益仅存在本工具内。" size:12]];
-    [content addArrangedSubview:[self button:@"观测手动操作 60 秒（不自动战斗）" action:@selector(observe) color:UIColor.systemOrangeColor]];
-    [content addArrangedSubview:[self button:@"复制调用计数报告" action:@selector(copyObservation) color:UIColor.darkGrayColor]];
-    [content addArrangedSubview:[self label:@"观测只统计三处候选调用；开启后请收起面板手动操作。停止按钮停止计数，Hook 透传至游戏退出。" size:12]];
+    [content addArrangedSubview:[self label:@"真实接口由已验证后端提供。未注册后端时启动会报错；一次启动只处理一场战斗，结算后停止。长按悬浮按钮可停止后续指令。" size:12]];
+    [content addArrangedSubview:[self button:@"观测调用 300 秒" action:@selector(observe) color:UIColor.systemOrangeColor]];
+    [content addArrangedSubview:[self button:@"复制详细调用诊断 JSON" action:@selector(copyObservation) color:UIColor.darkGrayColor]];
+    [content addArrangedSubview:[self label:@"最多保留最近 8192 条记录：入口/返回配对、相对时间、调用耗时、线程 ID、嵌套深度、调用点模块偏移，以及前一至两个参数机器字的十六进制值（可能是指针，不解引用）。分享报告前请注意地址信息。以下人工标记按钮会记录标记并自动收起面板。" size:12]];
+    [content addArrangedSubview:[self button:@"标记：即将搜索对手" action:@selector(markSearchBefore) color:UIColor.systemIndigoColor]];
+    [content addArrangedSubview:[self button:@"标记：搜索结果/战场已显示" action:@selector(markSearchResult) color:UIColor.systemIndigoColor]];
+    [content addArrangedSubview:[self button:@"标记：即将选择/部署兵力" action:@selector(markDeployBefore) color:UIColor.systemPurpleColor]];
+    [content addArrangedSubview:[self button:@"标记：已观察到部署结果" action:@selector(markDeployObserved) color:UIColor.systemPurpleColor]];
+    [content addArrangedSubview:[self button:@"标记：即将手动结束战斗" action:@selector(markEndBefore) color:UIColor.systemOrangeColor]];
+    [content addArrangedSubview:[self button:@"标记：结算界面已显示" action:@selector(markSettlement) color:UIColor.systemOrangeColor]];
+    [content addArrangedSubview:[self button:@"标记：下一轮/新对手已显示" action:@selector(markNextRound) color:UIColor.systemGreenColor]];
+    [content addArrangedSubview:[self button:@"导出完整诊断 JSON 文件" action:@selector(exportReport) color:UIColor.systemBlueColor]];
     self.logView = [UITextView new]; self.logView.editable = NO; self.logView.scrollEnabled = NO;
     self.logView.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];
     self.logView.backgroundColor = [UIColor colorWithWhite:0.12 alpha:1]; self.logView.textColor = UIColor.whiteColor;
     [self.logView.heightAnchor constraintGreaterThanOrEqualToConstant:150].active = YES;
     [content addArrangedSubview:self.logView];
     self.saveButton = [self button:@"保存配置" action:@selector(save) color:UIColor.systemBlueColor];
-    self.startButton = [self button:@"开始模拟" action:@selector(start) color:UIColor.systemGreenColor];
+    self.startButton = [self button:@"开始自动战斗" action:@selector(start) color:UIColor.systemGreenColor];
     UIButton *stop = [self button:@"立即停止" action:@selector(manualStop) color:UIColor.systemRedColor];
     UIButton *copy = [self button:@"复制日志" action:@selector(copyLog) color:UIColor.darkGrayColor];
     UIStackView *actions = [[UIStackView alloc] initWithArrangedSubviews:@[self.saveButton,self.startButton,stop,copy]];
     actions.distribution = UIStackViewDistributionFillEqually; actions.spacing = 6; [root addArrangedSubview:actions];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(inactive:) name:UIApplicationWillResignActiveNotification object:nil];
-    [self record:@"就绪：仅运行本地模拟，无游戏输入或网络调用"];
+    [self record:@"就绪：模拟代码已移除；等待注册已验证的真实游戏后端"];
+    __weak CALabController *weakSelf=self;
+    self.timer=[NSTimer timerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *timer) {
+        CALabController *owner=weakSelf;
+        if (!owner) { [timer invalidate]; return; }
+        [owner setRunningControls:[CABattleRuntime.shared running]];
+        [owner updateStatus];
+    }];
+    [NSRunLoop.mainRunLoop addTimer:self.timer forMode:NSRunLoopCommonModes];
 }
-- (BOOL)running { return self.lab.phase != CALabIdle && self.lab.phase != CALabStopped; }
+- (BOOL)running { return CABattleRuntime.shared.running; }
 - (void)record:(NSString *)text {
-    [self.events addObject:text];
+    CAEvent(@"ui.message",@{@"message":text});
+    [self.events addObject:[NSString stringWithFormat:@"[%.3f] %@",NSProcessInfo.processInfo.systemUptime,text]];
     if (self.events.count > 80) [self.events removeObjectAtIndex:0];
     self.logView.text = [self.events componentsJoinedByString:@"\n"];
 }
-- (BOOL)readConfig:(CALabConfig *)out {
+- (BOOL)readConfig:(CABattleConfig *)out {
     NSMutableDictionary *values = [NSMutableDictionary new];
     for (NSString *key in self.fields) {
         NSString *text = self.fields[key].text ?: @"";
@@ -148,95 +162,109 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
             self.status.text = @"配置错误：请输入 0–999999999 的整数"; return NO;
         }
         uint32_t n = (uint32_t)text.longLongValue;
-        if ([@[@"maxSearch",@"maxBattles",@"timeout"] containsObject:key] && (n<1 || n>10000)) {
+        if ([@[@"maxSearch",@"maxUnits",@"timeout"] containsObject:key] && (n<1 || n>10000)) {
             self.status.text = @"次数和超时必须在 1–10000 之间"; return NO;
         }
         values[key] = @(n);
     }
-    values[@"loop"] = @(self.loop.on);
-    *out = (CALabConfig){[values[@"gold"] unsignedIntValue],[values[@"elixir"] unsignedIntValue],
-        [values[@"dark"] unsignedIntValue],[values[@"maxSearch"] unsignedIntValue],
-        [values[@"maxBattles"] unsignedIntValue],[values[@"timeout"] unsignedIntValue],self.loop.on};
+    if ([values[@"timeout"] unsignedIntValue]>1800) { self.status.text=@"战斗秒数必须为 1–1800"; return NO; }
+    *out = (CABattleConfig){.minGold=[values[@"gold"] unsignedLongLongValue], .minElixir=[values[@"elixir"] unsignedLongLongValue],
+        .minDark=[values[@"dark"] unsignedLongLongValue], .maxSearch=[values[@"maxSearch"] unsignedIntValue],
+        .maxUnits=[values[@"maxUnits"] unsignedIntValue], .actionTimeout=20, .battleTimeout=[values[@"timeout"] doubleValue]};
     [NSUserDefaults.standardUserDefaults setObject:values forKey:CAPrefs];
     [self.view endEditing:YES]; return YES;
 }
-- (void)save { CALabConfig c; if ([self readConfig:&c]) self.status.text = @"配置已保存 · 数据来源：本地模拟"; }
+- (void)save { CABattleConfig c; if ([self readConfig:&c]) self.status.text = @"配置已保存"; }
 - (void)setRunningControls:(BOOL)running {
     self.startButton.enabled = !running; self.saveButton.enabled = !running;
     self.startButton.alpha = running ? 0.5 : 1; self.saveButton.alpha = running ? 0.5 : 1;
     for (UITextField *f in self.fields.allValues) f.enabled = !running;
-    self.loop.enabled = !running;
-    [self.bubble setTitle:running ? @"模拟中" : @"实验" forState:UIControlStateNormal];
+    [self.bubble setTitle:running ? @"运行" : @"诊断" forState:UIControlStateNormal];
 }
 - (void)start {
     if ([self running]) return;
-    CALabConfig c; if (![self readConfig:&c]) return;
-    [self.timer invalidate]; CALab s; CALabStart(&s,c); self.lab = s;
-    [self.events removeAllObjects]; [self record:@"本地模拟开始；无真实搜索/部署/攻击"];
-    [self setRunningControls:[self running]]; [self updateStatus];
-    if (![self running]) return;
-    __weak CALabController *weakSelf = self;
-    self.timer = [NSTimer timerWithTimeInterval:0.7 repeats:YES block:^(NSTimer *t) {
-        CALabController *controller = weakSelf;
-        if (!controller) { [t invalidate]; return; }
-        [controller tick];
-    }];
-    [NSRunLoop.mainRunLoop addTimer:self.timer forMode:NSRunLoopCommonModes];
-}
-- (NSString *)phaseName {
-    switch(self.lab.phase) {
-        case CALabSearching:return @"模拟搜索"; case CALabDeploying:return @"模拟部署";
-        case CALabFighting:return @"模拟战斗"; case CALabSettling:return @"模拟结算";
-        case CALabStopped:return @"已停止"; default:return @"就绪";
+    CABattleConfig config; if (![self readConfig:&config]) return;
+    NSError *error=nil;
+    if (![CABattleRuntime.shared start:config error:&error]) {
+        self.status.text=error.localizedDescription ?: @"启动失败"; [self record:self.status.text];
+        return;
     }
-}
-- (NSString *)reasonName {
-    NSDictionary *names = @{@"search-limit":@"达到搜索上限",@"battle-limit":@"达到战斗上限",
-        @"single-complete":@"单次流程完成",@"battle-timeout":@"模拟战斗超时",@"battle-complete":@"模拟战斗完成", @"no-resource-growth":@"连续 5 秒资源未增长",
-        @"filtered":@"资源不达标",@"matched":@"资源筛选通过",@"manual":@"手动停止",
-        @"background":@"离开前台停止",@"invalid-config":@"配置错误",@"deploying":@"逐个部署模拟单位",
-        @"fighting":@"模拟收益变化",@"searching":@"寻找模拟样本"};
-    NSString *key = self.lab.reason ? [NSString stringWithUTF8String:self.lab.reason] : @"";
-    return names[key] ?: key;
+    self.panel.hidden=YES; [self restoreKey];
+    [self record:@"真实战斗调度已启动；所有动作等待游戏状态确认"];
+    [self setRunningControls:YES]; [self updateStatus];
 }
 - (void)updateStatus {
-    CALab s = self.lab;
-    self.status.text = [NSString stringWithFormat:@"仅本地模拟 · %@ · %@\n搜索 %u/%u  结算 %u/%u  模拟单位 %u/8  模拟时间 %u 秒\n模拟累计收益：金币 %llu / 圣水 %llu / 黑水 %llu",
-        [self phaseName],[self reasonName],s.searches,s.config.maxSearch,s.battles,s.config.maxBattles,s.units,s.elapsed,
-        (unsigned long long)s.earnedGold,(unsigned long long)s.earnedElixir,(unsigned long long)s.earnedDark];
-}
-- (void)tick {
-    if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive) { [self stop:@"background"]; return; }
-    CALab s = self.lab; CALabTick(&s); self.lab = s;
-    [self record:[NSString stringWithFormat:@"[%u/%u] %@：%@；样本 金%u 水%u 黑%u；单位%u；时间%u",
-        s.searches,s.battles,[self phaseName],[self reasonName],s.gold,s.elixir,s.dark,s.units,s.elapsed]];
-    [self updateStatus];
-    if (![self running]) { [self.timer invalidate]; self.timer = nil; [self setRunningControls:NO]; }
+    NSString *text=CABattleRuntime.shared.statusText;
+    if (![text isEqual:self.lastRuntimeStatus]) {
+        self.lastRuntimeStatus=text; self.status.text=text;
+        [self record:text];
+    }
 }
 - (void)stop:(NSString *)reason {
-    CAObserveStop();
-    [self.timer invalidate]; self.timer = nil;
-    CALab s = self.lab; CALabStop(&s,[reason isEqualToString:@"background"] ? "background" : "manual"); self.lab = s;
+    [CABattleRuntime.shared stop:reason];
+    CAObserveStopWithReason([reason isEqualToString:@"background"] ? CAObserveStopBackground : CAObserveStopManual);
     [self setRunningControls:NO]; [self.view endEditing:YES];
-    [self record:[self reasonName]]; [self updateStatus];
+    [self record:[NSString stringWithFormat:@"停止后续指令：%@",reason]];
+    self.status.text=CABattleRuntime.shared.statusText;
+}
+- (NSDictionary *)completeReport {
+    CAEvent(@"report.export",@{});
+    return @{@"schemaVersion":@1,@"pluginVersion":@"0.4.0",@"observation":CAObserveSnapshot(),
+        @"runtime":[CABattleRuntime.shared snapshot],@"journal":CAEventSnapshot()};
+}
+- (void)exportReport {
+    NSError *error=nil;
+    NSData *data=[NSJSONSerialization dataWithJSONObject:[self completeReport] options:NSJSONWritingPrettyPrinted error:&error];
+    NSString *name=[NSString stringWithFormat:@"ClashAssist-%@.json",NSUUID.UUID.UUIDString];
+    NSURL *url=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name]];
+    if (!data || ![data writeToURL:url options:NSDataWritingAtomic error:&error]) {
+        self.status.text=[NSString stringWithFormat:@"导出失败：%@",error.localizedDescription ?: @"JSON 编码失败"]; return;
+    }
+    self.exportURL=url;
+    UIActivityViewController *share=[[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
+    share.popoverPresentationController.sourceView=self.panel;
+    share.popoverPresentationController.sourceRect=self.panel.bounds;
+    [self presentViewController:share animated:YES completion:nil];
 }
 - (void)observe {
     [self stop:@"manual"];
     NSString *error=nil;
     if(CAObserveStart(&error)) {
-        self.status.text=@"手动操作观测中（60秒）· 收起面板手动操作，随后复制调用计数报告";
-        [self record:@"已开启真实调用计数：未执行任何自动游戏操作"];
+        self.status.text=@"调用观测中（300 秒）· 手动操作后导出完整报告";
+        [self record:@"已开启候选调用观测"];
     } else { self.status.text=error?:@"观测启动失败"; [self record:self.status.text]; }
 }
 - (void)copyObservation {
-    NSData *data=[NSJSONSerialization dataWithJSONObject:CAObserveSnapshot() options:NSJSONWritingPrettyPrinted error:nil];
-    UIPasteboard.generalPasteboard.string=[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-    self.status.text=@"真实调用计数报告已复制（候选命中不等于接口验证通过）";
+    NSError *error = nil;
+    NSData *data = [NSJSONSerialization dataWithJSONObject:[self completeReport] options:NSJSONWritingPrettyPrinted error:&error];
+    if (!data || error) {
+        self.status.text = [NSString stringWithFormat:@"生成诊断 JSON 失败：%@", error.localizedDescription ?: @"未知错误"];
+        return;
+    }
+    UIPasteboard.generalPasteboard.string = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    self.status.text = @"详细诊断 JSON 已复制；请同时说明每个人工标记对应的实际操作";
 }
-- (void)manualStop { CAObserveStop(); [self stop:@"manual"]; }
+- (void)markAndHide:(CAObserveMarker)marker label:(NSString *)label {
+    if (!CAObserveIsActive()) {
+        self.status.text = @"请先开启 300 秒观测，再使用人工操作标记";
+        return;
+    }
+    CAObserveMark(marker);
+    [self record:[NSString stringWithFormat:@"人工标记：%@", label]];
+    self.panel.hidden = YES;
+    [self restoreKey];
+}
+- (void)markSearchBefore { [self markAndHide:CAObserveMarkerSearchBefore label:@"即将点击搜索对手"]; }
+- (void)markSearchResult { [self markAndHide:CAObserveMarkerSearchResultVisible label:@"搜索结果/战场已显示"]; }
+- (void)markDeployBefore { [self markAndHide:CAObserveMarkerDeployBefore label:@"即将选择/部署兵力"]; }
+- (void)markDeployObserved { [self markAndHide:CAObserveMarkerDeployObserved label:@"已观察到部署结果"]; }
+- (void)markEndBefore { [self markAndHide:CAObserveMarkerEndBattleBefore label:@"即将手动结束战斗"]; }
+- (void)markSettlement { [self markAndHide:CAObserveMarkerSettlementVisible label:@"结算界面已显示"]; }
+- (void)markNextRound { [self markAndHide:CAObserveMarkerNextRoundVisible label:@"下一轮/新对手已显示"]; }
+- (void)manualStop { [self stop:@"manual"]; }
 - (void)copyLog {
-    UIPasteboard.generalPasteboard.string = [@"ClashAssist 0.3.2 LOCAL SYNTHETIC ONLY\n" stringByAppendingString:[self.events componentsJoinedByString:@"\n"]];
-    self.status.text = @"本地模拟日志已复制";
+    UIPasteboard.generalPasteboard.string = [@"ClashAssist 0.4.0 UI EVENTS\n" stringByAppendingString:[self.events componentsJoinedByString:@"\n"]];
+    self.status.text = @"界面日志已复制；完整报告请使用诊断导出";
 }
 - (void)viewDidLayoutSubviews { [super viewDidLayoutSubviews]; [self clampBubble]; }
 - (void)clampBubble {

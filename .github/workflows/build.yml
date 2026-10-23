@@ -1,8 +1,8 @@
-name: Build RootHide observation lab
+name: Build ClashAssist 0.4.0 diagnostic lab
 on:
   workflow_dispatch:
   push:
-    paths: ['**.m', '**.h', 'tests/**', Makefile, control, ClashAssist.plist, '.github/workflows/build.yml']
+    paths: ['**.m', '**.h', 'tests/**', 'tools/**', Makefile, control, ClashAssist.plist, README.md, CHANGELOG.md, BUILD_NOTES.md, '.github/workflows/build.yml']
 jobs:
   build:
     runs-on: macos-14
@@ -13,12 +13,21 @@ jobs:
           brew install ldid dpkg
           git clone --depth 1 --recursive https://github.com/roothide/theos.git "$RUNNER_TEMP/theos"
           echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
-      - name: Test local synthetic state machine
+      - name: Test confirmed-state battle controller
         run: |
           set -euo pipefail
           mkdir -p build
-          cc -std=c11 -Wall -Wextra -Werror -I. tests/lab_core.c -o /tmp/clash-lab-test
-          /tmp/clash-lab-test 2>&1 | tee build/lab-tests.log
+          cc -std=c11 -Wall -Wextra -Werror -I. tests/battle_core.c -o /tmp/clash-battle-test
+          /tmp/clash-battle-test 2>&1 | tee build/battle-tests.log
+      - name: Test diagnostic source and report analyzer
+        run: |
+          set -euo pipefail
+          python3 tests/verify_diagnostics.py
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          python3 tools/analyze_report.py tests/fixtures/sample-diagnostic-report.json > /tmp/diagnostic-analyzer-test.log
+          grep -q "Most common observed caller offsets" /tmp/diagnostic-analyzer-test.log
+          grep -q "即将点击搜索对手" /tmp/diagnostic-analyzer-test.log
+          cp /tmp/diagnostic-analyzer-test.log build/report-analyzer-test.log
       - name: Build
         run: |
           set -euo pipefail
@@ -38,7 +47,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ClashAssist-RootHide-diagnostics
+          name: ClashAssist-0.4.0-RootHide-diagnostics
           path: |
             packages/*.deb
             build/*.log
