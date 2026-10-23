@@ -26,16 +26,6 @@ class AnalyzerTests(unittest.TestCase):
                 self.assertIn("Most common observed caller offsets",result.stdout)
                 self.assertIn("Call pairing",result.stdout)
                 if "journal" in data: self.assertIn("missing backend",result.stdout)
-    def test_evidence_findings_report_missing_markers_and_backend(self):
-        observation={"timeline":[],"installDiagnostics":[{"signatureVerified":False}],
-                     "hooks":[{"name":"a","hits":0},{"name":"b","hits":4}]}
-        envelope={"observation":observation,"runtime":{"backend":"not-connected"}}
-        findings=analyzer.evidence_findings(envelope, observation)
-        joined="\n".join(findings)
-        self.assertIn("人工操作标记",joined)
-        self.assertIn("函数签名均未验证",joined)
-        self.assertIn("后端未注册",joined)
-        self.assertIn("战利品累计值",joined)
     def test_invalid_json(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/"bad.json"; path.write_text("{")
@@ -43,4 +33,22 @@ class AnalyzerTests(unittest.TestCase):
             self.assertEqual(result.returncode,2)
     def test_empty(self):
         self.assertEqual(analyzer.summarize_calls([])["paired"],0)
+    def test_runtime_summary_missing_real_state(self):
+        result=analyzer.summarize_runtime_events({"events":[
+            {"event":"runtime.error","fields":{"message":"backend not connected"}},
+            {"event":"action.request","fields":{"actionID":"a","action":"searchOpponent"}},
+            {"event":"action.result","fields":{"actionID":"a","accepted":False}}
+        ]})
+        self.assertEqual(result["stateSamples"],0)
+        self.assertEqual(result["actionRequests"],1)
+        self.assertEqual(result["actionResults"],1)
+        self.assertEqual(result["acceptedRequests"],0)
+    def test_runtime_summary_synthetic_fixture(self):
+        fixture=json.loads((ROOT/"tests/fixtures/sample-runtime-report.json").read_text())
+        result=analyzer.summarize_runtime_events(fixture["journal"])
+        self.assertEqual(result["stateSamples"],2)
+        self.assertEqual(result["actionRequests"],1)
+        self.assertEqual(result["acceptedRequests"],1)
+        self.assertEqual(result["observedMilestones"]["singleUnitDeploymentsConfirmed"],1)
+        self.assertEqual(result["observedMilestones"]["settlementObserved"],1)
 if __name__=="__main__": unittest.main()

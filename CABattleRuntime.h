@@ -1,27 +1,24 @@
 #import <Foundation/Foundation.h>
 #import "CABattleCore.h"
 
-// All calls run on the main thread and must return promptly, without blocking.
-// This repository does not supply an implementation of this protocol.
+/* Backend must use verified APIs for the exact game build; diagnostic offsets/raw words are not APIs. */
 @protocol CAVerifiedGameBackend <NSObject>
 @property(nonatomic,readonly) NSString *backendName;
 @property(nonatomic,readonly) NSString *expectedBundleID;
 @property(nonatomic,readonly) NSString *expectedBuildVersion;
-// Validate exact image UUID, signatures, lifecycle, thread and plan prerequisites.
+/* Verify exact executable UUID, ABI/signatures, object lifecycle, main-thread rules and deployment plan. */
 - (BOOL)validate:(NSError **)error;
-// Fresh observed game state, not generated values. CAWorld.gold/elixir/dark are remaining opponent loot; loot*Earned are cumulative gains for the current battle. Errors must fail closed.
+/* Fill CAWorld only from a fresh real observation; set validFields and observedAtMonotonic on every successful read. */
 - (BOOL)readWorld:(CAWorld *)world error:(NSError **)error;
-// YES = request accepted only; core waits for observed confirmation.
+/* YES means request accepted, not success. Core waits for a new observed state/revision. */
 - (BOOL)searchOpponent:(NSError **)error;
-// Select a real troop + valid location from backend's verified deployment plan.
-// Submit exactly one unit. No replay of raw argument words from diagnostic logs.
+/* Submit exactly one unit from a verified plan; no raw diagnostic argument replay. */
 - (BOOL)deployOneUnit:(NSError **)error;
-// Handle end/confirm flow, then observe settlement; do not claim success here.
+/* Request end/confirm. Core waits for a real settlement observation. */
 - (BOOL)endBattle:(NSError **)error;
-// Navigate from confirmed settlement back to the home scene; do not assume success until readWorld reports CAHome.
+/* After confirmed settlement, request return home. Core waits for observed CAHome. */
 - (BOOL)returnHome:(NSError **)error;
-// Cancel all deferred submissions/confirmation steps on stop/error/settlement.
-// Already accepted game commands cannot be undone. Must be idempotent.
+/* Cancel all deferred submissions/confirmation steps; idempotent. Accepted game commands cannot be undone. */
 - (void)cancelPendingActions;
 @end
 

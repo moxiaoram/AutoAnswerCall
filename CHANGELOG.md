@@ -1,16 +1,21 @@
-# 0.4.2
+# Changelog
 
-- Inject sanitized observed-log baseline into source and runtime diagnostics.
-- Add `runtime.preflight` and `runtime.start.blocked` events with missing backend capabilities.
-- Add backend expected/actual build details and action phase/reason fields to diagnostics.
-- Add tests for observed evidence counts, missing live-state evidence, and absence of raw pointers/callsite offsets in the shareable fixture.
-- Preserve fail-closed behavior when no backend is connected. No live-game action backend is added.
+## 0.4.6 — Backend readiness diagnostics
+- Added a runtime readiness report with explicit blockers for backend registration, bundle/build match, validation, required selectors, and a fresh complete live snapshot.
+- Readiness is diagnostic only and never turns an observed caller offset into an invocable API.
 
-# 0.4.1
+## 0.4.5 — Real-device passive interface validation
 
-- Analyze the supplied report and document the evidence: only the unified-command candidate hit (67 calls); the other two candidates had zero hits; all candidate signatures remained unverified; no manual markers or loot values were recorded; runtime backend was not connected.
-- Add cumulative battle-loot fields separate from opponent's currently available resources.
-- End request can be issued after five seconds without cumulative loot growth while a fresh observation confirms the fight is still active; retain a per-battle hard timeout.
-- Add a bounded multi-battle loop: confirm settlement, request return home, confirm home, then search again until maxBattles/maxSearch.
-- Reset per-battle counters and fail closed on regressions/timeouts.
-- Add evidence-limited report findings to offline analyzer and tests.
+- Added a dedicated read-only validation session entry in the UI.
+- Added manual visible-state snapshot fields for scene, opponent's visible loot, cumulative battle loot, remaining troops, and deployed troops.
+- Added validation session IDs and journal events for validation start/stop and state snapshots.
+- Extended interface analysis to calculate adjacent manually observed state deltas, scoped to the current validation session.
+- Unknown values remain null; manual entries are explicitly marked non-authoritative and are not fed into the battle runtime.
+- Kept candidate Hook invocation disabled because observed caller offsets do not establish function signatures or semantics.
+- Did not claim iOS/Theos compilation or live-device tests.
+
+## 0.4.4 — Observed baseline and offline scheduler replay
+
+- Added read-only timing/caller-offset baseline from `部落4.json`.
+- Added deterministic offline scheduler replay for development tests only.
+- Real game backend remained unimplemented.

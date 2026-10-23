@@ -1,8 +1,8 @@
 Package: com.minis.clashassist
-Name: ClashAssist Diagnostics
-Version: 0.4.1
+Name: ClashAssist Backend Readiness Diagnostics
+Version: 0.4.6
 Architecture: iphoneos-arm64e
-Description: Detailed diagnostics and bounded battle scheduler. Requires a verified game backend; no concrete game backend is included.
+Description: Detailed diagnostics and confirmed-state battle scheduler. Requires a verified game backend for real actions.
 Maintainer: Minis
 Author: Minis
 Section: Tweaks

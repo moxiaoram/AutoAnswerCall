@@ -1,9 +1,14 @@
-ClashAssist 0.4.2 local verification
+ClashAssist 0.4.6 local verification record
 
-PASS: C11 state-machine tests: 7 groups (synthetic test inputs only; no game backend)
-PASS: static diagnostic/UI consistency checks
-PASS: Python unit tests: 8 tests
-PASS: evidence baseline fixture checks (3 tests)
-PASS: source ZIP integrity (verified after packaging)
+Passed:
+- Python unittest suite: 18 tests passed, including backend readiness and no-simulation-UI contract tests.
+- Static diagnostics verifier: passed.
+- C battle state-machine tests: 13 synthetic controller groups passed.
+- C offline replay test: full synthetic scheduler loop passed (development test only; not included in installed tweak UI/build).
 
-NOT RUN: Theos/iOS SDK compile, .deb package, device installation/injection, ABI validation, live-game state reading, or live-game actions. This environment does not have the required iOS/Theos build environment. The supplied report does not establish verified live-game interfaces.
+Not tested:
+- iOS SDK/Theos compilation or .deb packaging.
+- Device installation, runtime UI validation, or live-game operation.
+- Verification of candidate Hook ABI/signatures, direct game-state reads, or any live-game action API.
+
+The C replay uses synthetic test fixtures only and does not connect to or control the game. Real-device passive validation records Hook metadata plus operator-entered visible state values; it does not invoke candidate functions or send game actions.

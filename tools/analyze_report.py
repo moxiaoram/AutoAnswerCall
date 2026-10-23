@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline summary for ClashAssist 0.4.1 diagnostic JSON. No network access."""
+"""Offline summary for ClashAssist 0.4.6 diagnostic JSON. No network access."""
 import argparse
 import json
 import math
@@ -38,37 +38,58 @@ def summarize_calls(timeline):
 
 
 
-def evidence_findings(envelope, observation):
-    """Evidence-limited interpretation; never maps offsets to game actions."""
-    findings = []
-    timeline = observation.get("timeline", [])
-    markers = [e for e in timeline if isinstance(e, dict) and e.get("kind") == "人工操作标记"]
-    if not markers:
-        findings.append("未发现人工操作标记：无法把调用时间线与搜索/下兵/结束动作可靠对齐。")
-    diagnostics = observation.get("installDiagnostics", [])
-    if diagnostics and not any(d.get("signatureVerified") is True for d in diagnostics if isinstance(d, dict)):
-        findings.append("候选 Hook 的函数签名均未验证；指纹匹配不等于 ABI/参数语义已确认。")
-    hooks = [h for h in observation.get("hooks", []) if isinstance(h, dict)]
-    nonzero = [h for h in hooks if isinstance(h.get("hits"), (int, float)) and h.get("hits", 0) > 0]
-    if len(nonzero) == 1:
-        findings.append("本次只有一个候选 Hook 有命中；不能从这份报告确认搜索、部署和结束三个独立入口。")
-    runtime = envelope.get("runtime", {}) if isinstance(envelope, dict) else {}
-    if isinstance(runtime, dict) and runtime.get("backend") in ("not-connected", "未接入"):
-        findings.append("报告中的自动战斗后端未注册；运行时未执行真实搜索/部署/结束操作。")
-    has_loot = any(any(k in e for k in ("lootGoldEarned", "lootElixirEarned", "lootDarkEarned")) for e in timeline if isinstance(e, dict))
-    journal = envelope.get("journal", {}) if isinstance(envelope, dict) else {}
-    if isinstance(journal, dict):
-        for entry in journal.get("events", []):
-            fields = entry.get("fields", {}) if isinstance(entry, dict) else {}
-            world = fields.get("world", {}) if isinstance(fields, dict) else {}
-            if isinstance(world, dict) and any(k in world for k in ("lootGoldEarned", "lootElixirEarned", "lootDarkEarned")):
-                has_loot = True
-                break
-    if not has_loot:
-        findings.append("时间线没有真实战利品累计值；无法计算五秒无增长区间。")
-    if not findings:
-        findings.append("有人工标记和更多观测字段可供进一步对齐，但仍需人工验证操作结果。")
-    return findings
+def summarize_runtime_events(journal):
+    """Summarize structured runtime state samples and action request/confirmation evidence."""
+    entries = journal.get("events", []) if isinstance(journal, dict) else []
+    counts = {}
+    samples, requests, results, transitions = [], {}, {}, []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("event", "unknown")
+        counts[name] = counts.get(name, 0) + 1
+        fields = entry.get("fields", {})
+        if not isinstance(fields, dict):
+            continue
+        if name == "state.sample":
+            world = fields.get("world", {})
+            if isinstance(world, dict):
+                samples.append(world)
+        elif name == "action.request":
+            requests[fields.get("actionID")] = fields
+        elif name == "action.result":
+            results[fields.get("actionID")] = fields
+        elif name == "state.transition":
+            transitions.append(fields)
+    accepted = sum(1 for value in results.values() if value.get("accepted") is True)
+    milestones = {"candidatePassedResourceThreshold": 0, "singleUnitDeploymentsConfirmed": 0,
+                  "settlementObserved": 0, "homeObservedBeforeNextSearch": 0}
+    for transition in transitions:
+        reason = str(transition.get("reason", ""))
+        if "candidate-passed-resource-threshold" in reason:
+            milestones["candidatePassedResourceThreshold"] += 1
+        if "single-unit-deployment-confirmed" in reason:
+            milestones["singleUnitDeploymentsConfirmed"] += 1
+        if "settlement-confirmed-await-home" in reason:
+            milestones["settlementObserved"] += 1
+        if transition.get("toPhase") == "waitSearch" and transition.get("fromPhase") == "waitHome":
+            milestones["homeObservedBeforeNextSearch"] += 1
+    resource_increases = {"gold": 0, "elixir": 0, "dark": 0}
+    previous = None
+    for world in samples:
+        loot = [world.get("battleLootGold"), world.get("battleLootElixir"), world.get("battleLootDark")]
+        if all(isinstance(v, (int, float)) for v in loot):
+            if previous is not None:
+                for key, old, new in zip(resource_increases, previous, loot):
+                    if new > old:
+                        resource_increases[key] += 1
+            previous = loot
+    return {"eventCounts": counts, "stateSamples": len(samples), "actionRequests": len(requests),
+            "actionResults": len(results), "acceptedRequests": accepted, "transitions": len(transitions),
+            "observedMilestones": milestones, "lootIncreaseObservations": resource_increases,
+            "unmatchedActionRequests": sorted(str(k) for k in requests.keys() - results.keys() if k is not None),
+            "actionResultsWithoutRequest": sorted(str(k) for k in results.keys() - requests.keys() if k is not None)}
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -95,9 +116,18 @@ def main():
         print("Runtime:", json.dumps(envelope.get("runtime", {}), ensure_ascii=False))
         print("Journal disk error:", journal.get("diskError") or "none")
         print("Journal records:", journal.get("totalRecords", 0), "dropped:", journal.get("droppedOldestRecords", 0))
+        runtime_summary = summarize_runtime_events(journal)
+        print("Structured runtime summary:", json.dumps(runtime_summary, ensure_ascii=False))
         for entry in journal.get("events", []):
             if isinstance(entry, dict):
                 print("EVENT", entry.get("seq"), entry.get("elapsedMs"), entry.get("event"), json.dumps(entry.get("fields", {}), ensure_ascii=False))
+        runtime = envelope.get("runtime", {})
+        if isinstance(runtime, dict) and not runtime.get("backendConnected", runtime.get("backend", "not-connected") not in ("not-connected", "未接入")):
+            print("BLOCKER: no concrete backend is registered; runtime state/action data cannot prove real game behavior.")
+        if runtime_summary["stateSamples"] == 0:
+            print("BLOCKER: no structured state.sample events; scene, opponent resources, battle loot and troop counts are unverified.")
+        if runtime_summary["actionResults"] == 0:
+            print("BLOCKER: no action.result events; no real action request has a recorded acceptance result.")
     print("ClashAssist diagnostic report")
     print("=" * 72)
     print(f"Schema:       {data.get('schemaVersion', 'unknown')}")
@@ -141,11 +171,6 @@ def main():
     print("\nCall pairing / wrapper durations (retained entries only)")
     print(json.dumps(summarize_calls(timeline), ensure_ascii=False))
     print("Missing pairs may be overwritten, in flight, or stopped; do not infer a crash.")
-
-    print("\nEvidence-limited findings")
-    print("-" * 72)
-    for finding in evidence_findings(envelope, data):
-        print("- " + finding)
     print(f"\nTimeline entries: {len(timeline)}")
     print("-" * 72)
     for event in timeline:
@@ -188,11 +213,10 @@ def main():
     print("\nInstall diagnostics")
     print("-" * 72)
     for item in data.get("installDiagnostics", []):
-        print("{name}: offset={offset} readable={readable} fingerprint={fingerprintMatched} signatureVerified={signatureVerified} installed={hookInstalled}".format(
+        print("{name}: offset={offset} readable={readable} fingerprint={fingerprintMatched} installed={hookInstalled}".format(
             name=item.get("name", item.get("status", "unknown")),
             offset=item.get("offset", "n/a"), readable=item.get("readable", "n/a"),
             fingerprintMatched=item.get("fingerprintMatched", "n/a"),
-            signatureVerified=item.get("signatureVerified", "n/a"),
             hookInstalled=item.get("hookInstalled", "n/a")))
 
     print("\nInterpretation guardrails")

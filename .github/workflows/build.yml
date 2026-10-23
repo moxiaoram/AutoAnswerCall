@@ -1,8 +1,8 @@
-name: Build ClashAssist 0.4.1
+name: Build ClashAssist 0.4.6 backend readiness diagnostics
 on:
   workflow_dispatch:
   push:
-    paths: ['**.m', '**.h', 'tests/**', 'tools/**', Makefile, control, ClashAssist.plist, README.md, CHANGELOG.md, BUILD_NOTES.md, '.github/workflows/build.yml']
+    paths: ['**.m', '**.h', 'tests/**', 'tools/**', Makefile, control, ClashAssist.plist, README.md, STATUS.md, CHANGELOG.md, BUILD_NOTES.md, INTERFACE_CONTRACT.md, REAL_DEVICE_VALIDATION_GUIDE.md, LOG_ANALYSIS_2026-10-23.md, '.github/workflows/build.yml']
 jobs:
   build:
     runs-on: macos-14
@@ -13,21 +13,36 @@ jobs:
           brew install ldid dpkg
           git clone --depth 1 --recursive https://github.com/roothide/theos.git "$RUNNER_TEMP/theos"
           echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
-      - name: Test loot-growth and bounded-loop controller
+      - name: Test confirmed-state battle controller
         run: |
           set -euo pipefail
           mkdir -p build
           cc -std=c11 -Wall -Wextra -Werror -I. tests/battle_core.c -o /tmp/clash-battle-test
           /tmp/clash-battle-test 2>&1 | tee build/battle-tests.log
+          cc -std=c11 -Wall -Wextra -Werror -I. tests/replay_automatic_loop.c -o /tmp/clash-replay-test
+          /tmp/clash-replay-test 2>&1 | tee build/offline-replay.log
       - name: Test diagnostic source and report analyzer
         run: |
           set -euo pipefail
           python3 tests/verify_diagnostics.py
           python3 -m unittest discover -s tests -p 'test_*.py' -v
+          python3 tools/analyze_observed_interfaces.py tests/fixtures/sample-diagnostic-report.json --out /tmp/interface-analysis-test.json
+          python3 - <<'PYTEST'
+          import json
+          report = json.load(open('/tmp/interface-analysis-test.json'))
+          assert report['invocationAllowed'] is False
+          assert all(w['invocationAllowed'] is False for w in report['operationWindows'])
+          print('PASS: unverified candidates remain non-invokable')
+          PYTEST
           python3 tools/analyze_report.py tests/fixtures/sample-diagnostic-report.json > /tmp/diagnostic-analyzer-test.log
+          python3 tools/analyze_report.py tests/fixtures/sample-runtime-report.json > /tmp/runtime-analyzer-test.log
           grep -q "Most common observed caller offsets" /tmp/diagnostic-analyzer-test.log
           grep -q "即将点击搜索对手" /tmp/diagnostic-analyzer-test.log
+          grep -q "singleUnitDeploymentsConfirmed" /tmp/runtime-analyzer-test.log
+          grep -q "INTERFACE_CONTRACT" README.md
+          grep -q "noLootGrowthTimeout" CABattleCore.h
           cp /tmp/diagnostic-analyzer-test.log build/report-analyzer-test.log
+          cp /tmp/runtime-analyzer-test.log build/runtime-analyzer-test.log
       - name: Build
         run: |
           set -euo pipefail
@@ -47,7 +62,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ClashAssist-0.4.1-RootHide-source-validation
+          name: ClashAssist-0.4.6-RootHide-backend-readiness
           path: |
             packages/*.deb
             build/*.log
