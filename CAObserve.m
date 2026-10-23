@@ -2,7 +2,6 @@
 #import <mach-o/dyld.h>
 #import <mach-o/loader.h>
 #import <mach/mach.h>
-#import <mach/mach_vm.h>
 #import <stdatomic.h>
 #import <substrate.h>
 #import <string.h>
@@ -24,8 +23,8 @@ static void dispatchHook(void *a,void *b) { hit(0); originalDispatch(a,b); }
 static void confirmHook(void *a) { hit(1); originalConfirm(a); }
 static void submitHook(void *a) { hit(2); originalSubmit(a); }
 static BOOL readable(const void *address, void *destination, size_t size) {
-    mach_vm_size_t actual=0;
-    return mach_vm_read_overwrite(mach_task_self(),(mach_vm_address_t)address,size,(mach_vm_address_t)destination,&actual)==KERN_SUCCESS && actual==size;
+    vm_size_t actual=0;
+    return vm_read_overwrite(mach_task_self(),(vm_address_t)address,(vm_size_t)size,(vm_address_t)destination,&actual)==KERN_SUCCESS && actual==size;
 }
 static BOOL prepare(void) {
     const struct mach_header_64 *h=(const struct mach_header_64 *)_dyld_get_image_header(0);
