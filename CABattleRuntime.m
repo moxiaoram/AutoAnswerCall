@@ -66,7 +66,7 @@ static NSArray<NSString *> *CAMissingFieldNames(uint32_t mask) {
     self.backend=backend;
     self.backendValidationPassed=NO;
     self.backendValidationError=@"尚未运行后端 validate:；注册本身不代表接口已验证";
-    CAEvent(@"backend.registered",@{@"name":backend.backendName ?: @"",@"expectedBundleID":backend.expectedBundleID ?: @"",@"expectedBuildVersion":backend.expectedBuildVersion ?: @"",@"returnHomeSupported":[backend respondsToSelector:@selector(returnHome:)]});
+    CAEvent(@"backend.registered",@{@"name":backend.backendName ?: @"",@"expectedBundleID":backend.expectedBundleID ?: @"",@"expectedBuildVersion":backend.expectedBuildVersion ?: @"",@"returnHomeSupported":@([backend respondsToSelector:@selector(returnHome:)])});
     return YES;
 }
 - (NSDictionary *)worldFields:(CAWorld)w {
