@@ -79,7 +79,7 @@ static NSString * const CAPrefs = @"ClashAssist.settings.v1";
         [root.trailingAnchor constraintEqualToAnchor:self.panel.trailingAnchor constant:-12],
         [root.topAnchor constraintEqualToAnchor:self.panel.topAnchor constant:10],
         [root.bottomAnchor constraintEqualToAnchor:self.panel.bottomAnchor constant:-10]]];
-    UILabel *heading = [self label:@"调用观测 0.3.0 · 模拟功能独立" size:16];
+    UILabel *heading = [self label:@"调用观测 0.3.1 · 模拟功能独立" size:16];
     UIButton *close = [self button:@"收起" action:@selector(toggle) color:UIColor.darkGrayColor];
     [close.widthAnchor constraintEqualToConstant:66].active = YES;
     UIStackView *header = [[UIStackView alloc] initWithArrangedSubviews:@[heading,close]]; header.spacing = 8;
