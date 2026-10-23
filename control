@@ -1,8 +1,8 @@
 Package: com.minis.clashassist
-Name: ClashAssist Diagnostics
-Version: 0.1.1
+Name: ClashAssist Local Lab
+Version: 0.2.0
 Architecture: iphoneos-arm64e
-Description: Version-bound floating controls and diagnostics for ClashofClans 18.116.1; battle adapter unavailable
+Description: Offline synthetic resource and battle-flow simulator. No live game automation.
 Maintainer: Minis
 Author: Minis
 Section: Tweaks

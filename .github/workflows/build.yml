@@ -2,7 +2,7 @@ name: Build RootHide diagnostics
 on:
   workflow_dispatch:
   push:
-    paths: ['**.m', Makefile, control, ClashAssist.plist, '.github/workflows/build.yml']
+    paths: ['**.m', '**.h', 'tests/**', Makefile, control, ClashAssist.plist, '.github/workflows/build.yml']
 jobs:
   build:
     runs-on: macos-14
@@ -13,6 +13,12 @@ jobs:
           brew install ldid dpkg
           git clone --depth 1 --recursive https://github.com/roothide/theos.git "$RUNNER_TEMP/theos"
           echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
+      - name: Test local synthetic state machine
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          cc -std=c11 -Wall -Wextra -Werror -I. tests/lab_core.c -o /tmp/clash-lab-test
+          /tmp/clash-lab-test 2>&1 | tee build/lab-tests.log
       - name: Build
         run: |
           set -euo pipefail
