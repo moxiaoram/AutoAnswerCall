@@ -1,17 +1,13 @@
-TARGET := iphone:clang:latest:17.0
+TARGET := iphone:clang:latest:15.0
 ARCHS := arm64e
 THEOS_PACKAGE_SCHEME := roothide
-INSTALL_TARGET_PROCESSES := SpringBoard MobilePhone InCallService
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME := AutoAnswerCall
-AutoAnswerCall_FILES := Tweak.x
-AutoAnswerCall_CFLAGS := -fobjc-arc
-PACKAGE_VERSION := 1.17.0
-AutoAnswerCall_FRAMEWORKS := Foundation UIKit AVFoundation CallKit
+TWEAK_NAME := ClashAssist
+ClashAssist_FILES := ClashAssist.m
+ClashAssist_CFLAGS := -fobjc-arc -Wall -Wextra
+ClashAssist_FRAMEWORKS := Foundation UIKit
+PACKAGE_VERSION := 0.1.0
 
 include $(THEOS_MAKE_PATH)/tweak.mk
-
-SUBPROJECTS += Preferences
-include $(THEOS_MAKE_PATH)/aggregate.mk

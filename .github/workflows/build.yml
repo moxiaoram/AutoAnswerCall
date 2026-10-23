@@ -1,89 +1,38 @@
-name: Build AutoAnswerCall
-
+name: Build RootHide diagnostics
 on:
   workflow_dispatch:
   push:
-    branches: [main]
-    tags: ['v*']
-
+    paths: ['**.m', Makefile, control, ClashAssist.plist, '.github/workflows/build.yml']
 jobs:
   build:
     runs-on: macos-14
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-
-      - name: Install RootHide Theos
+      - uses: actions/checkout@v4
+      - name: Install tools and RootHide Theos
         run: |
+          brew install ldid dpkg
           git clone --depth 1 --recursive https://github.com/roothide/theos.git "$RUNNER_TEMP/theos"
           echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
-
-      - name: Install build tools
-        run: brew install ldid dpkg ripgrep
-
-      - name: Policy, library and record regression
+      - name: Build
         run: |
-          set -euxo pipefail
-          {
-            cc -std=c11 tests/policy.c -lm -o /tmp/aac-policy
-            /tmp/aac-policy
-            # 1.16.0 (kept): pure-arithmetic unit test of the chunk framing (AACChunkMath.h): chunk
-            # count/lengths, seq/total validity, base64url alphabet, completeness mask, state
-            # packing, slot count and the CRC-32 known vector. Really compiled and really run.
-            cc -std=c11 tests/chunkmath.c -o /tmp/aac-chunkmath
-            /tmp/aac-chunkmath
-            # 1.17.0: static checks for the live-button discovery + simulated tap path (bounded
-            # live hierarchy traversal, signal priority, option/red-blacklist applied to
-            # identifiers and titles, the three tap mechanisms in order, the per-UUID single tap
-            # and the non-double-tap settle window, and the candidate/mechanism/connected report).
-            python3 tests/source_checks.py
-            xcrun clang -fobjc-arc -framework Foundation -framework AVFoundation tests/library.m -o /tmp/aac-library
-            /tmp/aac-library
-            xcrun clang -fobjc-arc -framework Foundation tests/records.m -o /tmp/aac-records
-            /tmp/aac-records
-          } 2>&1 | tee tests.log
-
-      - name: Build RootHide arm64e package
+          set -euo pipefail
+          mkdir -p build
+          { git -C "$THEOS" rev-parse HEAD; xcrun --sdk iphoneos --show-sdk-version; xcrun clang --version; } > build/environment.log
+          make clean
+          make package FINALPACKAGE=1 ARCHS=arm64e THEOS_PACKAGE_SCHEME=roothide 2>&1 | tee build/build.log
+      - name: Validate
         run: |
-          set -euxo pipefail
-          { git -C "$THEOS" rev-parse HEAD; xcrun --sdk iphoneos --show-sdk-version; xcrun clang --version; command -v ldid; } | tee environment.log
-          make clean package FINALPACKAGE=1 \
-            ARCHS=arm64e \
-            THEOS="$THEOS" \
-            THEOS_PACKAGE_SCHEME=roothide 2>&1 | tee build.log
-
-      - name: Validate package
-        run: |
-          set -euxo pipefail
-          debs=(packages/*.deb)
-          test "${#debs[@]}" -gt 0
-          for deb in "${debs[@]}"; do
-            dpkg-deb --info "$deb"
-            test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64e"
-            test "$(dpkg-deb -f "$deb" Version)" = "1.17.0"
-            dpkg-deb --contents "$deb" | rg -F 'AutoAnswerCall.dylib'
-            dpkg-deb --contents "$deb" | rg -F 'AutoAnswerCallPrefs.bundle'
-            dpkg-deb --contents "$deb" | rg -F 'autoanswer.call.plist'
-            # Apple Platform Deployment lists Phone as com.apple.mobilephone (case-sensitive).
-            rm -rf /tmp/aac-debcheck && mkdir -p /tmp/aac-debcheck
-            dpkg-deb -x "$deb" /tmp/aac-debcheck
-            python3 tests/deb_check.py /tmp/aac-debcheck
-          done
-
-      - name: Upload build logs
+          set -euo pipefail
+          for pkg in packages/*.deb; do
+            test "$(dpkg-deb -f "$pkg" Architecture)" = iphoneos-arm64e
+            dpkg-deb --info "$pkg"
+            dpkg-deb --contents "$pkg"
+            shasum -a 256 "$pkg"
+          done > build/package-check.log
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: AutoAnswerCall-build-logs
+          name: ClashAssist-RootHide-diagnostics
           path: |
-            build.log
-            environment.log
-            tests.log
-
-      - name: Upload deb
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: AutoAnswerCall-roothide-arm64e
-          path: packages/*.deb
-          if-no-files-found: error
+            packages/*.deb
+            build/*.log

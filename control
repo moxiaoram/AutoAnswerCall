@@ -1,9 +1,9 @@
-Package: com.autoanswer.call
-Name: AutoAnswerCall
-Version: 1.17.0
+Package: com.minis.clashassist
+Name: ClashAssist Diagnostics
+Version: 0.1.0
 Architecture: iphoneos-arm64e
-Description: Configurable incoming-call auto answer tweak for RootHide
-Maintainer: dev
-Author: dev
+Description: Version-bound floating controls and diagnostics for ClashofClans 18.116.1; battle adapter unavailable
+Maintainer: Minis
+Author: Minis
 Section: Tweaks
-Depends: mobilesubstrate, preferenceloader
+Depends: mobilesubstrate, firmware (>= 15.0)
