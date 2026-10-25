@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>title</key><string>AutoAnswerAudio</string>
+  <key>items</key><array>
+    <dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>自动接听</string><key>footerText</key><string>实验功能：自动接听接口尚未在 iOS 17.3 真机验证。请先在可恢复环境测试，不要用于紧急电话。</string></dict>
+    <dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>启用插件</string><key>defaults</key><string>com.autoanswer.call</string><key>key</key><string>Enabled</string><key>default</key><true/></dict>
+    <dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>来电自动接听（实验）</string><key>defaults</key><string>com.autoanswer.call</string><key>key</key><string>AutoAnswer</string><key>default</key><false/></dict>
+    <dict><key>cell</key><string>PSSliderCell</string><key>label</key><string>接听延迟（秒）</string><key>defaults</key><string>com.autoanswer.call</string><key>key</key><string>Delay</string><key>default</key><real>0.5</real><key>min</key><real>0</real><key>max</key><real>60</real><key>showValue</key><true/></dict>
+    <dict><key>cell</key><string>PSEditTextCell</string><key>label</key><string>不自动接听的号码</string><key>defaults</key><string>com.autoanswer.call</string><key>key</key><string>ExcludedNumbers</string><key>default</key><string></string><key>placeholder</key><string>号码片段，多个用逗号分隔</string><key>autocapitalizationType</key><string>None</string><key>autocorrectionType</key><string>No</string><key>keyboardType</key><string>NumbersAndPunctuation</string></dict>
+    <dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>音频管理</string><key>footerText</key><string>可导入、选择、试听和删除本机音频。这里的试听只在手机本机播放；电话上行注入尚未实现，通话对方不会因此听到该音频。</string></dict>
+    <dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>导入音频</string><key>action</key><string>importAudio</string></dict>
+    <dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>管理 / 选择音频</string><key>action</key><string>manageAudio</string></dict>
+    <dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>试听 / 停止试听</string><key>action</key><string>togglePreview</string></dict>
+    <dict><key>cell</key><string>PSEditTextCell</string><key>label</key><string>当前音频路径</string><key>defaults</key><string>com.autoanswer.call</string><key>key</key><string>AudioFilePath</string><key>default</key><string></string><key>placeholder</key><string>请使用“导入音频”选择文件</string><key>autocapitalizationType</key><string>None</string><key>autocorrectionType</key><string>No</string><key>keyboardType</key><string>URL</string></dict>
+    <dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>当前版本限制</string><key>footerText</key><string>此源码版本尚未实现电话上行音频注入、停止注入后恢复麦克风、通话界面按钮替换。自动接听也尚未在 iOS 17.3 真机验证。</string></dict>
+  </array>
+</dict>
+</plist>

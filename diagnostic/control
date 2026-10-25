@@ -1,0 +1,9 @@
+Package: com.autoanswer.audioprobe
+Name: AutoAnswerAudio Diagnostic Probe
+Version: 1.6.0
+Architecture: iphoneos-arm64e
+Description: Optional diagnostic-only AudioUnitRender probe. May destabilize audio services; install only for controlled testing.
+Maintainer: AutoAnswerAudio
+Author: AutoAnswerAudio
+Section: Tweaks
+Depends: mobilesubstrate

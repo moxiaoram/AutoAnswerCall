@@ -1,9 +1,9 @@
-Package: com.minis.clashassist
-Name: ClashAssist Backend Readiness Diagnostics
-Version: 0.4.6
+Package: com.autoanswer.call
+Name: AutoAnswerAudio
+Version: 1.6.0
 Architecture: iphoneos-arm64e
-Description: Detailed diagnostics and confirmed-state battle scheduler. Requires a verified game backend for real actions.
-Maintainer: Minis
-Author: Minis
+Description: Experimental RootHide call automation and audio library settings; call answering is unverified and uplink injection is not implemented
+Maintainer: AutoAnswerAudio
+Author: AutoAnswerAudio
 Section: Tweaks
-Depends: mobilesubstrate, firmware (>= 15.0)
+Depends: mobilesubstrate, preferenceloader
