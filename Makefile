@@ -9,7 +9,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME := AutoAnswerCall
 AutoAnswerCall_FILES := Tweak.x
 AutoAnswerCall_CFLAGS := -fobjc-arc
-AutoAnswerCall_FRAMEWORKS := Foundation UIKit
+AutoAnswerCall_FRAMEWORKS := Foundation UIKit AVFoundation AudioToolbox
 
 BUNDLE_NAME := AutoAnswerCallPrefs
 AutoAnswerCallPrefs_FILES := Preferences/AARootListController.m

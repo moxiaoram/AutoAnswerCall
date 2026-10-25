@@ -4,6 +4,8 @@
 #import <objc/message.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <dlfcn.h>
+#import <AVFoundation/AVFoundation.h>
+#import "AACUplink.h"
 
 // AutoAnswerCall: uses the TelephonyUtilities call-center API dynamically.
 // This source is not a claim that the private API has been verified on-device.
@@ -128,7 +130,34 @@ static void AACPollIncomingCall(void) {
                             AACLastAnsweredToken = [token copy];
                             AACLog([NSString stringWithFormat:@"已向 TUCallCenter 发送 answerCall:，等待设备验证：%@", token]);
                             if ([AACPrefs()[@"PlayAudio"] boolValue]) {
-                                AACLog(@"注意：本机 AVAudioPlayer 不能代表通话上行注入；上行注入模块尚未接通，因此未在本机假播放。");
+                                NSString *audioPath = [AACPrefs()[@"AudioFilePath"] isKindOfClass:NSString.class] ? AACPrefs()[@"AudioFilePath"] : nil;
+                                if (!audioPath.length) {
+                                    AACLog(@"已启用接听后播放，但未选择音频文件（设置里导入并选择后再试）。");
+                                } else {
+                                    // 等到通话真正接通再注入：answerCall: 只是发起，接通是异步的。
+                                    AACLog([NSString stringWithFormat:@"将在检测到接通后尝试上行注入：%@", audioPath.lastPathComponent]);
+                                    __block NSInteger tries = 0;
+                                    __block void (^checkAnswered)(void);
+                                    checkAnswered = ^{
+                                        tries++;
+                                        id c = AACCallCenter();
+                                        id live = AACSend(c, @"incomingCall");
+                                        BOOL connected = NO;
+                                        if (live && [live respondsToSelector:NSSelectorFromString(@"isConnected")]) {
+                                            connected = ((BOOL (*)(id, SEL))objc_msgSend)(live, NSSelectorFromString(@"isConnected"));
+                                        }
+                                        if (connected) {
+                                            AACLog(@"检测到通话已接通，开始上行注入。");
+                                            BOOL started = [[AACUplinkEngine shared] playFileAtPath:audioPath];
+                                            AACLog(started ? @"上行注入已启动（对方是否能听到需实测）" : @"上行注入未能启动，详见 UPLINK 日志。");
+                                        } else if (tries < 20) {
+                                            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), checkAnswered);
+                                        } else {
+                                            AACLog(@"等待接通超时（10 秒），未启动上行注入。日志可帮助判断：接通未检测到，或 isConnected 不可用。");
+                                        }
+                                    };
+                                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), checkAnswered);
+                                }
                             }
                         });
                     }
