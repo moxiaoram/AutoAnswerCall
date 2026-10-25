@@ -20,9 +20,6 @@
 
 static NSString *const kAACUplinkLogPrefix = @"[UPLINK]";
 
-// 由 Tweak.x 提供
-extern void AACLog(NSString *s);
-
 @interface AACUplinkEngine : NSObject
 @property(nonatomic, strong) AVAudioEngine *engine;
 @property(nonatomic, strong) AVAudioPlayerNode *player;
@@ -148,7 +145,7 @@ extern void AACLog(NSString *s);
     }
 
     AVAudioFormat *fileFormat = file.processingFormat;
-    AVAudioFormat *mixerFormat = [engine mainMixerNode].outputFormat;
+    AVAudioFormat *mixerFormat = [[engine mainMixerNode] outputFormatForBus:0];
     [self log:@"AudioEngine：文件格式 %@，混音器格式 %@", fileFormat, mixerFormat];
 
     @try {

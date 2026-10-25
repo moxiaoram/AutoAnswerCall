@@ -137,8 +137,10 @@ static void AACPollIncomingCall(void) {
                                     // 等到通话真正接通再注入：answerCall: 只是发起，接通是异步的。
                                     AACLog([NSString stringWithFormat:@"将在检测到接通后尝试上行注入：%@", audioPath.lastPathComponent]);
                                     __block NSInteger tries = 0;
-                                    __block void (^checkAnswered)(void);
-                                    checkAnswered = ^{
+                                    __weak __block void (^weakCheck)(void) = nil;
+                                    void (^checkAnswered)(void) = nil;
+                                    __block void (^strongCheck)(void) = nil;
+                                    strongCheck = ^{
                                         tries++;
                                         id c = AACCallCenter();
                                         id live = AACSend(c, @"incomingCall");
@@ -150,13 +152,16 @@ static void AACPollIncomingCall(void) {
                                             AACLog(@"检测到通话已接通，开始上行注入。");
                                             BOOL started = [[AACUplinkEngine shared] playFileAtPath:audioPath];
                                             AACLog(started ? @"上行注入已启动（对方是否能听到需实测）" : @"上行注入未能启动，详见 UPLINK 日志。");
+                                            strongCheck = nil;
                                         } else if (tries < 20) {
-                                            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), checkAnswered);
+                                            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), strongCheck);
                                         } else {
-                                            AACLog(@"等待接通超时（10 秒），未启动上行注入。日志可帮助判断：接通未检测到，或 isConnected 不可用。");
+                                            AACLog(@"等待接通超时（10 秒），未启动上行注入。");
+                                            strongCheck = nil;
                                         }
                                     };
-                                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), checkAnswered);
+                                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), strongCheck);
+                                    (void)weakCheck; (void)checkAnswered;
                                 }
                             }
                         });
