@@ -42,7 +42,15 @@ static NSString *const kAACUplinkLogPrefix = @"[UPLINK]";
     va_start(ap, fmt);
     NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:ap];
     va_end(ap);
-    AACLog([NSString stringWithFormat:@"%@ %@", kAACUplinkLogPrefix, msg]);
+    NSString *line = [NSString stringWithFormat:@"[%@] %@ %@\n", NSDate.date, kAACUplinkLogPrefix, msg];
+    NSLog(@"[AutoAnswerCall] %@", line);
+    // 与 Tweak.x 使用同一份日志文件（路径固定，避免依赖外部符号）。
+    NSString *dir = @"/var/jb/Library/Application Support/AutoAnswerCall";
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *path = [dir stringByAppendingPathComponent:@"AutoAnswerCall.log"];
+    NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!h) [line writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    else { [h seekToEndOfFile]; [h writeData:[line dataUsingEncoding:NSUTF8StringEncoding]]; [h closeFile]; }
 }
 
 #pragma mark - 第一级：私有 SPI 探测
