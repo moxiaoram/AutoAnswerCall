@@ -563,14 +563,6 @@ static void AACPollIncomingCall(void) {
                         stillInCall = YES;   // 取不到状态时保守认为仍在通话
                     }
                 }
-                static BOOL wasPlaying = NO;
-                if (AACUplinkLooping || wasPlaying) {
-                    wasPlaying = AACUplinkLooping;
-                    if (!stillInCall) {
-                        AACLog(@"通话已结束，停止上行朗读并交还麦克风");
-                        AACStopUplinkAudioTTS();
-                        wasPlaying = NO;
-                    }
                 }
             }
             if (!call) {
@@ -731,7 +723,7 @@ __attribute__((unused)) static void AACUplinkProbe(void) {
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v2.0.4 已在 SpringBoard 加载（结束检测改为仅播放中生效）");
+        AACLog(@"AutoAnswerAudio v2.0.5 已在 SpringBoard 加载");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }
