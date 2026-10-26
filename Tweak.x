@@ -281,6 +281,7 @@ static NSString *AACSpeechTextForPath(NSString *path) {
 }
 
 static void AACShowFloatingStop(BOOL show);
+static BOOL AACKeypadVisible(void);
 static id AACCallCenter(void);
 static id AACSend(id target, NSString *selectorName);
 static void AACSetUplinkMuted(BOOL muted);
@@ -565,6 +566,16 @@ static void AACPollIncomingCall(void) {
             id center = AACCallCenter();
             id call = AACSend(center, @"incomingCall");
             // 免提切换不再中断播放：无论用户按免提还是听筒，朗读都继续。
+            // 拨号盘打开时隐藏悬浮按钮，关闭后恢复。
+            if (AACUplinkLooping && AACFloatingStop && !AACFloatingStop.hidden) {
+                static BOOL lastKeypad = NO;
+                BOOL kp = AACKeypadVisible();
+                if (kp != lastKeypad) {
+                    lastKeypad = kp;
+                    AACFloatingStop.hidden = kp;
+                    AACLog([NSString stringWithFormat:@"悬浮按钮：拨号盘%@，按钮%@", kp ? @"已打开" : @"已关闭", kp ? @"隐藏" : @"显示"]);
+                }
+            }
             // 通话结束检测：改用 CallKit 的 CXCall 状态，而不是轮询 incomingCall/currentCall。
             // 之前用轮询判断会在接听后误判（incomingCall 变空），导致播放一次就被停。
             if (AACUplinkLooping && !call) {
@@ -750,6 +761,27 @@ static UIButton *AACFloatingStop = nil;
 }
 @end
 
+// 拨号盘检测：通话界面出现数字键盘时，隐藏悬浮按钮；关闭键盘后恢复。
+static BOOL AACKeypadVisible(void) {
+    for (UIScene *sc in UIApplication.sharedApplication.connectedScenes) {
+        if (![sc isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *w in ((UIWindowScene *)sc).windows) {
+            if (!w.windowLevel || w.isHidden) continue;
+            NSMutableArray<UIView *> *q = [NSMutableArray arrayWithObject:w];
+            NSUInteger n = 0;
+            while (q.count && n++ < 2500) {
+                UIView *v = q.firstObject; [q removeObjectAtIndex:0];
+                if (!v.window || v.isHidden || v.alpha < 0.05) continue;
+                NSString *cls = NSStringFromClass(v.class);
+                // 拨号盘通常是 UICollectionView 承载的数字键盘
+                if ([cls containsString:@"Keypad"] || [cls containsString:@"Dialer"]) return YES;
+                for (UIView *c in v.subviews) [q addObject:c];
+            }
+        }
+    }
+    return NO;
+}
+
 static void AACShowFloatingStop(BOOL show) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!show) {
@@ -766,7 +798,9 @@ static void AACShowFloatingStop(BOOL show) {
             if (!keyWin) return;
             CGFloat side = 64;
             UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
-            b.frame = CGRectMake(keyWin.bounds.size.width - side - 16, keyWin.bounds.size.height * 0.62, side, side);
+            // 位置：屏幕水平居中、约 60% 高度处（即“录音中”按钮上方）
+            b.frame = CGRectMake((keyWin.bounds.size.width - side) / 2.0,
+                                 keyWin.bounds.size.height * 0.585, side, side);
             b.backgroundColor = [UIColor colorWithRed:1.0 green:0.23 blue:0.19 alpha:1.0];
             b.layer.cornerRadius = side / 2.0;
             b.layer.shadowColor = UIColor.blackColor.CGColor;
@@ -808,7 +842,7 @@ static void AACShowFloatingStop(BOOL show) {
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v2.1.0 已在 SpringBoard 加载（悬浮停止按钮）");
+        AACLog(@"AutoAnswerAudio v2.1.1 已在 SpringBoard 加载");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }
