@@ -5,6 +5,7 @@
 #import <CoreFoundation/CoreFoundation.h>
 #import <dlfcn.h>
 #import <AVFoundation/AVFoundation.h>
+#import <math.h>
 #import "AACGlobalLogger.h"
 
 // AutoAnswerCall: uses the TelephonyUtilities call-center API dynamically.
@@ -17,6 +18,10 @@ static BOOL AACTimerRunning = NO;
 static BOOL AACLoggedCallCenterUnavailable = NO;
 static id AACUplinkPlayer = nil; // Must be a TrollRecorder TRAudioPlayer instance, not plain AVAudioPlayer.
 static NSString * const kAACStopUplinkNotification = @"com.autoanswer.call.stopUplinkPlayback";
+static NSString * const kAACBridgePlayNotification = @"com.autoanswer.call.trBridgePlay";
+static NSString * const kAACBridgeStopNotification = @"com.autoanswer.call.trBridgeStop";
+static NSString * const kAACBridgeCommandPath = @"/var/mobile/Library/AutoAnswerAudio/tr-bridge-command.plist";
+static NSString *AACLastTRBridgeCommandID = nil;
 
 static NSDictionary *AACPrefs(void) {
     CFPreferencesAppSynchronize((__bridge CFStringRef)kAACDomain);
@@ -69,33 +74,127 @@ static void AACStopUplinkAudio(void) {
     AACUplinkPlayer = nil;
 }
 
-// Diagnostic-only probe: test whether SpringBoard can establish a connection to
-// TrollRecorder's observed internal Mach service. This intentionally sends NO RPC
-// because the service protocol and method encodings are not yet verified.
-static BOOL AACDidProbeTRAppXPC = NO;
-static void AACProbeTRAppXPC(void) {
-    if (AACDidProbeTRAppXPC) return;
-    AACDidProbeTRAppXPC = YES;
-    NSString *serviceName = @"wiki.qaq.trapp.xpc";
-    AACLog([NSString stringWithFormat:@"开始探测 TrollRecorder 内部 XPC 服务：%@；本次只测试连接，不发送播放请求", serviceName]);
-    NSXPCConnection *connection = [[NSXPCConnection alloc] initWithMachServiceName:serviceName options:0];
-    if (!connection) {
-        AACLog(@"XPC 探测失败：NSXPCConnection 初始化返回 nil");
+// TrollRecorder bridge based on the recovered in-process call chain:
+// TRRecordingManager + sharedManager -> session ->
+// playCustomAudioWithContentsOfFile:rate:volume:repeat:
+// This runs only inside TRCallMonitor; SpringBoard writes a command file and posts a Darwin notification.
+static void AACPostDarwinNotification(NSString *name) {
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+        (__bridge CFStringRef)name, NULL, NULL, true);
+}
+
+static BOOL AACWriteTRBridgeCommand(NSString *action, NSString *path) {
+    NSString *directory = [kAACBridgeCommandPath stringByDeletingLastPathComponent];
+    NSError *error = nil;
+    [[NSFileManager defaultManager] createDirectoryAtPath:directory
+                              withIntermediateDirectories:YES
+                                               attributes:@{NSFilePosixPermissions: @0755}
+                                                    error:&error];
+    if (error) {
+        AACLog([NSString stringWithFormat:@"TRCallMonitor bridge 创建目录失败：%@", error.localizedDescription ?: @"unknown"]);
+        return NO;
+    }
+    NSMutableDictionary *command = [@{
+        @"id": [[NSUUID UUID] UUIDString],
+        @"action": action ?: @"play",
+        @"createdAt": @([[NSDate date] timeIntervalSince1970]),
+        @"rate": @1.0,
+        @"volume": @1.0,
+        @"repeat": @NO
+    } mutableCopy];
+    if (path.length) command[@"path"] = path;
+    NSData *data = [NSPropertyListSerialization dataWithPropertyList:command
+                                                              format:NSPropertyListBinaryFormat_v1_0
+                                                             options:0 error:&error];
+    if (!data || ![data writeToFile:kAACBridgeCommandPath options:NSDataWritingAtomic error:&error]) {
+        AACLog([NSString stringWithFormat:@"TRCallMonitor bridge 写入命令失败：%@", error.localizedDescription ?: @"unknown"]);
+        return NO;
+    }
+    return YES;
+}
+
+static id AACTRSharedManager(void) {
+    Class cls = objc_getClass("TRRecordingManager");
+    if (!cls) return nil;
+    SEL shared = NSSelectorFromString(@"sharedManager");
+    if (![cls respondsToSelector:shared]) return nil;
+    return ((id (*)(id, SEL))objc_msgSend)((id)cls, shared);
+}
+
+static void AACHandleTRBridgeCommand(void) {
+    if (![NSProcessInfo.processInfo.processName isEqualToString:@"TRCallMonitor"]) return;
+    NSDictionary *command = [NSDictionary dictionaryWithContentsOfFile:kAACBridgeCommandPath];
+    if (![command isKindOfClass:NSDictionary.class]) {
+        AACLog(@"TRCallMonitor bridge 收到通知，但没有可读命令文件");
         return;
     }
-    connection.interruptionHandler = ^{
-        AACLog([NSString stringWithFormat:@"XPC 探测：服务连接中断（%@）", serviceName]);
-    };
-    connection.invalidationHandler = ^{
-        AACLog([NSString stringWithFormat:@"XPC 探测：连接已失效（%@）；需结合服务是否启动判断原因", serviceName]);
-    };
-    [connection resume];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        AACLog([NSString stringWithFormat:@"XPC 探测窗口结束（%@）；由于尚未发送 RPC，不能据此认定播放接口可用", serviceName]);
-        connection.interruptionHandler = nil;
-        connection.invalidationHandler = nil;
-        [connection invalidate];
-    });
+    NSString *commandID = [command[@"id"] isKindOfClass:NSString.class] ? command[@"id"] : nil;
+    if (commandID.length && [commandID isEqualToString:AACLastTRBridgeCommandID]) return;
+    NSTimeInterval createdAt = [command[@"createdAt"] doubleValue];
+    if (createdAt <= 0 || fabs([[NSDate date] timeIntervalSince1970] - createdAt) > 30.0) {
+        AACLog(@"TRCallMonitor bridge 忽略超过 30 秒的过期命令");
+        return;
+    }
+    NSString *action = [command[@"action"] isKindOfClass:NSString.class] ? command[@"action"] : @"play";
+    id manager = AACTRSharedManager();
+    id session = AACSend(manager, @"session");
+    if (!session) {
+        AACLog([NSString stringWithFormat:@"TRCallMonitor bridge 无活动 session；action=%@ manager=%@，稍后重试", action, manager ? @"present" : @"absent"]);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ AACHandleTRBridgeCommand(); });
+        return;
+    }
+    if (commandID.length) AACLastTRBridgeCommandID = [commandID copy];
+    @try {
+        if ([action isEqualToString:@"stop"]) {
+            SEL stopSel = NSSelectorFromString(@"terminateBackgroundAudioIfNeeded");
+            if ([session respondsToSelector:stopSel]) {
+                ((void (*)(id, SEL))objc_msgSend)(session, stopSel);
+                AACLog(@"TRCallMonitor bridge 已向活动 session 发送 terminateBackgroundAudioIfNeeded");
+            } else {
+                AACLog(@"TRCallMonitor bridge session 不响应 terminateBackgroundAudioIfNeeded");
+            }
+            return;
+        }
+
+        NSString *path = [command[@"path"] isKindOfClass:NSString.class] ? command[@"path"] : nil;
+        BOOL isDirectory = NO;
+        if (!path.length || ![[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDirectory] || isDirectory) {
+            AACLog([NSString stringWithFormat:@"TRCallMonitor bridge 音频路径无效：%@", path ?: @"(empty)"]);
+            return;
+        }
+        SEL playSel = NSSelectorFromString(@"playCustomAudioWithContentsOfFile:rate:volume:repeat:");
+        if (![session respondsToSelector:playSel]) {
+            AACLog(@"TRCallMonitor bridge 活动 session 不响应已确认的播放 selector");
+            return;
+        }
+        float rate = [command[@"rate"] respondsToSelector:@selector(floatValue)] ? [command[@"rate"] floatValue] : 1.0f;
+        float volume = [command[@"volume"] respondsToSelector:@selector(floatValue)] ? [command[@"volume"] floatValue] : 1.0f;
+        BOOL repeat = [command[@"repeat"] respondsToSelector:@selector(boolValue)] ? [command[@"repeat"] boolValue] : NO;
+        rate = fmaxf(0.1f, fminf(rate, 2.0f));
+        volume = fmaxf(0.0f, fminf(volume, 1.0f));
+        ((void (*)(id, SEL, id, float, float, BOOL))objc_msgSend)(session, playSel, path, rate, volume, repeat);
+        AACLog([NSString stringWithFormat:@"TRCallMonitor bridge 已调用 session 播放入口：%@ rate=%.2f volume=%.2f repeat=%d；仍需真机确认对端可听", path.lastPathComponent, rate, volume, repeat]);
+    } @catch (NSException *e) {
+        AACLog([NSString stringWithFormat:@"TRCallMonitor bridge 调用异常：%@", e.reason ?: @"unknown"]);
+    }
+}
+
+static void AACTRBridgeNotificationCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    dispatch_async(dispatch_get_main_queue(), ^{ AACHandleTRBridgeCommand(); });
+}
+
+static void AACRequestTRBridgePlay(NSString *path) {
+    if (AACWriteTRBridgeCommand(@"play", path)) {
+        AACLog(@"已写入 TRCallMonitor 播放请求并发送 Darwin 通知；等待 helper 处理结果");
+        AACPostDarwinNotification(kAACBridgePlayNotification);
+    }
+}
+
+static void AACRequestTRBridgeStop(void) {
+    if (AACWriteTRBridgeCommand(@"stop", nil)) {
+        AACLog(@"已写入 TRCallMonitor 停止请求并发送 Darwin 通知");
+        AACPostDarwinNotification(kAACBridgeStopNotification);
+    }
 }
 
 static void AACStartUplinkAudio(void) {
@@ -120,70 +219,14 @@ static void AACStartUplinkAudio(void) {
         AACLog(@"上行播放失败：音频文件大小为 0 或当前进程无读取权限");
         return;
     }
-
-    AACStopUplinkAudio();
-
-    // setMixToUplink: belongs to TrollRecorder's TRAudioPlayer implementation.
-    // It is not an AVAudioPlayer API. TRAudioPlayer is found in TrollRecorder's
-    // separate helper executable, so it may not be loaded in SpringBoard.
-    Class playerClass = objc_getClass("TRAudioPlayer");
-    if (!playerClass) {
-        AACLog([NSString stringWithFormat:@"未找到运行时类 TRAudioPlayer（process=%@）。不能在 SpringBoard 里直接实例化；将只探测 TrollRecorder 内部 XPC 服务的连接可达性，不发送未经确认的播放 RPC。", NSProcessInfo.processInfo.processName]);
-        AACProbeTRAppXPC();
-        return;
-    }
-
-    SEL initSel = NSSelectorFromString(@"initWithContentsOfURL:usesSharedAudioSession:error:");
-    SEL mixSel = NSSelectorFromString(@"setMixToUplink:");
-    if (![playerClass instancesRespondToSelector:initSel]) {
-        AACLog(@"找到 TRAudioPlayer 类，但它不响应 initWithContentsOfURL:usesSharedAudioSession:error:；停止尝试，避免错误初始化");
-        return;
-    }
-
-    NSURL *url = [NSURL fileURLWithPath:path];
-    NSError *error = nil;
-    id player = ((id (*)(id, SEL, NSURL *, BOOL, NSError **))objc_msgSend)([playerClass alloc], initSel, url, YES, &error);
-    if (!player || error) {
-        AACLog([NSString stringWithFormat:@"创建 TRAudioPlayer 失败：domain=%@ code=%ld description=%@ userInfo=%@ returnedNil=%d",
-                error.domain ?: @"(none)", (long)error.code, error.localizedDescription ?: @"(none)",
-                error.userInfo ?: @{}, player == nil]);
-        return;
-    }
-    if (![player respondsToSelector:mixSel]) {
-        AACLog(@"TRAudioPlayer 实例不响应 setMixToUplink:；不启动普通本机播放");
-        return;
-    }
-
-    @try {
-        ((void (*)(id, SEL, BOOL))objc_msgSend)(player, mixSel, YES);
-        SEL volumeSel = NSSelectorFromString(@"setVolume:");
-        if ([player respondsToSelector:volumeSel]) {
-            ((void (*)(id, SEL, float))objc_msgSend)(player, volumeSel, 1.0f);
-        }
-        SEL prepareSel = NSSelectorFromString(@"prepareToPlay");
-        if ([player respondsToSelector:prepareSel] &&
-            !((BOOL (*)(id, SEL))objc_msgSend)(player, prepareSel)) {
-            AACLog(@"TRAudioPlayer prepareToPlay 失败");
-            ((void (*)(id, SEL, BOOL))objc_msgSend)(player, mixSel, NO);
-            return;
-        }
-        SEL playSel = NSSelectorFromString(@"play");
-        if (![player respondsToSelector:playSel] ||
-            !((BOOL (*)(id, SEL))objc_msgSend)(player, playSel)) {
-            AACLog(@"TRAudioPlayer play 不存在或返回失败");
-            ((void (*)(id, SEL, BOOL))objc_msgSend)(player, mixSel, NO);
-            return;
-        }
-        AACUplinkPlayer = player;
-        AACLog([NSString stringWithFormat:@"已通过 TRAudioPlayer 调用 setMixToUplink:YES 并启动：%@；仍需真机确认对端是否听到", path.lastPathComponent]);
-    } @catch (NSException *e) {
-        AACLog([NSString stringWithFormat:@"TRAudioPlayer 启动异常：%@", e.reason ?: @"unknown"]);
-        ((void (*)(id, SEL, BOOL))objc_msgSend)(player, mixSel, NO);
-    }
+    AACRequestTRBridgePlay(path);
 }
 
 static void AACStopUplinkNotificationCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    dispatch_async(dispatch_get_main_queue(), ^{ AACStopUplinkAudio(); });
+    dispatch_async(dispatch_get_main_queue(), ^{
+        AACStopUplinkAudio();
+        if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) AACRequestTRBridgeStop();
+    });
 }
 
 static NSString *AACCallToken(id call) {
@@ -281,10 +324,18 @@ static void AACPollIncomingCall(void) {
 
 %ctor {
     @autoreleasepool {
+        NSString *process = NSProcessInfo.processInfo.processName ?: @"";
         NSString *bundle = NSBundle.mainBundle.bundleIdentifier ?: @"";
+        if ([process isEqualToString:@"TRCallMonitor"]) {
+            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACTRBridgeNotificationCallback, (__bridge CFStringRef)kAACBridgePlayNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACTRBridgeNotificationCallback, (__bridge CFStringRef)kAACBridgeStopNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+            AACLog(@"AutoAnswerAudio v1.8.0 实验桥已在 TRCallMonitor 加载；使用已反汇编确认的 TRRecordingManager/session 播放入口");
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ AACHandleTRBridgeCommand(); });
+            return;
+        }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio 已在 SpringBoard 加载；已注册实验性上行播放停止通知。setMixToUplink: 尚未在 iOS 17.3 真机验证。");
+        AACLog(@"AutoAnswerAudio v1.8.0 已在 SpringBoard 加载；音频播放请求将转发给 TRCallMonitor 实验桥。该路径尚未编译/真机验证。");
         AACStartPolling();
     }
 }

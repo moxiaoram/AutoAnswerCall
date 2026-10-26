@@ -1,8 +1,8 @@
 TARGET := iphone:clang:latest:17.0
 ARCHS := arm64e
 THEOS_PACKAGE_SCHEME := roothide
-PACKAGE_VERSION := 1.7.3
-INSTALL_TARGET_PROCESSES := SpringBoard
+PACKAGE_VERSION := 1.8.0
+INSTALL_TARGET_PROCESSES := SpringBoard TRCallMonitor
 
 include $(THEOS)/makefiles/common.mk
 

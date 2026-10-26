@@ -1,8 +1,8 @@
 Package: com.autoanswer.call
 Name: AutoAnswerAudio
-Version: 1.7.3
+Version: 1.8.0
 Architecture: iphoneos-arm64e
-Description: Experimental RootHide call automation and audio library settings; call answering is unverified and uplink injection is not implemented
+Description: Experimental RootHide call automation with TrollRecorder TRCallMonitor bridge; uplink playback is unverified
 Maintainer: AutoAnswerAudio
 Author: AutoAnswerAudio
 Section: Tweaks
