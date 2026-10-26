@@ -183,7 +183,7 @@ static void AACTRBridgeNotificationCallback(CFNotificationCenterRef center, void
     dispatch_async(dispatch_get_main_queue(), ^{ AACHandleTRBridgeCommand(); });
 }
 
-static void AACRequestTRBridgePlay(NSString *path) {
+__attribute__((unused)) static void AACRequestTRBridgePlay(NSString *path) {
     if (AACWriteTRBridgeCommand(@"play", path)) {
         AACLog(@"已写入 TRCallMonitor 播放请求并发送 Darwin 通知；等待 helper 处理结果");
         AACPostDarwinNotification(kAACBridgePlayNotification);
@@ -206,6 +206,38 @@ static void AACRequestTRBridgeStop(void) {
 // ---------------------------------------------------------------------------
 static AVSpeechSynthesizer *AACSpeechSynth = nil;
 static AVSpeechUtterance *AACCurrentUtterance = nil;
+static volatile BOOL AACUplinkLooping = NO;   // 用户未按停止按钮时保持循环
+static volatile BOOL AACUserStopped = NO;     // 用户按下停止按钮
+
+@interface AACSpeechDelegate : NSObject <AVSpeechSynthesizerDelegate>
+@end
+@implementation AACSpeechDelegate
+- (void)speechSynthesizer:(AVSpeechSynthesizer *)synth didFinishSpeechUtterance:(AVSpeechUtterance *)utterance {
+    if (!AACUplinkLooping || AACUserStopped) {
+        AACLog(@"上行：单次朗读结束，循环已关闭");
+        return;
+    }
+    // 循环：稍作间隔后重复播放同一段文本
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (!AACUplinkLooping || AACUserStopped) return;
+        @try {
+            AVSpeechUtterance *again = [AVSpeechUtterance speechUtteranceWithString:utterance.speechString ?: @""];
+            [self applyUplink:again];
+            [synth speakUtterance:again];
+            AACLog(@"上行：循环播放下一轮");
+        } @catch (NSException *e) {
+            AACLog([NSString stringWithFormat:@"上行：循环异常 %@", e.reason ?: @""]);
+        }
+    });
+}
+- (void)applyUplink:(AVSpeechUtterance *)u {
+    SEL sel = NSSelectorFromString(@"setMixToTelephonyUplink:");
+    if ([u respondsToSelector:sel]) {
+        @try { ((void (*)(id, SEL, BOOL))objc_msgSend)(u, sel, YES); } @catch (NSException *e) {}
+    }
+}
+@end
+static AACSpeechDelegate *AACSpeechDelegateInstance = nil;
 
 static BOOL AACUtteranceSupportsUplink(void) {
     Class cls = NSClassFromString(@"AVSpeechUtterance");
@@ -269,6 +301,10 @@ static void AACStartUplinkAudio(void) {
         BOOL mixed = AACEnableUplinkOnUtterance(u);
         AACLog([NSString stringWithFormat:@"上行：准备朗读 %lu 字，mixToTelephonyUplink=%d", (unsigned long)text.length, mixed]);
         AACCurrentUtterance = u;
+        AACUserStopped = NO;
+        AACUplinkLooping = YES;
+        if (!AACSpeechDelegateInstance) AACSpeechDelegateInstance = [AACSpeechDelegate new];
+        AACSpeechSynth.delegate = AACSpeechDelegateInstance;
         [AACSpeechSynth speakUtterance:u];
         AACLog(@"上行：已调用 speakUtterance（对方是否能听到需实际通话验证）");
     } @catch (NSException *e) {
@@ -277,6 +313,9 @@ static void AACStartUplinkAudio(void) {
 }
 
 static void AACStopUplinkAudioTTS(void) {
+    AACUserStopped = YES;
+    AACUplinkLooping = NO;
+    AACLog(@"上行：收到停止请求，结束循环并把麦克风交还人工");
     @try {
         if (AACSpeechSynth && AACSpeechSynth.isSpeaking) {
             [AACSpeechSynth stopSpeakingAtBoundary:AVSpeechBoundaryImmediate];
@@ -286,6 +325,93 @@ static void AACStopUplinkAudioTTS(void) {
         AACCurrentUtterance = nil;
     } @catch (NSException *e) {
         AACLog([NSString stringWithFormat:@"上行：停止异常：%@", e.reason ?: @"unknown"]);
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// 通话界面：把静音按钮替换为“停止”按钮（运行时发现，不写死类名）
+// 目标进程：com.apple.InCallService
+// 找到 PHInCallRootViewController / PHAudioCallViewController 的视图后，
+// 在通话控制按钮行插入一个“停止”按钮；点击后停止上行播放并交还麦克风。
+// ---------------------------------------------------------------------------
+static UIButton *AACStopButton = nil;
+
+@interface AACStopButtonTarget : NSObject
++ (instancetype)shared;
+- (void)tapped;
+@end
+
+static void AACStopButtonTapped(void) {
+    AACLog(@"通话界面：用户按下停止按钮，停止上行播放并交还麦克风");
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+        (__bridge CFStringRef)kAACStopUplinkNotification, NULL, NULL, true);
+    AACStopUplinkAudioTTS();
+    dispatch_async(dispatch_get_main_queue(), ^{
+        AACStopButton.enabled = NO;
+        [AACStopButton setTitle:@"已停止" forState:UIControlStateNormal];
+        AACStopButton.alpha = 0.5;
+    });
+}
+
+static void AACInstallStopButtonInView(UIView *root) {
+    if (!root || AACStopButton.superview) return;
+    // 找一个合适的容器：优先通话控制按钮所在的 UIStackView
+    __block UIStackView *target = nil;
+    __block NSUInteger best = 0;
+    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:root];
+    NSUInteger visited = 0;
+    while (queue.count && visited < 3000) {
+        UIView *v = queue.firstObject; [queue removeObjectAtIndex:0]; visited++;
+        if ([v isKindOfClass:UIStackView.class]) {
+            UIStackView *sv = (UIStackView *)v;
+            NSUInteger controls = 0;
+            for (UIView *c in sv.arrangedSubviews) if ([c isKindOfClass:UIControl.class]) controls++;
+            if (controls >= 2 && controls > best) { best = controls; target = sv; }
+        }
+        for (UIView *c in v.subviews) [queue addObject:c];
+    }
+    if (!target) { AACLog(@"通话界面：未找到按钮容器，跳过停止按钮注入"); return; }
+
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+    [btn setTitle:@"停止" forState:UIControlStateNormal];
+    [btn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    btn.backgroundColor = [UIColor colorWithRed:0.85 green:0.2 blue:0.2 alpha:1.0];
+    btn.layer.cornerRadius = 32;
+    btn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
+    [btn.widthAnchor constraintEqualToConstant:64].active = YES;
+    [btn.heightAnchor constraintEqualToConstant:64].active = YES;
+    [btn addTarget:[AACStopButtonTarget shared] action:@selector(tapped) forControlEvents:UIControlEventTouchUpInside];
+    [target addArrangedSubview:btn];
+    AACStopButton = btn;
+    AACLog([NSString stringWithFormat:@"通话界面：已插入停止按钮（容器控件数=%lu，遍历节点=%lu）", (unsigned long)best, (unsigned long)visited]);
+}
+
+@implementation AACStopButtonTarget
++ (instancetype)shared { static AACStopButtonTarget *s; static dispatch_once_t o; dispatch_once(&o, ^{ s = [self new]; }); return s; }
+- (void)tapped { AACStopButtonTapped(); }
+@end
+
+static void AACScanForInCallUI(void) {
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+            if (!w.isKeyWindow) continue;
+            UIViewController *vc = w.rootViewController;
+            NSMutableArray *stack = [NSMutableArray arrayWithObject:vc];
+            NSUInteger n = 0;
+            while (stack.count && n++ < 500) {
+                UIViewController *c = stack.firstObject; [stack removeObjectAtIndex:0];
+                NSString *cls = NSStringFromClass(c.class);
+                if ([cls containsString:@"InCall"] || [cls containsString:@"CallView"]) {
+                    if (c.viewIfLoaded && !AACStopButton.superview) {
+                        AACInstallStopButtonInView(c.viewIfLoaded);
+                    }
+                }
+                for (UIViewController *ch in c.childViewControllers) [stack addObject:ch];
+                if (c.presentedViewController) [stack addObject:c.presentedViewController];
+            }
+        }
     }
 }
 
@@ -399,6 +525,15 @@ static void AACPollIncomingCall(void) {
             CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACTRBridgeNotificationCallback, (__bridge CFStringRef)kAACBridgeStopNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
             AACLog(@"AutoAnswerAudio v1.8.0 实验桥已在 TRCallMonitor 加载；使用已反汇编确认的 TRRecordingManager/session 播放入口");
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ AACHandleTRBridgeCommand(); });
+            return;
+        }
+        // 通话界面进程：负责接管通话界面按钮
+        if ([bundle isEqualToString:@"com.apple.InCallService"] || [process isEqualToString:@"InCallService"]) {
+            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+            AACLog(@"AutoAnswerAudio 已在 InCallService 加载：将把通话界面按钮替换为停止按钮");
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) { AACScanForInCallUI(); }];
+            });
             return;
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
