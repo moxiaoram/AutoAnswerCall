@@ -49,5 +49,6 @@ static inline void AACGlobalWriteLog(NSString *component, NSString *message, con
     }
 }
 
-#define AACLog(message) AACGlobalWriteLog(@"Tweak", (message), __FILE__, __LINE__, __PRETTY_FUNCTION__)
-#define AAPrefsLog(message) AACGlobalWriteLog(@"Preferences", (message), __FILE__, __LINE__, __PRETTY_FUNCTION__)
+// 可变参数：允许调用点直接传字符串字面量或多个参数，避免把逗号误当作宏参数分隔。
+#define AACLog(...) AACGlobalWriteLog(@"Tweak", [NSString stringWithFormat:__VA_ARGS__], __FILE__, __LINE__, __PRETTY_FUNCTION__)
+#define AAPrefsLog(...) AACGlobalWriteLog(@"Preferences", [NSString stringWithFormat:__VA_ARGS__], __FILE__, __LINE__, __PRETTY_FUNCTION__)
