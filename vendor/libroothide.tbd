@@ -1,0 +1,9 @@
+--- !tapi-tbd-v3
+archs: [ arm64, arm64e ]
+platform: ios
+install-name: /usr/lib/libroothide.dylib
+exports:
+  - archs: [ arm64, arm64e ]
+    symbols: [ ]
+    objc-classes: [ ]
+...

@@ -10,6 +10,9 @@ TWEAK_NAME := AutoAnswerCall AutoAnswerTRBridge
 AutoAnswerCall_FILES := Tweak.x
 AutoAnswerCall_CFLAGS := -fobjc-arc
 AutoAnswerCall_FRAMEWORKS := Foundation UIKit AVFoundation
+# RootHide 运行时：系统进程（如 InCallService）注入时必须链接 libroothide，
+# 否则 dylib 在 .jbroot 沙盒外无法重定位（表现为"装了但不注入"）。
+AutoAnswerCall_LDFLAGS := -L$(THEOS_PROJECT_DIR)/vendor -lroothide -lsubstrate
 AutoAnswerCall_PLIST := AutoAnswerCall.plist
 
 AutoAnswerTRBridge_FILES := Tweak.x
