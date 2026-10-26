@@ -546,8 +546,16 @@ static void AACPollIncomingCall(void) {
                     ended = [cur respondsToSelector:endSel] ? ((BOOL (*)(id, SEL))objc_msgSend)(cur, endSel) : NO;
                 }
                 static NSInteger missTicks = 0;
+                static NSInteger dbgTick = 0;
+                if (++dbgTick % 4 == 0) {
+                    AACLog([NSString stringWithFormat:@"[结束检测] currentCall=%@ ended=%d miss=%ld",
+                            cur ? NSStringFromClass([cur class]) : @"nil", (int)ended, (long)missTicks]);
+                }
                 if (ended) missTicks++; else missTicks = 0;
-                if (missTicks >= 8) {   // 约 4 秒持续无有效通话
+                id allCalls = AACSend(center, @"calls");
+                NSUInteger liveCount = [allCalls respondsToSelector:@selector(count)] ? [allCalls count] : 0;
+                if (liveCount > 0) missTicks = 0;   // 只要还有任何通话就不算结束
+                if (missTicks >= 12) {   // 约 6 秒持续无有效通话
                     AACLog(@"通话确实已结束（连续 4 秒无有效通话），停止上行朗读");
                     AACStopUplinkAudioTTS();
                     missTicks = 0;
@@ -711,7 +719,7 @@ __attribute__((unused)) static void AACUplinkProbe(void) {
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v2.0.5 已在 SpringBoard 加载");
+        AACLog(@"AutoAnswerAudio v2.0.6 已在 SpringBoard 加载");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }
