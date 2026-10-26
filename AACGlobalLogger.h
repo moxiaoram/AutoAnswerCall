@@ -49,6 +49,7 @@ static inline void AACGlobalWriteLog(NSString *component, NSString *message, con
     }
 }
 
-// 单参数宏：调用点自行 format 好整条消息（可含逗号），避免 format-security 与参数拆分问题。
-#define AACLog(message) AACGlobalWriteLog(@"Tweak", (message), __FILE__, __LINE__, __PRETTY_FUNCTION__)
-#define AAPrefsLog(message) AACGlobalWriteLog(@"Preferences", (message), __FILE__, __LINE__, __PRETTY_FUNCTION__)
+// 可变参数宏：用 @"%@" 承接整条已格式化字符串，
+// 既允许调用点出现逗号，也不会触发 -Wformat-security。
+#define AACLog(...) AACGlobalWriteLog(@"Tweak", [NSString stringWithFormat:@"%@", __VA_ARGS__], __FILE__, __LINE__, __PRETTY_FUNCTION__)
+#define AAPrefsLog(...) AACGlobalWriteLog(@"Preferences", [NSString stringWithFormat:@"%@", __VA_ARGS__], __FILE__, __LINE__, __PRETTY_FUNCTION__)
