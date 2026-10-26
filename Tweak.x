@@ -535,30 +535,28 @@ static void AACPollIncomingCall(void) {
         } else {
             id center = AACCallCenter();
             id call = AACSend(center, @"incomingCall");
-            // 通话结束检测（严格版）：
-            // 只有「正在播放上行」时才检查；用 currentCall 的 hasEnded 判定，
-            // 不再用 incomingCall 是否为空（接听后它必然为空，会误判）。
-            if (!call && AACUplinkLooping) {
-                id cur = AACSend(center, @"currentCall");
-                BOOL ended = YES;
-                if (cur) {
-                    SEL endSel = NSSelectorFromString(@"hasEnded");
-                    ended = [cur respondsToSelector:endSel] ? ((BOOL (*)(id, SEL))objc_msgSend)(cur, endSel) : NO;
-                }
-                static NSInteger missTicks = 0;
-                static NSInteger dbgTick = 0;
-                if (++dbgTick % 4 == 0) {
-                    AACLog([NSString stringWithFormat:@"[结束检测] currentCall=%@ ended=%d miss=%ld",
-                            cur ? NSStringFromClass([cur class]) : @"nil", (int)ended, (long)missTicks]);
-                }
-                if (ended) missTicks++; else missTicks = 0;
-                id allCalls = AACSend(center, @"calls");
-                NSUInteger liveCount = [allCalls respondsToSelector:@selector(count)] ? [allCalls count] : 0;
-                if (liveCount > 0) missTicks = 0;   // 只要还有任何通话就不算结束
-                if (missTicks >= 12) {   // 约 6 秒持续无有效通话
-                    AACLog(@"通话确实已结束（连续 4 秒无有效通话），停止上行朗读");
-                    AACStopUplinkAudioTTS();
-                    missTicks = 0;
+            // 通话结束检测：改用 CallKit 的 CXCall 状态，而不是轮询 incomingCall/currentCall。
+            // 之前用轮询判断会在接听后误判（incomingCall 变空），导致播放一次就被停。
+            if (AACUplinkLooping && !call) {
+                Class obsCls = NSClassFromString(@"CXCallObserver");
+                if (obsCls) {
+                    id obs = AACSend((id)obsCls, @"new") ?: ((id (*)(id, SEL))objc_msgSend)((id)obsCls, @selector(new));
+                    NSArray *calls = AACSend(obs, @"calls");
+                    BOOL anyLive = NO;
+                    if ([calls isKindOfClass:NSArray.class]) {
+                        for (id c in calls) {
+                            SEL endSel = NSSelectorFromString(@"hasEnded");
+                            BOOL ended = [c respondsToSelector:endSel] ? ((BOOL (*)(id, SEL))objc_msgSend)(c, endSel) : NO;
+                            if (!ended) { anyLive = YES; break; }
+                        }
+                    }
+                    static NSInteger liveMiss = 0;
+                    if (anyLive) liveMiss = 0; else liveMiss++;
+                    if (liveMiss >= 10) {   // 约 5 秒确实没有活动通话
+                        AACLog(@"CallKit 确认无活动通话，停止上行朗读");
+                        AACStopUplinkAudioTTS();
+                        liveMiss = 0;
+                    }
                 }
             }
             if (!call) {
@@ -719,7 +717,7 @@ __attribute__((unused)) static void AACUplinkProbe(void) {
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v2.0.6 已在 SpringBoard 加载");
+        AACLog(@"AutoAnswerAudio v2.0.7 已在 SpringBoard 加载");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }

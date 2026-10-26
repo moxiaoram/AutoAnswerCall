@@ -1,6 +1,6 @@
 Package: com.autoanswer.call
 Name: AutoAnswerAudio
-Version: 2.0.6
+Version: 2.0.7
 Architecture: iphoneos-arm64e
 Description: Experimental RootHide call automation with separately filtered TRCallMonitor bridge; uplink playback is unverified
 Maintainer: AutoAnswerAudio
