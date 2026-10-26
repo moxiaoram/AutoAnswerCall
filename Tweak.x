@@ -240,24 +240,26 @@ static volatile BOOL AACUserStopped = NO;     // 用户按下停止按钮
 static AACSpeechDelegate *AACSpeechDelegateInstance = nil;
 
 static BOOL AACUtteranceSupportsUplink(void) {
-    Class cls = NSClassFromString(@"AVSpeechUtterance");
+    // 探针实测（iOS 17.3）：setMixToTelephonyUplink: 在 AVSpeechSynthesizer 上，
+    // 签名 args=3 ret=v arg2=B（BOOL），不在 AVSpeechUtterance 上。
+    Class cls = NSClassFromString(@"AVSpeechSynthesizer");
     if (!cls) return NO;
     SEL sel = NSSelectorFromString(@"setMixToTelephonyUplink:");
     return [cls instancesRespondToSelector:sel];
 }
 
 static BOOL AACEnableUplinkOnUtterance(AVSpeechUtterance *utterance) {
-    if (!utterance) return NO;
+    if (!AACSpeechSynth) return NO;
     SEL sel = NSSelectorFromString(@"setMixToTelephonyUplink:");
-    Method m = class_getInstanceMethod([utterance class], sel);
+    Method m = class_getInstanceMethod([AACSpeechSynth class], sel);
     if (!m) { AACLog(@"上行：AVSpeechUtterance 没有 setMixToTelephonyUplink:，无法注入上行"); return NO; }
     unsigned int argc = method_getNumberOfArguments(m);
     char argType[16] = {0};
     if (argc >= 3) method_getArgumentType(m, 2, argType, sizeof(argType));
-    AACLog([NSString stringWithFormat:@"上行：setMixToTelephonyUplink: 参数数=%u 第2参数类型=%s", argc, argc >= 3 ? argType : "?"]);
+    AACLog([NSString stringWithFormat:@"上行：在 AVSpeechSynthesizer 上调用 setMixToTelephonyUplink: 参数数=%u 类型=%s", argc, argc >= 3 ? argType : "?"]);
     if (argc != 3) { AACLog(@"上行：ABI 不符合预期（期望 2 个隐式参数 + 1 个 BOOL），不调用"); return NO; }
     @try {
-        ((void (*)(id, SEL, BOOL))objc_msgSend)(utterance, sel, YES);
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(AACSpeechSynth, sel, YES);
         return YES;
     } @catch (NSException *e) {
         AACLog([NSString stringWithFormat:@"上行：调用 setMixToTelephonyUplink: 异常：%@", e.reason ?: @"unknown"]);
@@ -285,7 +287,7 @@ static void AACStartUplinkAudio(void) {
     }
 
     if (!AACUtteranceSupportsUplink()) {
-        AACLog(@"上行：本系统 AVSpeechUtterance 不支持 setMixToTelephonyUplink:，放弃上行注入");
+        AACLog(@"上行：本系统 AVSpeechSynthesizer 不支持 setMixToTelephonyUplink:，放弃上行注入");
         return;
     }
 
@@ -630,7 +632,7 @@ static void AACUplinkProbe(void) {
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v1.9.2 已在 SpringBoard 加载");
+        AACLog(@"AutoAnswerAudio v1.9.3 已在 SpringBoard 加载");
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ AACUplinkProbe(); });
         AACStartPolling();
     }
