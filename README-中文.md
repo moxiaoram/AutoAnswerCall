@@ -62,3 +62,10 @@ make clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide
 - 号码读取依赖当前系统 `TUCall` 对象实际暴露的属性；需设备日志确认。
 - 音频注入、注入停止、麦克风恢复和通话 UI 改造没有实现。
 - 未经编译、安装和真机测试的代码不能视为功能已验证。
+
+## 全局诊断日志
+
+Tweak（SpringBoard）和设置页共用日志文件：
+`/var/mobile/Library/AutoAnswerAudio/AutoAnswerAudio.log`
+
+在设置页点击“查看 / 复制全局日志”，可查看最近日志、复制到剪贴板或清空日志。每条记录包含时间、进程、PID、源文件、行号和函数名。复现问题后请复制日志发送，以便定位究竟卡在来电检测、接听调用、播放器初始化、上行混音选择还是停止流程。
