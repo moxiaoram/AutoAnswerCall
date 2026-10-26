@@ -35,6 +35,8 @@ jobs:
             dpkg-deb --info "$deb"
             test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64e"
             dpkg-deb --contents "$deb" | grep -F 'AutoAnswerCall.dylib'
+            dpkg-deb --contents "$deb" | grep -F 'AutoAnswerTRBridge.dylib'
+            dpkg-deb --contents "$deb" | grep -F 'AutoAnswerTRBridge.plist'
             dpkg-deb --contents "$deb" | grep -F 'AutoAnswerCallPrefs.bundle'
             dpkg-deb --contents "$deb" | grep -F 'autoanswer.call.plist'
           done

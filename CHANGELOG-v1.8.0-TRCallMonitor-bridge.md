@@ -19,3 +19,7 @@
 - 尚未验证 helper 进程启动时机、活动 session 是否存在、跨进程命令文件权限，以及对端实际是否听到音频。
 - `terminateBackgroundAudioIfNeeded` 是否完全停止自定义播放仍需真机验证。
 - 不能把本源码包视为已验证可用的 deb。
+
+
+## v1.8.1 后续诊断
+由于设备日志未出现 TRCallMonitor 记录，v1.8.1 将 SpringBoard 与 TRCallMonitor 分成两个 dylib 和独立 filter，先验证注入目标。

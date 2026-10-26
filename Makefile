@@ -1,15 +1,21 @@
 TARGET := iphone:clang:latest:17.0
 ARCHS := arm64e
 THEOS_PACKAGE_SCHEME := roothide
-PACKAGE_VERSION := 1.8.0
+PACKAGE_VERSION := 1.8.1
 INSTALL_TARGET_PROCESSES := SpringBoard TRCallMonitor
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME := AutoAnswerCall
+TWEAK_NAME := AutoAnswerCall AutoAnswerTRBridge
 AutoAnswerCall_FILES := Tweak.x
 AutoAnswerCall_CFLAGS := -fobjc-arc
 AutoAnswerCall_FRAMEWORKS := Foundation UIKit AVFoundation
+AutoAnswerCall_PLIST := AutoAnswerCall.plist
+
+AutoAnswerTRBridge_FILES := Tweak.x
+AutoAnswerTRBridge_CFLAGS := -fobjc-arc
+AutoAnswerTRBridge_FRAMEWORKS := Foundation UIKit AVFoundation
+AutoAnswerTRBridge_PLIST := AutoAnswerTRBridge.plist
 
 BUNDLE_NAME := AutoAnswerCallPrefs
 AutoAnswerCallPrefs_FILES := Preferences/AARootListController.m
