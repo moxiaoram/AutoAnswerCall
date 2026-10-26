@@ -864,7 +864,7 @@ __attribute__((unused)) static void AACShowFloatingStop(BOOL show) {
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v2.1.5 已在 SpringBoard 加载");
+        AACLog(@"AutoAnswerAudio v2.1.6 已在 SpringBoard 加载（过滤器对齐 CallAssist）");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }
