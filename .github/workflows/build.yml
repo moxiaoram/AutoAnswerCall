@@ -39,6 +39,9 @@ jobs:
             dpkg-deb --contents "$deb" | grep -F 'AutoAnswerTRBridge.plist'
             dpkg-deb --contents "$deb" | grep -F 'AutoAnswerCallPrefs.bundle'
             dpkg-deb --contents "$deb" | grep -F 'autoanswer.call.plist'
+            # RootHide 必须带 patch 链接，否则注入不生效
+            dpkg-deb --contents "$deb" | grep -E 'roothidepatch' || {
+              echo "ERROR: 缺少 roothidepatch 符号链接，RootHide 下不会生效"; exit 1; }
           done
 
       - name: Upload build log

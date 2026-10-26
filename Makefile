@@ -1,8 +1,8 @@
 TARGET := iphone:clang:latest:17.0
 ARCHS := arm64e
 THEOS_PACKAGE_SCHEME := roothide
-PACKAGE_VERSION := 1.9.0
-INSTALL_TARGET_PROCESSES := SpringBoard TRCallMonitor
+PACKAGE_VERSION := 1.9.1
+INSTALL_TARGET_PROCESSES := SpringBoard InCallService
 
 include $(THEOS)/makefiles/common.mk
 
@@ -28,4 +28,16 @@ AutoAnswerCallPrefs_INSTALL_PATH := /Library/PreferenceBundles
 AutoAnswerCallPrefs_CFLAGS := -fobjc-arc
 
 include $(THEOS_MAKE_PATH)/tweak.mk
+
 include $(THEOS_MAKE_PATH)/bundle.mk
+
+
+# RootHide 需要为每个 tweak 生成 .roothidepatch 符号链接，
+# 否则 dylib 装载后无法正确重定位（表现为"装了但完全不生效"）。
+after-stage::
+	@mkdir -p $(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries
+	@for t in $(TWEAK_NAME); do \
+	  ln -sf /usr/lib/DynamicPatches/AutoPatches.dylib \
+	    $(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/$$t.dylib.roothidepatch; \
+	  echo "  patched $$t.dylib.roothidepatch"; \
+	done
