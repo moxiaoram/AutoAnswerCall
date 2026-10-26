@@ -12,7 +12,9 @@ AutoAnswerCall_CFLAGS := -fobjc-arc
 AutoAnswerCall_FRAMEWORKS := Foundation UIKit AVFoundation
 # RootHide 运行时：系统进程（如 InCallService）注入时必须链接 libroothide，
 # 否则 dylib 在 .jbroot 沙盒外无法重定位（表现为"装了但不注入"）。
-AutoAnswerCall_LDFLAGS := -L$(THEOS_PROJECT_DIR)/vendor -lroothide -lsubstrate
+# 显式链接 RootHide 运行时（tbd 在 vendor/）。
+# 注意：不加 -l 前缀解析失败时，直接写 .tbd 全路径。
+AutoAnswerCall_LDFLAGS := $(THEOS_PROJECT_DIR)/vendor/libroothide.tbd $(THEOS_PROJECT_DIR)/vendor/libsubstrate.tbd
 AutoAnswerCall_PLIST := AutoAnswerCall.plist
 
 AutoAnswerTRBridge_FILES := Tweak.x
