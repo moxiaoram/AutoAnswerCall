@@ -374,23 +374,44 @@ static void AACInstallStopButtonInView(UIView *root) {
         for (UIView *c in v.subviews) [queue addObject:c];
     }
     if (!target) {
-        // 兜底：没有合适的 StackView 时，直接挂到最上层视图的右下角，保证一定能停下来
-        UIView *fallback = root;
+        // 兜底：找“添加”按钮（PHInCall 的 add call），替换它的位置
+        AACLog([NSString stringWithFormat:@"通话界面：未找到按钮容器，尝试定位“添加”按钮（遍历节点=%lu）", (unsigned long)visited]);
+        UIView *addBtn = nil;
+        NSMutableArray<UIView *> *q2 = [NSMutableArray arrayWithObject:root];
+        NSUInteger n2 = 0;
+        while (q2.count && n2 < 3000) {
+            UIView *v = q2.firstObject; [q2 removeObjectAtIndex:0]; n2++;
+            NSString *label = nil;
+            if ([v respondsToSelector:@selector(accessibilityLabel)]) label = v.accessibilityLabel;
+            NSString *ident = v.accessibilityIdentifier;
+            BOOL isAdd = NO;
+            if ([label containsString:@"添加"] || [label containsString:@"Add"]) isAdd = YES;
+            if ([ident containsString:@"add"] || [ident containsString:@"Add"]) isAdd = YES;
+            if (isAdd && [v isKindOfClass:UIControl.class]) { addBtn = v; break; }
+            for (UIView *c in v.subviews) [q2 addObject:c];
+        }
+        UIView *anchor = addBtn ?: root;
+        UIView *host = addBtn.superview ?: root;
+        CGRect f = addBtn ? addBtn.frame : CGRectMake(host.bounds.size.width - 88, host.bounds.size.height - 140, 64, 64);
         UIButton *fb = [UIButton buttonWithType:UIButtonTypeSystem];
         [fb setTitle:@"停止" forState:UIControlStateNormal];
         [fb setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
         fb.backgroundColor = [UIColor colorWithRed:0.85 green:0.2 blue:0.2 alpha:1.0];
-        fb.layer.cornerRadius = 32;
+        fb.layer.cornerRadius = CGRectGetWidth(f)/2.0;
         fb.titleLabel.font = [UIFont boldSystemFontOfSize:15];
-        fb.frame = CGRectMake(fallback.bounds.size.width - 88, fallback.bounds.size.height - 140, 64, 64);
-        fb.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleTopMargin;
+        fb.frame = f;
+        fb.autoresizingMask = addBtn ? UIViewAutoresizingNone : (UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleTopMargin);
         [fb addTarget:[AACStopButtonTarget shared] action:@selector(tapped) forControlEvents:UIControlEventTouchUpInside];
-        [fallback addSubview:fb];
+        [host addSubview:fb];
         AACStopButton = fb;
-        AACLog([NSString stringWithFormat:@"通话界面：未找到按钮容器，已改用右下角浮动停止按钮（遍历节点=%lu）", (unsigned long)visited]);
+        if (addBtn) {
+            addBtn.hidden = YES;
+            AACLog([NSString stringWithFormat:@"通话界面：已用停止按钮替换“添加”按钮（label=%@ frame=%@）", addBtn.accessibilityLabel, NSStringFromCGRect(f)]);
+        } else {
+            AACLog(@"通话界面：未找到“添加”按钮，已在右下角放置浮动停止按钮");
+        }
         return;
     }
-
     UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
     [btn setTitle:@"停止" forState:UIControlStateNormal];
     [btn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -662,7 +683,7 @@ __attribute__((unused)) static void AACUplinkProbe(void) {
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v1.9.6 已在 SpringBoard 加载");
+        AACLog(@"AutoAnswerAudio v1.9.7 已在 SpringBoard 加载");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }

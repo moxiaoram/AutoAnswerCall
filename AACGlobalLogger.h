@@ -46,6 +46,15 @@ static inline void AACGlobalWriteLog(NSString *component, NSString *message, con
         }
         // Also mirror to the system log so crash/device-console diagnostics can correlate events.
         NSLog(@"[AutoAnswerAudio][%@] %@", component ?: @"Unknown", safeMessage);
+        // 额外写一份到共享目录，便于跨进程（InCallService 等）诊断；失败静默。
+        static NSString *sharedLog = nil;
+        if (!sharedLog) sharedLog = @"/var/jb/Library/Application Support/AutoAnswerCall/AutoAnswerAudio-shared.log";
+        NSFileManager *fm = [NSFileManager defaultManager];
+        [fm createDirectoryAtPath:[sharedLog stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *line = [NSString stringWithFormat:@"[%@][%d][%@] %@\n", [NSDate date], getpid(), component ?: @"?", safeMessage ?: @""];
+        NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:sharedLog];
+        if (!h) [line writeToFile:sharedLog atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        else { @try { [h seekToEndOfFile]; [h writeData:[line dataUsingEncoding:NSUTF8StringEncoding]]; [h closeFile]; } @catch (NSException *e) {} }
     }
 }
 
