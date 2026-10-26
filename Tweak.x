@@ -554,18 +554,6 @@ static void AACPollIncomingCall(void) {
                 }
             }
             if (!call) {
-                id cur = AACSend(center, @"currentCall");
-                BOOL stillInCall = NO;
-                if (cur) {
-                    if ([cur respondsToSelector:NSSelectorFromString(@"hasEnded")]) {
-                        stillInCall = !((BOOL (*)(id, SEL))objc_msgSend)(cur, NSSelectorFromString(@"hasEnded"));
-                    } else {
-                        stillInCall = YES;   // 取不到状态时保守认为仍在通话
-                    }
-                }
-                }
-            }
-            if (!call) {
                 AACLastScheduledToken = nil;
                 AACLastAnsweredToken = nil;
             } else {
