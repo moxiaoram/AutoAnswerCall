@@ -461,11 +461,18 @@ static id AACCallCenter(void) {
     if (center) AACLoggedCallCenterUnavailable = NO;
     return center;
 }
+static NSUInteger callsCountSafe(id center);
 static void AACPollIncomingCall(void);
 static void AACStartPolling(void) {
     if (AACTimerRunning) return;
     AACTimerRunning = YES;
     dispatch_async(dispatch_get_main_queue(), ^{ AACPollIncomingCall(); });
+}
+static NSUInteger callsCountSafe(id center) {
+    if (!center) return 0;
+    id calls = AACSend(center, @"calls");
+    if ([calls respondsToSelector:@selector(count)]) return [calls count];
+    return 0;
 }
 static void AACPollIncomingCall(void) {
     @autoreleasepool {
@@ -514,6 +521,16 @@ static void AACPollIncomingCall(void) {
                 }
             }
         }
+    }
+    static NSUInteger tick = 0;
+    static NSUInteger silentTicks = 0;
+    tick++; silentTicks++;
+    if (tick % 20 == 0) {
+        id c = AACCallCenter();
+        id cur = c ? AACSend(c, @"currentCall") : nil;
+        AACLog([NSString stringWithFormat:@"轮询心跳 tick=%lu 中心=%@ currentCall=%@ tags=%lu",
+                (unsigned long)tick, c ? @"可用" : @"不可用", cur ? NSStringFromClass([cur class]) : @"无",
+                (unsigned long)callsCountSafe(c)]);
     }
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ AACPollIncomingCall(); });
 }
@@ -632,7 +649,7 @@ static void AACUplinkProbe(void) {
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v1.9.3 已在 SpringBoard 加载");
+        AACLog(@"AutoAnswerAudio v1.9.4 已在 SpringBoard 加载");
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ AACUplinkProbe(); });
         AACStartPolling();
     }
