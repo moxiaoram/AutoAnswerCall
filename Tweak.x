@@ -535,34 +535,22 @@ static void AACPollIncomingCall(void) {
         } else {
             id center = AACCallCenter();
             id call = AACSend(center, @"incomingCall");
-            // 通话结束检测：
-            // 只在“已经确认过接通、且随后所有通话都结束”时才停止。
-            // 之前直接用 currentCall 判断，接听瞬间 incomingCall 会短暂为空，
-            // 导致刚开播 0.1 秒就被误判为结束（音频立刻被停）。
-            static BOOL sawConnected = NO;
-            static int graceTicks = 0;
-            if (call) {
-                sawConnected = YES;
-                graceTicks = 0;
-            } else if (sawConnected) {
+            // 通话结束检测（严格版）：
+            // 只有「正在播放上行」时才检查；用 currentCall 的 hasEnded 判定，
+            // 不再用 incomingCall 是否为空（接听后它必然为空，会误判）。
+            if (!call && AACUplinkLooping) {
                 id cur = AACSend(center, @"currentCall");
-                BOOL alive = NO;
+                BOOL ended = YES;
                 if (cur) {
                     SEL endSel = NSSelectorFromString(@"hasEnded");
-                    alive = [cur respondsToSelector:endSel] ? !((BOOL (*)(id, SEL))objc_msgSend)(cur, endSel) : YES;
+                    ended = [cur respondsToSelector:endSel] ? ((BOOL (*)(id, SEL))objc_msgSend)(cur, endSel) : NO;
                 }
-                if (alive) {
-                    graceTicks = 0;         // 仍在通话，重置宽限
-                } else {
-                    graceTicks++;           // 连续 6 次（约 3 秒）都为空/已结束才算挂断
-                    if (graceTicks >= 6) {
-                        if (AACUplinkLooping) {
-                            AACLog(@"通话已结束（确认 3 秒无通话），停止上行朗读并交还麦克风");
-                            AACStopUplinkAudioTTS();
-                        }
-                        sawConnected = NO;
-                        graceTicks = 0;
-                    }
+                static NSInteger missTicks = 0;
+                if (ended) missTicks++; else missTicks = 0;
+                if (missTicks >= 8) {   // 约 4 秒持续无有效通话
+                    AACLog(@"通话确实已结束（连续 4 秒无有效通话），停止上行朗读");
+                    AACStopUplinkAudioTTS();
+                    missTicks = 0;
                 }
             }
             if (!call) {
@@ -743,7 +731,7 @@ __attribute__((unused)) static void AACUplinkProbe(void) {
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v2.0.3 已在 SpringBoard 加载（修复通话结束误判）");
+        AACLog(@"AutoAnswerAudio v2.0.4 已在 SpringBoard 加载（结束检测改为仅播放中生效）");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }
