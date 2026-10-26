@@ -331,7 +331,31 @@ static BOOL AACMutedUplink = NO;
 static void AACSetUplinkMuted(BOOL muted) {
     id center = AACCallCenter();
     id call = AACSend(center, @"currentCall");
-    if (!call) { AACLog(@"麦克风：当前无通话对象，无法设置静音状态"); return; }
+    // currentCall 在部分机型返回 nil，退回从 calls 数组里找未结束的通话
+    if (!call) {
+        id arr = AACSend(center, @"calls");
+        if ([arr isKindOfClass:NSArray.class]) {
+            for (id c in arr) {
+                SEL endSel = NSSelectorFromString(@"hasEnded");
+                BOOL ended = [c respondsToSelector:endSel] ? ((BOOL (*)(id, SEL))objc_msgSend)(c, endSel) : NO;
+                if (!ended) { call = c; break; }
+            }
+        }
+    }
+    if (!call) {
+        // 最后尝试 CallKit 的通话对象
+        Class obsCls = NSClassFromString(@"CXCallObserver");
+        if (obsCls) {
+            id obs = ((id (*)(id, SEL))objc_msgSend)((id)obsCls, @selector(new));
+            NSArray *calls = AACSend(obs, @"calls");
+            for (id c in calls) {
+                SEL endSel = NSSelectorFromString(@"hasEnded");
+                BOOL ended = [c respondsToSelector:endSel] ? ((BOOL (*)(id, SEL))objc_msgSend)(c, endSel) : NO;
+                if (!ended) { call = c; break; }
+            }
+        }
+    }
+    if (!call) { AACLog(@"麦克风：三条路径均未取到通话对象，无法静音"); return; }
     SEL sel = NSSelectorFromString(@"setUplinkMuted:");
     if (![call respondsToSelector:sel]) { AACLog(@"麦克风：TUCall 不支持 setUplinkMuted:"); return; }
     @try {
@@ -788,13 +812,23 @@ static void AACShowFloatingStop(BOOL show) {
             return;
         }
         if (!AACFloatingStop) {
-            UIWindow *keyWin = nil;
+            UIWindowScene *scene = nil;
             for (UIScene *sc in UIApplication.sharedApplication.connectedScenes) {
                 if (![sc isKindOfClass:UIWindowScene.class]) continue;
-                for (UIWindow *w in ((UIWindowScene *)sc).windows) if (w.isKeyWindow) { keyWin = w; break; }
-                if (keyWin) break;
+                if (sc.activationState == UISceneActivationStateForegroundActive) { scene = (UIWindowScene *)sc; break; }
             }
-            if (!keyWin) return;
+            if (!scene) return;
+            // 用独立的高层级窗口承载按钮，避免被通话界面/其他 App 盖住
+            static UIWindow *overlayWin = nil;
+            if (!overlayWin) {
+                overlayWin = [[UIWindow alloc] initWithWindowScene:scene];
+                overlayWin.windowLevel = UIWindowLevelAlert + 200;
+                overlayWin.backgroundColor = UIColor.clearColor;
+                overlayWin.rootViewController = [UIViewController new];
+                overlayWin.rootViewController.view.backgroundColor = UIColor.clearColor;
+                overlayWin.hidden = NO;
+            }
+            UIWindow *keyWin = overlayWin;
             CGFloat side = 64;
             UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
             // 位置：屏幕水平居中、约 60% 高度处（即“录音中”按钮上方）
@@ -841,7 +875,7 @@ static void AACShowFloatingStop(BOOL show) {
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v2.1.1 已在 SpringBoard 加载");
+        AACLog(@"AutoAnswerAudio v2.1.3 已在 SpringBoard 加载");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }
