@@ -1,4 +1,4 @@
-# AutoAnswerAudio 1.6.0 源码包（RootHide / iOS 17.3 研究版）
+# AutoAnswerAudio 1.7.1 源码包（RootHide / iOS 17.3 实验诊断版）
 
 ## 重要状态说明
 
@@ -69,3 +69,14 @@ Tweak（SpringBoard）和设置页共用日志文件：
 `/var/mobile/Library/AutoAnswerAudio/AutoAnswerAudio.log`
 
 在设置页点击“查看 / 复制全局日志”，可查看最近日志、复制到剪贴板或清空日志。每条记录包含时间、进程、PID、源文件、行号和函数名。复现问题后请复制日志发送，以便定位究竟卡在来电检测、接听调用、播放器初始化、上行混音选择还是停止流程。
+
+
+## v1.7.1 TrollRecorder 播放器定位修正
+上一版根据真机日志确认，系统 `AVAudioPlayer` 不响应 `initWithContentsOfURL:usesSharedAudioSession:error:`。v1.7.1 不再把该私有方法误当成系统类方法，而是检查 `TRAudioPlayer` 运行时类是否存在，且仅在存在时尝试调用其播放/上行混音方法。根据目前的 TIPA 静态证据，`TRAudioPlayer` 属于 TrollRecorder 单独的辅助可执行文件；若 SpringBoard 中找不到该类，必须继续分析 TrollRecorder 的 XPC/IPC 协议。该协议尚未恢复，因此本版是修正后的诊断实验版，不是已完成的上行注入版。
+
+
+## v1.7.2 上行诊断补丁
+- 增加音频路径、文件大小、可读权限检查。
+- 记录 TRAudioPlayer 初始化的 NSError domain/code/userInfo。
+- 明确记录 TRAudioPlayer 类在 SpringBoard 中不可见时，必须转向 IPC/XPC；不把普通 AVAudioPlayer 播放冒充为通话上行注入。
+- 本源码包是诊断修订版，尚未在你的 iPhone 上编译或真机验证。

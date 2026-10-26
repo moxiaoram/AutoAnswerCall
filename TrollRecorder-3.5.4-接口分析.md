@@ -20,3 +20,10 @@
 当前实验源码在 SpringBoard 内尝试动态调用 AVAudioPlayer 的 `initWithContentsOfURL:usesSharedAudioSession:error:` 和 `setMixToUplink:`。这是为了验证选择器在 iOS 17.3 SpringBoard 进程中是否可用；尚未验证它是否真的将音频送入蜂窝电话上行链路。
 
 停止通知：`com.autoanswer.call.stopUplinkPlayback`（Darwin notification）。该通知只用于实验性停止路径，尚未接入用户可见悬浮按钮。
+
+
+## v1.7.1 源码修正结论
+- 上一版把 `initWithContentsOfURL:usesSharedAudioSession:error:` 错误地发给系统 `AVAudioPlayer`，用户日志已证明该 selector 不存在。
+- 该 selector 和 `setMixToUplink:` 的二进制线索来自 TrollRecorder 的 `TRAudioPlayer` 可执行文件；不能据此认为 SpringBoard 进程已经加载该类。
+- v1.7.1 改为先通过 `objc_getClass("TRAudioPlayer")` 检查类是否在当前进程运行时可见；只有类和所需 selector 均存在才尝试创建实例。
+- 若类不存在，日志会指出下一步应分析 TrollRecorder 的 XPC/IPC 协议。尚未从二进制恢复该协议，因此本版本不声称完成直接接入。

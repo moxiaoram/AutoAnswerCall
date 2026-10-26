@@ -15,7 +15,7 @@ static NSString *AACLastScheduledToken = nil;
 static NSString *AACLastAnsweredToken = nil;
 static BOOL AACTimerRunning = NO;
 static BOOL AACLoggedCallCenterUnavailable = NO;
-static AVAudioPlayer *AACUplinkPlayer = nil;
+static id AACUplinkPlayer = nil; // Must be a TrollRecorder TRAudioPlayer instance, not plain AVAudioPlayer.
 static NSString * const kAACStopUplinkNotification = @"com.autoanswer.call.stopUplinkPlayback";
 
 static NSDictionary *AACPrefs(void) {
@@ -43,16 +43,25 @@ static id AACSend(id target, NSString *selectorName) {
     return ((id (*)(id, SEL))objc_msgSend)(target, sel);
 }
 static void AACStopUplinkAudio(void) {
-    AVAudioPlayer *player = AACUplinkPlayer;
-    if (!player) { AACLog(@"停止请求收到，但当前没有上行播放器实例"); return; }
+    id player = AACUplinkPlayer;
+    if (!player) {
+        AACLog(@"停止请求收到，但当前没有 TRAudioPlayer 上行播放器实例");
+        return;
+    }
     @try {
-        [player stop];
+        SEL stopSel = NSSelectorFromString(@"stop");
         SEL mixSel = NSSelectorFromString(@"setMixToUplink:");
+        if ([player respondsToSelector:stopSel]) {
+            ((void (*)(id, SEL))objc_msgSend)(player, stopSel);
+            AACLog(@"已向 TRAudioPlayer 发送 stop");
+        } else {
+            AACLog(@"停止失败：播放器实例不响应 stop");
+        }
         if ([player respondsToSelector:mixSel]) {
             ((void (*)(id, SEL, BOOL))objc_msgSend)(player, mixSel, NO);
-            AACLog(@"已向 AVAudioPlayer 发送 stop 与 setMixToUplink:NO");
+            AACLog(@"已向 TRAudioPlayer 发送 setMixToUplink:NO");
         } else {
-            AACLog(@"播放器不支持 setMixToUplink:；已调用 stop，但上行混音状态无法确认");
+            AACLog(@"播放器实例不响应 setMixToUplink:，无法确认上行混音已关闭");
         }
     } @catch (NSException *e) {
         AACLog([NSString stringWithFormat:@"停止上行播放异常：%@", e.reason ?: @"unknown"]);
@@ -62,50 +71,83 @@ static void AACStopUplinkAudio(void) {
 
 static void AACStartUplinkAudio(void) {
     if (!AACEnabled() || ![AACPrefs()[@"PlayAudio"] boolValue]) {
-        AACLog(@"上行播放未启动：插件或自动播放开关未启用");
+        AACLog([NSString stringWithFormat:@"上行播放未启动：Enabled=%d PlayAudio=%d", AACEnabled(), [AACPrefs()[@"PlayAudio"] boolValue]]);
         return;
     }
+
     NSString *path = AACPrefs()[@"AudioFilePath"];
-    if (![path isKindOfClass:NSString.class] || path.length == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:path]) {
-        AACLog([NSString stringWithFormat:@"上行播放失败：音频文件路径无效：%@", path ?: @"(empty)"]);
+    BOOL isDirectory = NO;
+    BOOL exists = [path isKindOfClass:NSString.class] && path.length > 0 &&
+        [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDirectory];
+    if (!exists || isDirectory) {
+        AACLog([NSString stringWithFormat:@"上行播放失败：音频文件不存在或不是文件；path=%@", path ?: @"(empty)"]);
         return;
     }
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+    unsigned long long fileSize = [attrs[NSFileSize] unsignedLongLongValue];
+    AACLog([NSString stringWithFormat:@"上行音频文件检查：path=%@ size=%llu bytes readable=%d", path, fileSize,
+            [[NSFileManager defaultManager] isReadableFileAtPath:path]]);
+    if (fileSize == 0 || ![[NSFileManager defaultManager] isReadableFileAtPath:path]) {
+        AACLog(@"上行播放失败：音频文件大小为 0 或当前进程无读取权限");
+        return;
+    }
+
     AACStopUplinkAudio();
+
+    // setMixToUplink: belongs to TrollRecorder's TRAudioPlayer implementation.
+    // It is not an AVAudioPlayer API. TRAudioPlayer is found in TrollRecorder's
+    // separate helper executable, so it may not be loaded in SpringBoard.
+    Class playerClass = objc_getClass("TRAudioPlayer");
+    if (!playerClass) {
+        AACLog([NSString stringWithFormat:@"未找到运行时类 TRAudioPlayer（process=%@）。这通常意味着类只存在于 TrollRecorder 的独立辅助进程；不能在 SpringBoard 里直接实例化。下一步必须确认并接入其 IPC/XPC 协议，普通 AVAudioPlayer 不能替代上行注入。", NSProcessInfo.processInfo.processName]);
+        return;
+    }
+
     SEL initSel = NSSelectorFromString(@"initWithContentsOfURL:usesSharedAudioSession:error:");
     SEL mixSel = NSSelectorFromString(@"setMixToUplink:");
-    if (![AVAudioPlayer instancesRespondToSelector:initSel]) {
-        AACLog(@"上行播放未启动：当前系统 AVAudioPlayer 不提供 initWithContentsOfURL:usesSharedAudioSession:error:");
+    if (![playerClass instancesRespondToSelector:initSel]) {
+        AACLog(@"找到 TRAudioPlayer 类，但它不响应 initWithContentsOfURL:usesSharedAudioSession:error:；停止尝试，避免错误初始化");
         return;
     }
+
     NSURL *url = [NSURL fileURLWithPath:path];
     NSError *error = nil;
-    AVAudioPlayer *player = ((id (*)(id, SEL, NSURL *, BOOL, NSError **))objc_msgSend)([AVAudioPlayer alloc], initSel, url, YES, &error);
+    id player = ((id (*)(id, SEL, NSURL *, BOOL, NSError **))objc_msgSend)([playerClass alloc], initSel, url, YES, &error);
     if (!player || error) {
-        AACLog([NSString stringWithFormat:@"创建上行播放器失败：%@", error.localizedDescription ?: @"unknown"]);
+        AACLog([NSString stringWithFormat:@"创建 TRAudioPlayer 失败：domain=%@ code=%ld description=%@ userInfo=%@ returnedNil=%d",
+                error.domain ?: @"(none)", (long)error.code, error.localizedDescription ?: @"(none)",
+                error.userInfo ?: @{}, player == nil]);
         return;
     }
     if (![player respondsToSelector:mixSel]) {
-        AACLog(@"上行播放未启动：AVAudioPlayer 实例不响应 setMixToUplink:；不会退化为本机假播放");
+        AACLog(@"TRAudioPlayer 实例不响应 setMixToUplink:；不启动普通本机播放");
         return;
     }
+
     @try {
         ((void (*)(id, SEL, BOOL))objc_msgSend)(player, mixSel, YES);
-        player.numberOfLoops = 0;
-        player.volume = 1.0;
-        if (![player prepareToPlay]) {
-            AACLog(@"上行播放器 prepareToPlay 失败");
+        SEL volumeSel = NSSelectorFromString(@"setVolume:");
+        if ([player respondsToSelector:volumeSel]) {
+            ((void (*)(id, SEL, float))objc_msgSend)(player, volumeSel, 1.0f);
+        }
+        SEL prepareSel = NSSelectorFromString(@"prepareToPlay");
+        if ([player respondsToSelector:prepareSel] &&
+            !((BOOL (*)(id, SEL))objc_msgSend)(player, prepareSel)) {
+            AACLog(@"TRAudioPlayer prepareToPlay 失败");
             ((void (*)(id, SEL, BOOL))objc_msgSend)(player, mixSel, NO);
             return;
         }
-        if (![player play]) {
-            AACLog(@"上行播放器 play 返回失败");
+        SEL playSel = NSSelectorFromString(@"play");
+        if (![player respondsToSelector:playSel] ||
+            !((BOOL (*)(id, SEL))objc_msgSend)(player, playSel)) {
+            AACLog(@"TRAudioPlayer play 不存在或返回失败");
             ((void (*)(id, SEL, BOOL))objc_msgSend)(player, mixSel, NO);
             return;
         }
         AACUplinkPlayer = player;
-        AACLog([NSString stringWithFormat:@"已调用私有 setMixToUplink:YES 并启动音频：%@；仍需真机确认对端是否听到", path.lastPathComponent]);
+        AACLog([NSString stringWithFormat:@"已通过 TRAudioPlayer 调用 setMixToUplink:YES 并启动：%@；仍需真机确认对端是否听到", path.lastPathComponent]);
     } @catch (NSException *e) {
-        AACLog([NSString stringWithFormat:@"启动上行播放异常：%@", e.reason ?: @"unknown"]);
+        AACLog([NSString stringWithFormat:@"TRAudioPlayer 启动异常：%@", e.reason ?: @"unknown"]);
         ((void (*)(id, SEL, BOOL))objc_msgSend)(player, mixSel, NO);
     }
 }

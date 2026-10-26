@@ -13,3 +13,16 @@
 - 设置页新增“查看 / 复制全局日志”按钮，可直接查看并复制日志；也可手动清空后重新复现问题。
 - 设置页的导入、选择、删除、试听、停止请求等关键动作会写入同一日志。
 - 日志仍不能证明私有上行混音接口可用；需要设备实际日志和通话测试确认。
+
+
+## v1.7.1 — 修正 TrollRecorder 播放器类定位（诊断版）
+
+- 修正上一版的关键错误：不再把 `initWithContentsOfURL:usesSharedAudioSession:error:` 当作系统 `AVAudioPlayer` 的可用初始化方法。
+- `setMixToUplink:` 现在只在运行时找到 `TRAudioPlayer` 类后才尝试调用。
+- 如果 SpringBoard 没有加载 `TRAudioPlayer`，全局日志会明确记录需要接入 TrollRecorder IPC/XPC，而不会播放本机假音频。
+- 此版本仍未实现 TrollRecorder 的 XPC 协议调用；未编译、未真机验证，不能视为音频上行注入已完成。
+
+
+## v1.7.2
+- 增加音频文件读取检查与初始化错误详细日志。
+- 未解决 TrollRecorder 独立进程 IPC/XPC 接入；不宣称上行注入已完成。
