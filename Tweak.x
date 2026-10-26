@@ -69,6 +69,35 @@ static void AACStopUplinkAudio(void) {
     AACUplinkPlayer = nil;
 }
 
+// Diagnostic-only probe: test whether SpringBoard can establish a connection to
+// TrollRecorder's observed internal Mach service. This intentionally sends NO RPC
+// because the service protocol and method encodings are not yet verified.
+static BOOL AACDidProbeTRAppXPC = NO;
+static void AACProbeTRAppXPC(void) {
+    if (AACDidProbeTRAppXPC) return;
+    AACDidProbeTRAppXPC = YES;
+    NSString *serviceName = @"wiki.qaq.trapp.xpc";
+    AACLog([NSString stringWithFormat:@"开始探测 TrollRecorder 内部 XPC 服务：%@；本次只测试连接，不发送播放请求", serviceName]);
+    NSXPCConnection *connection = [[NSXPCConnection alloc] initWithMachServiceName:serviceName options:0];
+    if (!connection) {
+        AACLog(@"XPC 探测失败：NSXPCConnection 初始化返回 nil");
+        return;
+    }
+    connection.interruptionHandler = ^{
+        AACLog([NSString stringWithFormat:@"XPC 探测：服务连接中断（%@）", serviceName]);
+    };
+    connection.invalidationHandler = ^{
+        AACLog([NSString stringWithFormat:@"XPC 探测：连接已失效（%@）；需结合服务是否启动判断原因", serviceName]);
+    };
+    [connection resume];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        AACLog([NSString stringWithFormat:@"XPC 探测窗口结束（%@）；由于尚未发送 RPC，不能据此认定播放接口可用", serviceName]);
+        connection.interruptionHandler = nil;
+        connection.invalidationHandler = nil;
+        [connection invalidate];
+    });
+}
+
 static void AACStartUplinkAudio(void) {
     if (!AACEnabled() || ![AACPrefs()[@"PlayAudio"] boolValue]) {
         AACLog([NSString stringWithFormat:@"上行播放未启动：Enabled=%d PlayAudio=%d", AACEnabled(), [AACPrefs()[@"PlayAudio"] boolValue]]);
@@ -99,7 +128,8 @@ static void AACStartUplinkAudio(void) {
     // separate helper executable, so it may not be loaded in SpringBoard.
     Class playerClass = objc_getClass("TRAudioPlayer");
     if (!playerClass) {
-        AACLog([NSString stringWithFormat:@"未找到运行时类 TRAudioPlayer（process=%@）。这通常意味着类只存在于 TrollRecorder 的独立辅助进程；不能在 SpringBoard 里直接实例化。下一步必须确认并接入其 IPC/XPC 协议，普通 AVAudioPlayer 不能替代上行注入。", NSProcessInfo.processInfo.processName]);
+        AACLog([NSString stringWithFormat:@"未找到运行时类 TRAudioPlayer（process=%@）。不能在 SpringBoard 里直接实例化；将只探测 TrollRecorder 内部 XPC 服务的连接可达性，不发送未经确认的播放 RPC。", NSProcessInfo.processInfo.processName]);
+        AACProbeTRAppXPC();
         return;
     }
 

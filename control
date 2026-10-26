@@ -1,6 +1,6 @@
 Package: com.autoanswer.call
 Name: AutoAnswerAudio
-Version: 1.7.2
+Version: 1.7.3
 Architecture: iphoneos-arm64e
 Description: Experimental RootHide call automation and audio library settings; call answering is unverified and uplink injection is not implemented
 Maintainer: AutoAnswerAudio
