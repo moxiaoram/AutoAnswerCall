@@ -1,7 +1,7 @@
 TARGET := iphone:clang:latest:17.0
 ARCHS := arm64e
 THEOS_PACKAGE_SCHEME := roothide
-PACKAGE_VERSION := 2.0.8
+PACKAGE_VERSION := 2.1.0
 INSTALL_TARGET_PROCESSES := SpringBoard InCallService
 
 include $(THEOS)/makefiles/common.mk

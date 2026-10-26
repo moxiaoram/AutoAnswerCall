@@ -280,6 +280,7 @@ static NSString *AACSpeechTextForPath(NSString *path) {
     return nil;
 }
 
+static void AACShowFloatingStop(BOOL show);
 static id AACCallCenter(void);
 static id AACSend(id target, NSString *selectorName);
 static void AACSetUplinkMuted(BOOL muted);
@@ -313,7 +314,10 @@ static void AACStartUplinkAudio(void) {
         [AACSpeechSynth speakUtterance:u];
         AACLog(@"上行：已调用 speakUtterance（对方是否能听到需实际通话验证）");
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (AACUplinkLooping) AACSetUplinkMuted(YES);
+            if (AACUplinkLooping) {
+                AACSetUplinkMuted(YES);      // 播放期间静音麦克风
+                AACShowFloatingStop(YES);    // 显示悬浮停止按钮
+            }
         });
     } @catch (NSException *e) {
         AACLog([NSString stringWithFormat:@"上行：朗读异常：%@", e.reason ?: @"unknown"]);
@@ -340,7 +344,8 @@ static void AACSetUplinkMuted(BOOL muted) {
 static void AACStopUplinkAudioTTS(void) {
     AACUserStopped = YES;
     AACUplinkLooping = NO;
-    if (AACMutedUplink) AACSetUplinkMuted(NO);
+    if (AACMutedUplink) AACSetUplinkMuted(NO);   // 恢复麦克风
+    AACShowFloatingStop(NO);                     // 隐藏悬浮按钮
     AACLog(@"上行：收到停止请求，结束循环并把麦克风交还人工");
     @try {
         if (AACSpeechSynth && AACSpeechSynth.isSpeaking) {
@@ -380,7 +385,7 @@ static void AACStopButtonTapped(void) {
     });
 }
 
-static void AACInstallStopButtonInView(UIView *root) {
+__attribute__((unused)) static void AACInstallStopButtonInView(UIView *root) {
     if (!root || AACStopButton.superview) return;
 
     // 定位“添加”按钮：它是通话界面底部的 UIControl，标签含有“添加/Add”
@@ -459,7 +464,7 @@ static void AACInstallStopButtonInView(UIView *root) {
 - (void)tapped { AACStopButtonTapped(); }
 @end
 
-__attribute__((unused)) static void AACScanForInCallUI(void) {
+__attribute__((unused)) __attribute__((unused)) static void AACScanForInCallUI(void) {
     // 仅在通话界面进程执行；SpringBoard 里没有通话 UI，扫描只会白白占用主线程。
     NSString *proc = NSProcessInfo.processInfo.processName ?: @"";
     if (![proc isEqualToString:@"InCallService"]) return;
@@ -559,31 +564,7 @@ static void AACPollIncomingCall(void) {
         } else {
             id center = AACCallCenter();
             id call = AACSend(center, @"incomingCall");
-            // 免提检测：用户按了免提 => 视为要接管，停止朗读
-            if (AACUplinkLooping) {
-                static BOOL loggedRoute = NO;
-                Class routeCls = NSClassFromString(@"AVAudioSession");
-                if (routeCls) {
-                    id session = ((id (*)(id, SEL))objc_msgSend)((id)routeCls, @selector(sharedInstance));
-                    id outputs = AACSend(session, @"currentRoute");
-                    id outs = outputs ? AACSend(outputs, @"outputs") : nil;
-                    NSString *port = nil;
-                    if ([outs isKindOfClass:NSArray.class] && [outs count]) {
-                        id p0 = [outs firstObject];
-                        port = AACSend(p0, @"portType");
-                    }
-                    if (port) {
-                        BOOL isSpeaker = [port containsString:@"Speaker"];
-                        if (isSpeaker && !loggedRoute) {
-                            loggedRoute = YES;
-                            AACLog([NSString stringWithFormat:@"检测到输出路由=%@（免提），停止上行朗读并交还麦克风", port]);
-                            AACStopUplinkAudioTTS();
-                        } else if (!isSpeaker) {
-                            loggedRoute = NO;
-                        }
-                    }
-                }
-            }
+            // 免提切换不再中断播放：无论用户按免提还是听筒，朗读都继续。
             // 通话结束检测：改用 CallKit 的 CXCall 状态，而不是轮询 incomingCall/currentCall。
             // 之前用轮询判断会在接听后误判（incomingCall 变空），导致播放一次就被停。
             if (AACUplinkLooping && !call) {
@@ -743,6 +724,70 @@ __attribute__((unused)) static void AACUplinkProbe(void) {
     AACLog([NSString stringWithFormat:@"探针报告已写入 %@", path]);
 }
 
+
+// ---------------------------------------------------------------------------
+// SpringBoard 悬浮“停止”按钮
+// InCallService 注入不可用，因此把停止按钮做在 SpringBoard 悬浮层：
+// 通话开始朗读时显示，点击即停止朗读并恢复麦克风，挂断后自动隐藏。
+// ---------------------------------------------------------------------------
+static UIButton *AACFloatingStop = nil;
+
+@interface AACFloatingTarget : NSObject
++ (instancetype)shared;
+- (void)stopTapped;
+@end
+
+@implementation AACFloatingTarget
++ (instancetype)shared { static AACFloatingTarget *t; static dispatch_once_t o; dispatch_once(&o, ^{ t = [self new]; }); return t; }
+- (void)stopTapped {
+    AACLog(@"悬浮按钮：用户点击停止，结束朗读并恢复麦克风");
+    AACStopUplinkAudioTTS();
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+        (__bridge CFStringRef)kAACStopUplinkNotification, NULL, NULL, true);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [UIView animateWithDuration:0.2 animations:^{ AACFloatingStop.alpha = 0; } completion:^(BOOL f){ AACFloatingStop.hidden = YES; AACFloatingStop.alpha = 1; }];
+    });
+}
+@end
+
+static void AACShowFloatingStop(BOOL show) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!show) {
+            if (AACFloatingStop) AACFloatingStop.hidden = YES;
+            return;
+        }
+        if (!AACFloatingStop) {
+            UIWindow *keyWin = nil;
+            for (UIScene *sc in UIApplication.sharedApplication.connectedScenes) {
+                if (![sc isKindOfClass:UIWindowScene.class]) continue;
+                for (UIWindow *w in ((UIWindowScene *)sc).windows) if (w.isKeyWindow) { keyWin = w; break; }
+                if (keyWin) break;
+            }
+            if (!keyWin) return;
+            CGFloat side = 64;
+            UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
+            b.frame = CGRectMake(keyWin.bounds.size.width - side - 16, keyWin.bounds.size.height * 0.62, side, side);
+            b.backgroundColor = [UIColor colorWithRed:1.0 green:0.23 blue:0.19 alpha:1.0];
+            b.layer.cornerRadius = side / 2.0;
+            b.layer.shadowColor = UIColor.blackColor.CGColor;
+            b.layer.shadowOpacity = 0.35;
+            b.layer.shadowRadius = 6;
+            b.layer.shadowOffset = CGSizeMake(0, 2);
+            UIView *icon = [[UIView alloc] initWithFrame:CGRectMake(side*0.29, side*0.29, side*0.42, side*0.42)];
+            icon.backgroundColor = UIColor.whiteColor;
+            icon.layer.cornerRadius = side * 0.42 * 0.18;
+            icon.userInteractionEnabled = NO;
+            [b addSubview:icon];
+            [b addTarget:[AACFloatingTarget shared] action:@selector(stopTapped) forControlEvents:UIControlEventTouchUpInside];
+            [keyWin addSubview:b];
+            AACFloatingStop = b;
+            AACLog(@"悬浮按钮：已在 SpringBoard 显示停止按钮");
+        } else {
+            AACFloatingStop.hidden = NO;
+        }
+    });
+}
+
 %ctor {
     @autoreleasepool {
         NSString *process = NSProcessInfo.processInfo.processName ?: @"";
@@ -758,15 +803,12 @@ __attribute__((unused)) static void AACUplinkProbe(void) {
         if ([bundle isEqualToString:@"com.apple.InCallService"] || [process isEqualToString:@"InCallService"]) {
             CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
             AACLog(@"AutoAnswerAudio 已在 InCallService 加载：将把通话界面按钮替换为停止按钮");
-            AACLog(@"InCallService 已加载：开始扫描通话界面并插入停止按钮");
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [NSTimer scheduledTimerWithTimeInterval:0.8 repeats:YES block:^(NSTimer *t) { AACScanForInCallUI(); }];
-            });
+            AACLog(@"InCallService 已加载（本版改用 SpringBoard 悬浮按钮，界面注入仅保留诊断）");
             return;
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v2.0.8 已在 SpringBoard 加载");
+        AACLog(@"AutoAnswerAudio v2.1.0 已在 SpringBoard 加载（悬浮停止按钮）");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }
