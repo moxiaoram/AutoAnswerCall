@@ -6,12 +6,21 @@
 	<dict>
 		<key>Executables</key>
 		<array>
+			<string>imagent</string>
+			<string>WeChat</string>
+			<string>CallHistorySyncHelper</string>
 			<string>InCallService</string>
 		</array>
 		<key>Bundles</key>
 		<array>
+			<string>com.apple.mobileslideshow</string>
 			<string>com.apple.InCallService</string>
 			<string>com.apple.springboard</string>
+			<string>com.apple.MobileSMS</string>
+			<string>com.apple.mobilephone</string>
+			<string>com.apple.MobileAddressBook</string>
+			<string>com.apple.Preferences</string>
+			<string>com.apple.BusinessChatViewService</string>
 		</array>
 	</dict>
 </dict>
