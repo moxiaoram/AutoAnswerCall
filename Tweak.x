@@ -535,7 +535,36 @@ static void AACPollIncomingCall(void) {
         } else {
             id center = AACCallCenter();
             id call = AACSend(center, @"incomingCall");
-            // 通话结束检测：没有来电，且当前也没有任何通话 => 停止上行朗读并交还麦克风
+            // 通话结束检测：
+            // 只在“已经确认过接通、且随后所有通话都结束”时才停止。
+            // 之前直接用 currentCall 判断，接听瞬间 incomingCall 会短暂为空，
+            // 导致刚开播 0.1 秒就被误判为结束（音频立刻被停）。
+            static BOOL sawConnected = NO;
+            static int graceTicks = 0;
+            if (call) {
+                sawConnected = YES;
+                graceTicks = 0;
+            } else if (sawConnected) {
+                id cur = AACSend(center, @"currentCall");
+                BOOL alive = NO;
+                if (cur) {
+                    SEL endSel = NSSelectorFromString(@"hasEnded");
+                    alive = [cur respondsToSelector:endSel] ? !((BOOL (*)(id, SEL))objc_msgSend)(cur, endSel) : YES;
+                }
+                if (alive) {
+                    graceTicks = 0;         // 仍在通话，重置宽限
+                } else {
+                    graceTicks++;           // 连续 6 次（约 3 秒）都为空/已结束才算挂断
+                    if (graceTicks >= 6) {
+                        if (AACUplinkLooping) {
+                            AACLog(@"通话已结束（确认 3 秒无通话），停止上行朗读并交还麦克风");
+                            AACStopUplinkAudioTTS();
+                        }
+                        sawConnected = NO;
+                        graceTicks = 0;
+                    }
+                }
+            }
             if (!call) {
                 id cur = AACSend(center, @"currentCall");
                 BOOL stillInCall = NO;
@@ -714,7 +743,7 @@ __attribute__((unused)) static void AACUplinkProbe(void) {
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v2.0.2 已在 SpringBoard 加载（jbroot 相对路径链接）");
+        AACLog(@"AutoAnswerAudio v2.0.3 已在 SpringBoard 加载（修复通话结束误判）");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }
