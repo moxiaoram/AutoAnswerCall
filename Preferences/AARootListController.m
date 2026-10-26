@@ -90,9 +90,8 @@ static NSString * const kAAAudioDirectory = @"/var/mobile/Library/AutoAnswerAudi
     if (@available(iOS 14.0, *)) {
         types = @[UTTypeAudio, UTTypeMP3, UTTypeWAV, UTTypeMPEG4Audio];
     }
-    UIDocumentPickerViewController *picker;
-    if (@available(iOS 14.0, *)) picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:NO];
-    else picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.audio", @"public.mp3", @"com.microsoft.waveform-audio", @"public.mpeg-4-audio"] inMode:UIDocumentPickerModeImport];
+    // 部署目标 iOS 17，旧初始化器已弃用且会触发 -Werror，这里只保留受支持路径。
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:NO];
     picker.delegate = self;
     picker.allowsMultipleSelection = NO;
     [self presentViewController:picker animated:YES completion:nil];
