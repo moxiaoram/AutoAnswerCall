@@ -525,16 +525,6 @@ static void AACPollIncomingCall(void) {
             }
         }
     }
-    static NSUInteger tick = 0;
-    static NSUInteger silentTicks = 0;
-    tick++; silentTicks++;
-    if (tick % 20 == 0) {
-        id c = AACCallCenter();
-        id cur = c ? AACSend(c, @"currentCall") : nil;
-        AACLog([NSString stringWithFormat:@"轮询心跳 tick=%lu 中心=%@ currentCall=%@ tags=%lu",
-                (unsigned long)tick, c ? @"可用" : @"不可用", cur ? NSStringFromClass([cur class]) : @"无",
-                (unsigned long)callsCountSafe(c)]);
-    }
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ AACPollIncomingCall(); });
 }
 
@@ -645,15 +635,13 @@ static void AACUplinkProbe(void) {
         if ([bundle isEqualToString:@"com.apple.InCallService"] || [process isEqualToString:@"InCallService"]) {
             CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
             AACLog(@"AutoAnswerAudio 已在 InCallService 加载：将把通话界面按钮替换为停止按钮");
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) { AACScanForInCallUI(); }];
-            });
+            AACLog(@"InCallService 已加载（按钮扫描暂时关闭）");
             return;
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v1.9.4 已在 SpringBoard 加载");
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ AACUplinkProbe(); });
+        AACLog(@"AutoAnswerAudio v1.9.5-revert 已在 SpringBoard 加载（探针/扫描已关闭）");
+        // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }
 }
