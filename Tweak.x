@@ -395,6 +395,9 @@ static void AACInstallStopButtonInView(UIView *root) {
 @end
 
 static void AACScanForInCallUI(void) {
+    // 仅在通话界面进程执行；SpringBoard 里没有通话 UI，扫描只会白白占用主线程。
+    NSString *proc = NSProcessInfo.processInfo.processName ?: @"";
+    if (![proc isEqualToString:@"InCallService"]) return;
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
         for (UIWindow *w in ((UIWindowScene *)scene).windows) {
