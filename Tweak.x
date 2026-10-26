@@ -318,7 +318,6 @@ static void AACStartUplinkAudio(void) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (AACUplinkLooping) {
                 AACSetUplinkMuted(YES);      // 播放期间静音麦克风
-                AACShowFloatingStop(YES);    // 显示悬浮停止按钮
             }
         });
     } @catch (NSException *e) {
@@ -371,7 +370,6 @@ static void AACStopUplinkAudioTTS(void) {
     AACUserStopped = YES;
     AACUplinkLooping = NO;
     if (AACMutedUplink) AACSetUplinkMuted(NO);   // 恢复麦克风
-    AACShowFloatingStop(NO);                     // 隐藏悬浮按钮
     AACLog(@"上行：收到停止请求，结束循环并把麦克风交还人工");
     @try {
         if (AACSpeechSynth && AACSpeechSynth.isSpeaking) {
@@ -591,16 +589,7 @@ static void AACPollIncomingCall(void) {
             id center = AACCallCenter();
             id call = AACSend(center, @"incomingCall");
             // 免提切换不再中断播放：无论用户按免提还是听筒，朗读都继续。
-            // 拨号盘打开时隐藏悬浮按钮，关闭后恢复。
-            if (AACUplinkLooping && AACFloatingStop && !AACFloatingStop.hidden) {
-                static BOOL lastKeypad = NO;
-                BOOL kp = AACKeypadVisible();
-                if (kp != lastKeypad) {
-                    lastKeypad = kp;
-                    AACFloatingStop.hidden = kp;
-                    AACLog([NSString stringWithFormat:@"悬浮按钮：拨号盘%@，按钮%@", kp ? @"已打开" : @"已关闭", kp ? @"隐藏" : @"显示"]);
-                }
-            }
+            // 悬浮按钮已停用（2.1.4）
             // 通话结束检测：改用 CallKit 的 CXCall 状态，而不是轮询 incomingCall/currentCall。
             // 之前用轮询判断会在接听后误判（incomingCall 变空），导致播放一次就被停。
             if (AACUplinkLooping && !call) {
@@ -805,7 +794,7 @@ static BOOL AACKeypadVisible(void) {
     return NO;
 }
 
-static void AACShowFloatingStop(BOOL show) {
+__attribute__((unused)) static void AACShowFloatingStop(BOOL show) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!show) {
             if (AACFloatingStop) AACFloatingStop.hidden = YES;
@@ -875,7 +864,7 @@ static void AACShowFloatingStop(BOOL show) {
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v2.1.3 已在 SpringBoard 加载");
+        AACLog(@"AutoAnswerAudio v2.1.5 已在 SpringBoard 加载");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }
