@@ -1,7 +1,7 @@
 TARGET := iphone:clang:latest:17.0
 ARCHS := arm64e
 THEOS_PACKAGE_SCHEME := roothide
-PACKAGE_VERSION := 2.0.0
+PACKAGE_VERSION := 2.0.1
 INSTALL_TARGET_PROCESSES := SpringBoard InCallService
 
 include $(THEOS)/makefiles/common.mk
@@ -12,9 +12,7 @@ AutoAnswerCall_CFLAGS := -fobjc-arc
 AutoAnswerCall_FRAMEWORKS := Foundation UIKit AVFoundation
 # RootHide 运行时：系统进程（如 InCallService）注入时必须链接 libroothide，
 # 否则 dylib 在 .jbroot 沙盒外无法重定位（表现为"装了但不注入"）。
-# 显式链接 RootHide 运行时（tbd 在 vendor/）。
 # 注意：不加 -l 前缀解析失败时，直接写 .tbd 全路径。
-AutoAnswerCall_LDFLAGS := $(THEOS_PROJECT_DIR)/vendor/libroothide.tbd $(THEOS_PROJECT_DIR)/vendor/libsubstrate.tbd
 AutoAnswerCall_PLIST := AutoAnswerCall.plist
 
 AutoAnswerTRBridge_FILES := Tweak.x
