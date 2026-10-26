@@ -390,7 +390,6 @@ static void AACInstallStopButtonInView(UIView *root) {
             if (isAdd && [v isKindOfClass:UIControl.class]) { addBtn = v; break; }
             for (UIView *c in v.subviews) [q2 addObject:c];
         }
-        UIView *anchor = addBtn ?: root;
         UIView *host = addBtn.superview ?: root;
         CGRect f = addBtn ? addBtn.frame : CGRectMake(host.bounds.size.width - 88, host.bounds.size.height - 140, 64, 64);
         UIButton *fb = [UIButton buttonWithType:UIButtonTypeSystem];

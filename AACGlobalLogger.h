@@ -49,8 +49,8 @@ static inline void AACGlobalWriteLog(NSString *component, NSString *message, con
         // 额外写一份到共享目录，便于跨进程（InCallService 等）诊断；失败静默。
         static NSString *sharedLog = nil;
         if (!sharedLog) sharedLog = @"/var/jb/Library/Application Support/AutoAnswerCall/AutoAnswerAudio-shared.log";
-        NSFileManager *fm = [NSFileManager defaultManager];
-        [fm createDirectoryAtPath:[sharedLog stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+        NSFileManager *fm2 = [NSFileManager defaultManager];
+        [fm2 createDirectoryAtPath:[sharedLog stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
         NSString *line = [NSString stringWithFormat:@"[%@][%d][%@] %@\n", [NSDate date], getpid(), component ?: @"?", safeMessage ?: @""];
         NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:sharedLog];
         if (!h) [line writeToFile:sharedLog atomically:YES encoding:NSUTF8StringEncoding error:nil];
