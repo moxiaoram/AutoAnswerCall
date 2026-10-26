@@ -309,14 +309,35 @@ static void AACStartUplinkAudio(void) {
         AACSpeechSynth.delegate = AACSpeechDelegateInstance;
         [AACSpeechSynth speakUtterance:u];
         AACLog(@"上行：已调用 speakUtterance（对方是否能听到需实际通话验证）");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (AACUplinkLooping) AACSetUplinkMuted(YES);
+        });
     } @catch (NSException *e) {
         AACLog([NSString stringWithFormat:@"上行：朗读异常：%@", e.reason ?: @"unknown"]);
+    }
+}
+
+// 麦克风静音控制：播放上行朗读期间静音麦克风，避免对方听到本机环境音。
+static BOOL AACMutedUplink = NO;
+static void AACSetUplinkMuted(BOOL muted) {
+    id center = AACCallCenter();
+    id call = AACSend(center, @"currentCall");
+    if (!call) { AACLog(@"麦克风：当前无通话对象，无法设置静音状态"); return; }
+    SEL sel = NSSelectorFromString(@"setUplinkMuted:");
+    if (![call respondsToSelector:sel]) { AACLog(@"麦克风：TUCall 不支持 setUplinkMuted:"); return; }
+    @try {
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(call, sel, muted);
+        AACMutedUplink = muted;
+        AACLog([NSString stringWithFormat:@"麦克风：%@（setUplinkMuted:%d）", muted ? @"已静音" : @"已恢复", (int)muted]);
+    } @catch (NSException *e) {
+        AACLog([NSString stringWithFormat:@"麦克风：设置异常 %@", e.reason ?: @""]);
     }
 }
 
 static void AACStopUplinkAudioTTS(void) {
     AACUserStopped = YES;
     AACUplinkLooping = NO;
+    if (AACMutedUplink) AACSetUplinkMuted(NO);
     AACLog(@"上行：收到停止请求，结束循环并把麦克风交还人工");
     @try {
         if (AACSpeechSynth && AACSpeechSynth.isSpeaking) {
@@ -535,6 +556,31 @@ static void AACPollIncomingCall(void) {
         } else {
             id center = AACCallCenter();
             id call = AACSend(center, @"incomingCall");
+            // 免提检测：用户按了免提 => 视为要接管，停止朗读
+            if (AACUplinkLooping) {
+                static BOOL loggedRoute = NO;
+                Class routeCls = NSClassFromString(@"AVAudioSession");
+                if (routeCls) {
+                    id session = ((id (*)(id, SEL))objc_msgSend)((id)routeCls, @selector(sharedInstance));
+                    id outputs = AACSend(session, @"currentRoute");
+                    id outs = outputs ? AACSend(outputs, @"outputs") : nil;
+                    NSString *port = nil;
+                    if ([outs isKindOfClass:NSArray.class] && [outs count]) {
+                        id p0 = [outs firstObject];
+                        port = AACSend(p0, @"portType");
+                    }
+                    if (port) {
+                        BOOL isSpeaker = [port containsString:@"Speaker"];
+                        if (isSpeaker && !loggedRoute) {
+                            loggedRoute = YES;
+                            AACLog([NSString stringWithFormat:@"检测到输出路由=%@（免提），停止上行朗读并交还麦克风", port]);
+                            AACStopUplinkAudioTTS();
+                        } else if (!isSpeaker) {
+                            loggedRoute = NO;
+                        }
+                    }
+                }
+            }
             // 通话结束检测：改用 CallKit 的 CXCall 状态，而不是轮询 incomingCall/currentCall。
             // 之前用轮询判断会在接听后误判（incomingCall 变空），导致播放一次就被停。
             if (AACUplinkLooping && !call) {
@@ -717,7 +763,7 @@ __attribute__((unused)) static void AACUplinkProbe(void) {
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v2.0.7 已在 SpringBoard 加载");
+        AACLog(@"AutoAnswerAudio v2.0.8 已在 SpringBoard 加载");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }
