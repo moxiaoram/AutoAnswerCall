@@ -358,71 +358,76 @@ static void AACStopButtonTapped(void) {
 
 static void AACInstallStopButtonInView(UIView *root) {
     if (!root || AACStopButton.superview) return;
-    // 找一个合适的容器：优先通话控制按钮所在的 UIStackView
-    __block UIStackView *target = nil;
-    __block NSUInteger best = 0;
-    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:root];
+
+    // 定位“添加”按钮：它是通话界面底部的 UIControl，标签含有“添加/Add”
+    UIControl *addBtn = nil;
+    NSMutableArray<UIView *> *q = [NSMutableArray arrayWithObject:root];
     NSUInteger visited = 0;
-    while (queue.count && visited < 3000) {
-        UIView *v = queue.firstObject; [queue removeObjectAtIndex:0]; visited++;
-        if ([v isKindOfClass:UIStackView.class]) {
-            UIStackView *sv = (UIStackView *)v;
-            NSUInteger controls = 0;
-            for (UIView *c in sv.arrangedSubviews) if ([c isKindOfClass:UIControl.class]) controls++;
-            if (controls >= 2 && controls > best) { best = controls; target = sv; }
+    while (q.count && visited < 4000) {
+        UIView *v = q.firstObject; [q removeObjectAtIndex:0]; visited++;
+        if ([v isKindOfClass:UIControl.class]) {
+            NSString *label = v.accessibilityLabel ?: @"";
+            NSString *ident = v.accessibilityIdentifier ?: @"";
+            if ([label containsString:@"添加"] || [label containsString:@"Add"] ||
+                [ident.lowercaseString containsString:@"add"]) {
+                addBtn = (UIControl *)v;
+                break;
+            }
         }
-        for (UIView *c in v.subviews) [queue addObject:c];
+        for (UIView *c in v.subviews) [q addObject:c];
     }
-    if (!target) {
-        // 兜底：找“添加”按钮（PHInCall 的 add call），替换它的位置
-        AACLog([NSString stringWithFormat:@"通话界面：未找到按钮容器，尝试定位“添加”按钮（遍历节点=%lu）", (unsigned long)visited]);
-        UIView *addBtn = nil;
-        NSMutableArray<UIView *> *q2 = [NSMutableArray arrayWithObject:root];
-        NSUInteger n2 = 0;
-        while (q2.count && n2 < 3000) {
-            UIView *v = q2.firstObject; [q2 removeObjectAtIndex:0]; n2++;
-            NSString *label = nil;
-            if ([v respondsToSelector:@selector(accessibilityLabel)]) label = v.accessibilityLabel;
-            NSString *ident = v.accessibilityIdentifier;
-            BOOL isAdd = NO;
-            if ([label containsString:@"添加"] || [label containsString:@"Add"]) isAdd = YES;
-            if ([ident containsString:@"add"] || [ident containsString:@"Add"]) isAdd = YES;
-            if (isAdd && [v isKindOfClass:UIControl.class]) { addBtn = v; break; }
-            for (UIView *c in v.subviews) [q2 addObject:c];
-        }
-        UIView *host = addBtn.superview ?: root;
-        CGRect f = addBtn ? addBtn.frame : CGRectMake(host.bounds.size.width - 88, host.bounds.size.height - 140, 64, 64);
-        UIButton *fb = [UIButton buttonWithType:UIButtonTypeSystem];
-        [fb setTitle:@"停止" forState:UIControlStateNormal];
-        [fb setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-        fb.backgroundColor = [UIColor colorWithRed:0.85 green:0.2 blue:0.2 alpha:1.0];
-        fb.layer.cornerRadius = CGRectGetWidth(f)/2.0;
-        fb.titleLabel.font = [UIFont boldSystemFontOfSize:15];
-        fb.frame = f;
-        fb.autoresizingMask = addBtn ? UIViewAutoresizingNone : (UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleTopMargin);
-        [fb addTarget:[AACStopButtonTarget shared] action:@selector(tapped) forControlEvents:UIControlEventTouchUpInside];
-        [host addSubview:fb];
-        AACStopButton = fb;
-        if (addBtn) {
-            addBtn.hidden = YES;
-            AACLog([NSString stringWithFormat:@"通话界面：已用停止按钮替换“添加”按钮（label=%@ frame=%@）", addBtn.accessibilityLabel, NSStringFromCGRect(f)]);
-        } else {
-            AACLog(@"通话界面：未找到“添加”按钮，已在右下角放置浮动停止按钮");
-        }
+
+    if (!addBtn) {
+        static BOOL logged = NO;
+        if (!logged) { logged = YES; AACLog([NSString stringWithFormat:@"通话界面：未找到“添加”按钮（已遍历 %lu 个视图）", (unsigned long)visited]); }
         return;
     }
-    UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-    [btn setTitle:@"停止" forState:UIControlStateNormal];
-    [btn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    btn.backgroundColor = [UIColor colorWithRed:0.85 green:0.2 blue:0.2 alpha:1.0];
-    btn.layer.cornerRadius = 32;
-    btn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
-    [btn.widthAnchor constraintEqualToConstant:64].active = YES;
-    [btn.heightAnchor constraintEqualToConstant:64].active = YES;
+
+    UIView *parent = addBtn.superview;
+    if (!parent) return;
+    CGRect frame = addBtn.frame;           // 直接沿用原生按钮的尺寸与位置
+    if (frame.size.width < 20 || frame.size.height < 20) return;
+
+    // 按钮本体：与原生同样大小、同样圆角
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+    btn.frame = frame;
+    btn.layer.cornerRadius = frame.size.width / 2.0;
+    btn.backgroundColor = [UIColor colorWithRed:1.0 green:0.23 blue:0.19 alpha:1.0]; // 系统红 #FF3B30
     [btn addTarget:[AACStopButtonTarget shared] action:@selector(tapped) forControlEvents:UIControlEventTouchUpInside];
-    [target addArrangedSubview:btn];
+
+    // 图标：白色停止方块（放大到按钮的 42%）
+    CGFloat iconSide = frame.size.width * 0.42;
+    UIView *icon = [[UIView alloc] initWithFrame:CGRectMake((frame.size.width-iconSide)/2,
+                                                           (frame.size.height-iconSide)/2,
+                                                           iconSide, iconSide)];
+    icon.backgroundColor = UIColor.whiteColor;
+    icon.layer.cornerRadius = iconSide * 0.18;
+    icon.userInteractionEnabled = NO;
+    [btn addSubview:icon];
+
+    // 文字：与原生按钮标签同位置同字号，内容改为“停止”
+    UILabel *title = [[UILabel alloc] init];
+    title.text = @"停止";
+    title.textColor = UIColor.whiteColor;
+    title.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
+    title.textAlignment = NSTextAlignmentCenter;
+    title.userInteractionEnabled = NO;
+    [title sizeToFit];
+    CGFloat labelY = CGRectGetHeight(frame) + 8;
+    title.frame = CGRectMake(-(title.bounds.size.width - frame.size.width)/2, labelY,
+                             title.bounds.size.width, title.bounds.size.height);
+    [btn addSubview:title];
+
+    // 隐藏原生“添加”，插入我们的按钮（同一父视图，同一位置）
+    addBtn.hidden = YES;
+    [parent addSubview:btn];
     AACStopButton = btn;
-    AACLog([NSString stringWithFormat:@"通话界面：已插入停止按钮（容器控件数=%lu，遍历节点=%lu）", (unsigned long)best, (unsigned long)visited]);
+
+    static BOOL logged2 = NO;
+    if (!logged2) {
+        logged2 = YES;
+        AACLog([NSString stringWithFormat:@"通话界面：停止按钮已替换“添加”位置 frame=%@（遍历 %lu 个视图）", NSStringFromCGRect(frame), (unsigned long)visited]);
+    }
 }
 
 @implementation AACStopButtonTarget
@@ -434,6 +439,12 @@ __attribute__((unused)) static void AACScanForInCallUI(void) {
     // 仅在通话界面进程执行；SpringBoard 里没有通话 UI，扫描只会白白占用主线程。
     NSString *proc = NSProcessInfo.processInfo.processName ?: @"";
     if (![proc isEqualToString:@"InCallService"]) return;
+    // 键盘切换/界面重建时原生按钮会被销毁重建，此时我们的按钮也会脱离视图。
+    // 一旦脱离就释放引用，下一轮扫描会在新界面上重新插入。
+    if (AACStopButton && (!AACStopButton.superview || AACStopButton.superview.window == nil)) {
+        [AACStopButton removeFromSuperview];
+        AACStopButton = nil;
+    }
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
         for (UIWindow *w in ((UIWindowScene *)scene).windows) {
