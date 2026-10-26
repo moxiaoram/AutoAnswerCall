@@ -373,7 +373,23 @@ static void AACInstallStopButtonInView(UIView *root) {
         }
         for (UIView *c in v.subviews) [queue addObject:c];
     }
-    if (!target) { AACLog(@"通话界面：未找到按钮容器，跳过停止按钮注入"); return; }
+    if (!target) {
+        // 兜底：没有合适的 StackView 时，直接挂到最上层视图的右下角，保证一定能停下来
+        UIView *fallback = root;
+        UIButton *fb = [UIButton buttonWithType:UIButtonTypeSystem];
+        [fb setTitle:@"停止" forState:UIControlStateNormal];
+        [fb setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+        fb.backgroundColor = [UIColor colorWithRed:0.85 green:0.2 blue:0.2 alpha:1.0];
+        fb.layer.cornerRadius = 32;
+        fb.titleLabel.font = [UIFont boldSystemFontOfSize:15];
+        fb.frame = CGRectMake(fallback.bounds.size.width - 88, fallback.bounds.size.height - 140, 64, 64);
+        fb.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleTopMargin;
+        [fb addTarget:[AACStopButtonTarget shared] action:@selector(tapped) forControlEvents:UIControlEventTouchUpInside];
+        [fallback addSubview:fb];
+        AACStopButton = fb;
+        AACLog([NSString stringWithFormat:@"通话界面：未找到按钮容器，已改用右下角浮动停止按钮（遍历节点=%lu）", (unsigned long)visited]);
+        return;
+    }
 
     UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
     [btn setTitle:@"停止" forState:UIControlStateNormal];
@@ -408,7 +424,10 @@ __attribute__((unused)) static void AACScanForInCallUI(void) {
             while (stack.count && n++ < 500) {
                 UIViewController *c = stack.firstObject; [stack removeObjectAtIndex:0];
                 NSString *cls = NSStringFromClass(c.class);
-                if ([cls containsString:@"InCall"] || [cls containsString:@"CallView"]) {
+                if ([cls containsString:@"InCall"] || [cls containsString:@"CallView"] || [cls containsString:@"Call"]) {
+                    static NSMutableSet *logged = nil;
+                    if (!logged) logged = [NSMutableSet set];
+                    if (![logged containsObject:cls]) { [logged addObject:cls]; AACLog([NSString stringWithFormat:@"通话界面扫描命中视图控制器：%@", cls]); }
                     if (c.viewIfLoaded && !AACStopButton.superview) {
                         AACInstallStopButtonInView(c.viewIfLoaded);
                     }
@@ -635,12 +654,15 @@ __attribute__((unused)) static void AACUplinkProbe(void) {
         if ([bundle isEqualToString:@"com.apple.InCallService"] || [process isEqualToString:@"InCallService"]) {
             CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
             AACLog(@"AutoAnswerAudio 已在 InCallService 加载：将把通话界面按钮替换为停止按钮");
-            AACLog(@"InCallService 已加载（按钮扫描暂时关闭）");
+            AACLog(@"InCallService 已加载：开始扫描通话界面并插入停止按钮");
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [NSTimer scheduledTimerWithTimeInterval:0.8 repeats:YES block:^(NSTimer *t) { AACScanForInCallUI(); }];
+            });
             return;
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v1.9.5-revert 已在 SpringBoard 加载（探针/扫描已关闭）");
+        AACLog(@"AutoAnswerAudio v1.9.6 已在 SpringBoard 加载");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }
