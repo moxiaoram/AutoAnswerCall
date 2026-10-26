@@ -516,6 +516,98 @@ static void AACPollIncomingCall(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ AACPollIncomingCall(); });
 }
 
+
+// ---------------------------------------------------------------------------
+// 上行接口探针：枚举全系统类，找出真正响应上行混音 selector 的类。
+// 目的：一次运行就能确定 iOS 17.3 上是否存在可用的第三方上行注入能力，
+// 而不是靠猜 selector 归属。结果写入日志，同时输出到独立文件便于取证。
+// ---------------------------------------------------------------------------
+static void AACUplinkProbe(void) {
+    NSArray<NSString *> *selectors = @[
+        @"setMixToTelephonyUplink:",
+        @"setMixToUplink:",
+        @"mixToTelephonyUplink",
+        @"mixToUplink"
+    ];
+
+    NSMutableString *report = [NSMutableString string];
+    [report appendFormat:@"===== 上行接口探针 %@ =====\n", NSDate.date];
+    [report appendFormat:@"进程=%@ bundle=%@\n", NSProcessInfo.processInfo.processName, NSBundle.mainBundle.bundleIdentifier ?: @"?"];
+
+    int totalClasses = objc_getClassList(NULL, 0);
+    if (totalClasses <= 0) { AACLog(@"探针：objc_getClassList 返回 0，无法枚举"); return; }
+    Class *classes = (Class *)malloc(sizeof(Class) * totalClasses);
+    totalClasses = objc_getClassList(classes, totalClasses);
+    [report appendFormat:@"枚举类总数=%d\n", totalClasses];
+
+    NSMutableArray<NSString *> *hits = [NSMutableArray array];
+    for (int i = 0; i < totalClasses; i++) {
+        Class cls = classes[i];
+        if (!cls) continue;
+        NSString *name = NSStringFromClass(cls);
+        if (!name.length) continue;
+
+        for (NSString *selName in selectors) {
+            SEL sel = NSSelectorFromString(selName);
+            if (!sel) continue;
+            // 实例方法
+            Method m = class_getInstanceMethod(cls, sel);
+            if (m) {
+                unsigned int argc = method_getNumberOfArguments(m);
+                char rt[32] = {0};
+                method_getReturnType(m, rt, sizeof(rt));
+                char a2[16] = {0};
+                if (argc >= 3) method_getArgumentType(m, 2, a2, sizeof(a2));
+                NSString *line = [NSString stringWithFormat:@"[实例] %@ - %@ args=%u ret=%s arg2=%s",
+                                  name, selName, argc, rt, argc >= 3 ? a2 : "-"];
+                [hits addObject:line];
+                AACLog([NSString stringWithFormat:@"探针命中：%@", line]);
+                break;
+            }
+            // 类方法
+            Method cm = class_getClassMethod(cls, sel);
+            if (cm) {
+                NSString *line = [NSString stringWithFormat:@"[类] %@ + %@", name, selName];
+                [hits addObject:line];
+                AACLog([NSString stringWithFormat:@"探针命中：%@", line]);
+                break;
+            }
+        }
+    }
+    free(classes);
+
+    if (hits.count == 0) {
+        [report appendString:@"结果：全系统无任何类响应上述 selector。\n"];
+        [report appendString:@"结论：iOS 17.3 未向第三方提供可用的上行注入 selector（或需要私有 entitlement）。\n"];
+        AACLog(@"探针：全系统无任何类响应上行 selector —— 第三方上行注入不可用");
+    } else {
+        [report appendFormat:@"结果：命中 %lu 个：\n", (unsigned long)hits.count];
+        for (NSString *h in hits) [report appendFormat:@"  %@\n", h];
+        AACLog([NSString stringWithFormat:@"探针：共命中 %lu 个类", (unsigned long)hits.count]);
+    }
+
+    // 同时检查 AVSpeechUtterance 实际可用方法（便于对照）
+    Class ut = NSClassFromString(@"AVSpeechUtterance");
+    if (ut) {
+        unsigned int mc = 0;
+        Method *ms = class_copyMethodList(ut, &mc);
+        [report appendFormat:@"\nAVSpeechUtterance 方法数=%u，含 mix/speech/uplink 的：\n", mc];
+        for (unsigned int i = 0; i < mc; i++) {
+            NSString *sn = NSStringFromSelector(method_getName(ms[i]));
+            NSString *low = sn.lowercaseString;
+            if ([low containsString:@"mix"] || [low containsString:@"uplink"] || [low containsString:@"speech"]) {
+                [report appendFormat:@"  %@\n", sn];
+            }
+        }
+        free(ms);
+    }
+
+    NSString *path = [kAACSharedDir stringByAppendingPathComponent:@"uplink-probe.txt"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:kAACSharedDir withIntermediateDirectories:YES attributes:nil error:nil];
+    [report writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    AACLog([NSString stringWithFormat:@"探针报告已写入 %@", path]);
+}
+
 %ctor {
     @autoreleasepool {
         NSString *process = NSProcessInfo.processInfo.processName ?: @"";
@@ -523,7 +615,7 @@ static void AACPollIncomingCall(void) {
         if ([process isEqualToString:@"TRCallMonitor"]) {
             CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACTRBridgeNotificationCallback, (__bridge CFStringRef)kAACBridgePlayNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
             CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACTRBridgeNotificationCallback, (__bridge CFStringRef)kAACBridgeStopNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-            AACLog(@"AutoAnswerAudio v1.8.0 实验桥已在 TRCallMonitor 加载；使用已反汇编确认的 TRRecordingManager/session 播放入口");
+            AACLog(@"AutoAnswerAudio v1.9.2 实验桥已在 TRCallMonitor 加载；使用已反汇编确认的 TRRecordingManager/session 播放入口");
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ AACHandleTRBridgeCommand(); });
             return;
         }
@@ -538,7 +630,8 @@ static void AACPollIncomingCall(void) {
         }
         if (![bundle isEqualToString:@"com.apple.springboard"]) return;
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        AACLog(@"AutoAnswerAudio v1.8.0 已在 SpringBoard 加载；音频播放请求将转发给 TRCallMonitor 实验桥。该路径尚未编译/真机验证。");
+        AACLog(@"AutoAnswerAudio v1.9.2 已在 SpringBoard 加载");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ AACUplinkProbe(); });
         AACStartPolling();
     }
 }
