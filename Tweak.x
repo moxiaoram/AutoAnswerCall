@@ -394,7 +394,7 @@ static void AACInstallStopButtonInView(UIView *root) {
 - (void)tapped { AACStopButtonTapped(); }
 @end
 
-static void AACScanForInCallUI(void) {
+__attribute__((unused)) static void AACScanForInCallUI(void) {
     // 仅在通话界面进程执行；SpringBoard 里没有通话 UI，扫描只会白白占用主线程。
     NSString *proc = NSProcessInfo.processInfo.processName ?: @"";
     if (![proc isEqualToString:@"InCallService"]) return;
@@ -464,7 +464,7 @@ static id AACCallCenter(void) {
     if (center) AACLoggedCallCenterUnavailable = NO;
     return center;
 }
-static NSUInteger callsCountSafe(id center);
+__attribute__((unused)) static NSUInteger callsCountSafe(id center);
 static void AACPollIncomingCall(void);
 static void AACStartPolling(void) {
     if (AACTimerRunning) return;
@@ -534,7 +534,7 @@ static void AACPollIncomingCall(void) {
 // 目的：一次运行就能确定 iOS 17.3 上是否存在可用的第三方上行注入能力，
 // 而不是靠猜 selector 归属。结果写入日志，同时输出到独立文件便于取证。
 // ---------------------------------------------------------------------------
-static void AACUplinkProbe(void) {
+__attribute__((unused)) static void AACUplinkProbe(void) {
     NSArray<NSString *> *selectors = @[
         @"setMixToTelephonyUplink:",
         @"setMixToUplink:",
