@@ -197,34 +197,102 @@ static void AACRequestTRBridgeStop(void) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 上行音频：使用系统 AVSpeechUtterance 的私有 mixToTelephonyUplink 能力。
+// 依据：dyld 共享缓存中确认存在 _mixToTelephonyUplink / setMixToUplink:，
+// 归属 AVSpeechUtterance（同区还有 _speechString、_preUtteranceDelay、pitchMultiplier）。
+// 该接口把“合成语音”送入通话上行，因此对方听到的是 TTS 朗读内容，
+// 而不是原始音频文件字节。这是当前系统实际提供的能力。
+// ---------------------------------------------------------------------------
+static AVSpeechSynthesizer *AACSpeechSynth = nil;
+static AVSpeechUtterance *AACCurrentUtterance = nil;
+
+static BOOL AACUtteranceSupportsUplink(void) {
+    Class cls = NSClassFromString(@"AVSpeechUtterance");
+    if (!cls) return NO;
+    SEL sel = NSSelectorFromString(@"setMixToTelephonyUplink:");
+    return [cls instancesRespondToSelector:sel];
+}
+
+static BOOL AACEnableUplinkOnUtterance(AVSpeechUtterance *utterance) {
+    if (!utterance) return NO;
+    SEL sel = NSSelectorFromString(@"setMixToTelephonyUplink:");
+    Method m = class_getInstanceMethod([utterance class], sel);
+    if (!m) { AACLog(@"上行：AVSpeechUtterance 没有 setMixToTelephonyUplink:，无法注入上行"); return NO; }
+    unsigned int argc = method_getNumberOfArguments(m);
+    char argType[16] = {0};
+    if (argc >= 3) method_getArgumentType(m, 2, argType, sizeof(argType));
+    AACLog([NSString stringWithFormat:@"上行：setMixToTelephonyUplink: 参数数=%u 第2参数类型=%s", argc, argc >= 3 ? argType : "?"]);
+    if (argc != 3) { AACLog(@"上行：ABI 不符合预期（期望 2 个隐式参数 + 1 个 BOOL），不调用"); return NO; }
+    @try {
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(utterance, sel, YES);
+        return YES;
+    } @catch (NSException *e) {
+        AACLog([NSString stringWithFormat:@"上行：调用 setMixToTelephonyUplink: 异常：%@", e.reason ?: @"unknown"]);
+        return NO;
+    }
+}
+
+// 从音频文件路径推导一段可朗读的文本：优先读同名 .txt 旁注，否则用文件名。
+static NSString *AACSpeechTextForPath(NSString *path) {
+    if (!path.length) return nil;
+    NSString *sidecar = [[path stringByDeletingPathExtension] stringByAppendingPathExtension:@"txt"];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:sidecar]) {
+        NSString *t = [NSString stringWithContentsOfFile:sidecar encoding:NSUTF8StringEncoding error:nil];
+        if (t.length) { AACLog([NSString stringWithFormat:@"上行：使用旁注文本 %@", sidecar.lastPathComponent]); return t; }
+    }
+    NSString *fallback = AACPrefs()[@"SpeechText"];
+    if ([fallback isKindOfClass:NSString.class] && fallback.length) return fallback;
+    return nil;
+}
+
 static void AACStartUplinkAudio(void) {
     if (!AACEnabled() || ![AACPrefs()[@"PlayAudio"] boolValue]) {
         AACLog([NSString stringWithFormat:@"上行播放未启动：Enabled=%d PlayAudio=%d", AACEnabled(), [AACPrefs()[@"PlayAudio"] boolValue]]);
         return;
     }
 
-    NSString *path = AACPrefs()[@"AudioFilePath"];
-    BOOL isDirectory = NO;
-    BOOL exists = [path isKindOfClass:NSString.class] && path.length > 0 &&
-        [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDirectory];
-    if (!exists || isDirectory) {
-        AACLog([NSString stringWithFormat:@"上行播放失败：音频文件不存在或不是文件；path=%@", path ?: @"(empty)"]);
+    if (!AACUtteranceSupportsUplink()) {
+        AACLog(@"上行：本系统 AVSpeechUtterance 不支持 setMixToTelephonyUplink:，放弃上行注入");
         return;
     }
-    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
-    unsigned long long fileSize = [attrs[NSFileSize] unsignedLongLongValue];
-    AACLog([NSString stringWithFormat:@"上行音频文件检查：path=%@ size=%llu bytes readable=%d", path, fileSize,
-            [[NSFileManager defaultManager] isReadableFileAtPath:path]]);
-    if (fileSize == 0 || ![[NSFileManager defaultManager] isReadableFileAtPath:path]) {
-        AACLog(@"上行播放失败：音频文件大小为 0 或当前进程无读取权限");
+
+    NSString *text = AACSpeechTextForPath(AACPrefs()[@"AudioFilePath"]);
+    if (!text.length) {
+        AACLog(@"上行：没有可朗读的文本。请设置“朗读文本(SpeechText)”或在音频同目录放同名 .txt 旁注文件。");
         return;
     }
-    AACRequestTRBridgePlay(path);
+
+    @try {
+        AACSpeechSynth = [AVSpeechSynthesizer new];
+        AVSpeechUtterance *u = [AVSpeechUtterance speechUtteranceWithString:text];
+        BOOL mixed = AACEnableUplinkOnUtterance(u);
+        AACLog([NSString stringWithFormat:@"上行：准备朗读 %lu 字，mixToTelephonyUplink=%d", (unsigned long)text.length, mixed]);
+        AACCurrentUtterance = u;
+        [AACSpeechSynth speakUtterance:u];
+        AACLog(@"上行：已调用 speakUtterance（对方是否能听到需实际通话验证）");
+    } @catch (NSException *e) {
+        AACLog([NSString stringWithFormat:@"上行：朗读异常：%@", e.reason ?: @"unknown"]);
+    }
+}
+
+static void AACStopUplinkAudioTTS(void) {
+    @try {
+        if (AACSpeechSynth && AACSpeechSynth.isSpeaking) {
+            [AACSpeechSynth stopSpeakingAtBoundary:AVSpeechBoundaryImmediate];
+            AACLog(@"上行：已停止朗读");
+        }
+        AACSpeechSynth = nil;
+        AACCurrentUtterance = nil;
+    } @catch (NSException *e) {
+        AACLog([NSString stringWithFormat:@"上行：停止异常：%@", e.reason ?: @"unknown"]);
+    }
 }
 
 static void AACStopUplinkNotificationCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
         AACStopUplinkAudio();
+        AACStopUplinkAudioTTS();
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) AACRequestTRBridgeStop();
     });
 }

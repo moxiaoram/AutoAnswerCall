@@ -17,6 +17,7 @@
     <dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>管理 / 选择音频</string><key>action</key><string>manageAudio</string></dict>
     <dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>试听 / 停止试听</string><key>action</key><string>togglePreview</string></dict>
     <dict><key>cell</key><string>PSEditTextCell</string><key>label</key><string>当前音频路径</string><key>defaults</key><string>com.autoanswer.call</string><key>key</key><string>AudioFilePath</string><key>default</key><string></string><key>placeholder</key><string>请使用“导入音频”选择文件</string><key>autocapitalizationType</key><string>None</string><key>autocorrectionType</key><string>No</string><key>keyboardType</key><string>URL</string></dict>
+    <dict><key>cell</key><string>PSEditTextCell</string><key>label</key><string>朗读文本（上行 TTS 内容）</string><key>defaults</key><string>com.autoanswer.call</string><key>key</key><string>SpeechText</string><key>default</key><string></string><key>placeholder</key><string>接通后由系统语音读给对方听</string></dict>
     <dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>当前版本限制</string><key>footerText</key><string>这是上行播放实验版，尚未验证对端能否听到音频；停止按钮位于设置页，不是通话悬浮面板。停止后麦克风恢复也需真机验证。不要用于紧急电话。</string></dict>
   </array>
 </dict>
