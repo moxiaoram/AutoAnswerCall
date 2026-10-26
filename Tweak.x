@@ -774,7 +774,7 @@ __attribute__((unused)) static void AACUplinkProbe(void) {
 @end
 
 // 拨号盘检测：通话界面出现数字键盘时，隐藏悬浮按钮；关闭键盘后恢复。
-static BOOL AACKeypadVisible(void) {
+__attribute__((unused)) static BOOL AACKeypadVisible(void) {
     for (UIScene *sc in UIApplication.sharedApplication.connectedScenes) {
         if (![sc isKindOfClass:UIWindowScene.class]) continue;
         for (UIWindow *w in ((UIWindowScene *)sc).windows) {
