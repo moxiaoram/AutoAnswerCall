@@ -280,6 +280,8 @@ static NSString *AACSpeechTextForPath(NSString *path) {
     return nil;
 }
 
+static id AACCallCenter(void);
+static id AACSend(id target, NSString *selectorName);
 static void AACSetUplinkMuted(BOOL muted);
 static void AACStartUplinkAudio(void) {
     if (!AACEnabled() || ![AACPrefs()[@"PlayAudio"] boolValue]) {
