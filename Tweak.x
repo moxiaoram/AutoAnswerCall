@@ -280,6 +280,7 @@ static NSString *AACSpeechTextForPath(NSString *path) {
     return nil;
 }
 
+static UIButton *AACFloatingStop;
 static void AACShowFloatingStop(BOOL show);
 static BOOL AACKeypadVisible(void);
 static id AACCallCenter(void);
@@ -741,8 +742,6 @@ __attribute__((unused)) static void AACUplinkProbe(void) {
 // InCallService 注入不可用，因此把停止按钮做在 SpringBoard 悬浮层：
 // 通话开始朗读时显示，点击即停止朗读并恢复麦克风，挂断后自动隐藏。
 // ---------------------------------------------------------------------------
-static UIButton *AACFloatingStop = nil;
-
 @interface AACFloatingTarget : NSObject
 + (instancetype)shared;
 - (void)stopTapped;
