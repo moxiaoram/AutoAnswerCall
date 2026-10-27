@@ -1,50 +1,80 @@
-TARGET := iphone:clang:latest:17.0
-ARCHS := arm64e
-THEOS_PACKAGE_SCHEME := roothide
-PACKAGE_VERSION := 2.5.0
-INSTALL_TARGET_PROCESSES := SpringBoard InCallService
+#
+#  DYYY
+#
+#  Copyright (c) 2024 huami. All rights reserved.
+#  Channel: @huamidev
+#  Created on: 2024/10/04
+#
+# 本地配置文件（可选）
+-include Makefile.local
+
+TARGET = iphone:clang:latest:14.0
+ARCHS = arm64 arm64e
+
+#export THEOS=/Users/huami/theos
+#export THEOS_PACKAGE_SCHEME=roothide
+
+# 根据参数选择打包方案
+ifeq ($(SCHEME),roothide)
+    export THEOS_PACKAGE_SCHEME = roothide
+else ifeq ($(SCHEME),rootless)
+    export THEOS_PACKAGE_SCHEME = rootless
+else
+    unexport THEOS_PACKAGE_SCHEME
+endif
+
+# 在GitHub Actions中运行时的特殊配置
+ifeq ($(GITHUB_ACTIONS),true)
+    export INSTALL = 0
+    export FINALPACKAGE = 1
+endif
+
+export DEBUG = 0
+INSTALL_TARGET_PROCESSES = Aweme
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME := AutoAnswerCall AutoAnswerTRBridge
-AutoAnswerCall_FILES := Tweak.x
-AutoAnswerCall_CFLAGS := -fobjc-arc
-AutoAnswerCall_FRAMEWORKS := Foundation UIKit AVFoundation
-# RootHide 运行时：系统进程（如 InCallService）注入时必须链接 libroothide，
-# 否则 dylib 在 .jbroot 沙盒外无法重定位（表现为"装了但不注入"）。
-# 注意：不加 -l 前缀解析失败时，直接写 .tbd 全路径。
-# 按 CallAssist 的方式链接 RootHide 运行时：
-# install-name 使用 @loader_path/.jbroot/... 相对路径，
-# 这样注入到系统进程（InCallService）时能正确重定向回 /var/jb。
-AutoAnswerCall_LDFLAGS := $(THEOS_PROJECT_DIR)/vendor/libroothide.tbd $(THEOS_PROJECT_DIR)/vendor/libsubstrate.tbd
-AutoAnswerCall_PLIST := AutoAnswerCall.plist
+TWEAK_NAME = DYYY
 
-AutoAnswerTRBridge_FILES := Tweak.x
-AutoAnswerTRBridge_CFLAGS := -fobjc-arc
-AutoAnswerTRBridge_FRAMEWORKS := Foundation UIKit AVFoundation
-AutoAnswerTRBridge_PLIST := AutoAnswerTRBridge.plist
+DYYY_FILES = DYYY.xm DYYYFloatClearButton.xm DYYYFloatSpeedButton.m DYYYSettings.xm DYYYABTestHook.xm DYYYLongPressPanel.xm DYYYGridLongPressPanel.m DYYYImmersivePlaybackManager.m DYYYAutoNextManager.m DYYYAlbumThumbnailBar.m DYYYPhotoGalleryController.m DYYYSettingsHelper.m DYYYImagePickerDelegate.m DYYYBackupPickerDelegate.m DYYYSettingViewController.m DYYYSystemSettingsViewController.m DYYYBottomAlertView.m DYYYCustomInputView.m DYYYOptionsSelectionView.m DYYYIconOptionsDialogView.m DYYYAboutDialogView.m DYYYKeywordListView.m DYYYFilterSettingsView.m DYYYConfirmCloseView.m DYYYToast.m DYYYManager.m DYYYUtils.m CityManager.m AWMSafeDispatchTimer.m
+DYYY_FILES += DYYY408Compatibility.m
+DYYY_CFLAGS = -fobjc-arc -w
+DYYY_LDFLAGS = -weak_framework AVFAudio
+# 宿主私有类在链接期不可解析，按 tweak 常规做法交给运行时
+DYYY_LDFLAGS += -Wl,-undefined,dynamic_lookup
+DYYY_FRAMEWORKS = CoreAudio ImageIO
+CXXFLAGS += -std=c++11
+CCFLAGS += -std=c++11
+DYYY_LOGOS_DEFAULT_GENERATOR = internal
 
-BUNDLE_NAME := AutoAnswerCallPrefs
-AutoAnswerCallPrefs_FILES := Preferences/AARootListController.m
-AutoAnswerCallPrefs_INFO_PLIST := Preferences/Resources/Info.plist
-AutoAnswerCallPrefs_RESOURCE_FILES := Preferences/Resources/Root.plist Preferences/Resources/icon.png Preferences/Resources/icon@2x.png Preferences/Resources/icon@3x.png
-AutoAnswerCallPrefs_FRAMEWORKS := UIKit Foundation AVFoundation
-AutoAnswerCallPrefs_PRIVATE_FRAMEWORKS := Preferences
-AutoAnswerCallPrefs_LDFLAGS := -F$(THEOS_PROJECT_DIR)/vendor
-AutoAnswerCallPrefs_INSTALL_PATH := /Library/PreferenceBundles
-AutoAnswerCallPrefs_CFLAGS := -fobjc-arc
+export THEOS_STRICT_LOGOS=0
+export ERROR_ON_WARNINGS=0
+export LOGOS_DEFAULT_GENERATOR=internal
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
-include $(THEOS_MAKE_PATH)/bundle.mk
+ifeq ($(shell whoami),huami)
+    THEOS_DEVICE_IP = 192.168.31.227
+else
+    THEOS_DEVICE_IP = 192.168.15.201
+endif
+THEOS_DEVICE_PORT = 22
 
+# 清理 packages 目录
+clean::
+	@echo -e "\033[31m==>\033[0m Cleaning packages…"
+	@rm -rf .theos packages
 
-# RootHide 需要为每个 tweak 生成 .roothidepatch 符号链接，
-# 否则 dylib 装载后无法正确重定位（表现为"装了但完全不生效"）。
-after-stage::
-	@mkdir -p $(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries
-	@for t in $(TWEAK_NAME); do \
-	  ln -sf /usr/lib/DynamicPatches/AutoPatches.dylib \
-	    $(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/$$t.dylib.roothidepatch; \
-	  echo "  patched $$t.dylib.roothidepatch"; \
-	done
+# 编译并自动安装
+after-package::
+	@echo -e "\033[32m==>\033[0m Packaging complete."
+	@if [ "$(GITHUB_ACTIONS)" != "true" ] && [ "$(INSTALL)" = "1" ]; then \
+        DEB_FILE=$$(ls -t packages/*.deb | head -1); \
+        PACKAGE_NAME=$$(basename "$$DEB_FILE" | cut -d'_' -f1); \
+        echo -e "\033[34m==>\033[0m Installing $$PACKAGE_NAME to device…"; \
+        ssh root@$(THEOS_DEVICE_IP) "rm -rf /tmp/$${PACKAGE_NAME}.deb"; \
+        scp "$$DEB_FILE" root@$(THEOS_DEVICE_IP):/tmp/$${PACKAGE_NAME}.deb; \
+        ssh root@$(THEOS_DEVICE_IP) "dpkg -i --force-overwrite /tmp/$${PACKAGE_NAME}.deb && rm -f /tmp/$${PACKAGE_NAME}.deb"; \
+	else \
+        echo -e "\033[33m==>\033[0m Skipping installation (GitHub Actions environment or INSTALL!=1)"; \
+	fi

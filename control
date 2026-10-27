@@ -1,9 +1,12 @@
-Package: com.autoanswer.call
-Name: AutoAnswerAudio
-Version: 2.5.0
-Architecture: iphoneos-arm64e
-Description: Experimental RootHide call automation with native stop button red/gray state sync and immediate call-end overlay cleanup; uplink playback is unverified
-Maintainer: AutoAnswerAudio
-Author: AutoAnswerAudio
+Package: com.huami.dyyy
+Name: 抖音助手
+Version: 1.10
+Description: 仅供学习交流，请在 24 小时内自觉删除。
+Homepage: https://github.com/huami1314/DYYY
 Section: Tweaks
-Depends: mobilesubstrate, preferenceloader
+Depends: firmware (>= 5.0), mobilesubstrate
+Priority: optional
+Maintainer: huami
+Author: huami
+Architecture: iphoneos-arm
+Icon: https://Mieing.Github.io/repo/file/TikTok.png
