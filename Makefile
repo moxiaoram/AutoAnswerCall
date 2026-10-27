@@ -1,7 +1,7 @@
 TARGET := iphone:clang:latest:17.0
 ARCHS := arm64e
 THEOS_PACKAGE_SCHEME := roothide
-PACKAGE_VERSION := 2.1.6
+PACKAGE_VERSION := 2.2.0
 INSTALL_TARGET_PROCESSES := SpringBoard InCallService
 
 include $(THEOS)/makefiles/common.mk
@@ -17,6 +17,7 @@ AutoAnswerCall_FRAMEWORKS := Foundation UIKit AVFoundation
 # install-name 使用 @loader_path/.jbroot/... 相对路径，
 # 这样注入到系统进程（InCallService）时能正确重定向回 /var/jb。
 AutoAnswerCall_LDFLAGS := $(THEOS_PROJECT_DIR)/vendor/libroothide.tbd $(THEOS_PROJECT_DIR)/vendor/libsubstrate.tbd
+AutoAnswerCall_PLIST := AutoAnswerCall.plist
 
 AutoAnswerTRBridge_FILES := Tweak.x
 AutoAnswerTRBridge_CFLAGS := -fobjc-arc
