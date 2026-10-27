@@ -44,3 +44,8 @@ make package THEOS_PACKAGE_SCHEME=roothide
 ```
 
 本环境没有 Theos 和 iOS SDK，不能声称已完成编译或真机测试。
+
+
+## v2.1.4 后续状态颜色
+
+参见 `README-v2.1.4-停止按钮红灰状态.md`：播放中红色，停止后恢复原生系统灰色。
