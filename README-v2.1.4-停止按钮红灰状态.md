@@ -21,3 +21,12 @@ make package THEOS_PACKAGE_SCHEME=roothide
 ```
 
 建议先备份现有 2.1.3 包。测试时确认：播放期间停止按钮红色；按下后按钮立即恢复系统灰色；朗读停止、麦克风恢复、通话不断开；下一次播放开始后按钮重新变红。
+
+
+## v2.1.5 修复
+
+- 使用同尺寸覆盖控件控制停止按钮背景色，播放中红色，停止后系统灰色。
+- 通过 playback-state.plist 与心跳同步 SpringBoard / InCallService 状态。
+- 使用持久 CXCallObserver 监听挂断，立即移除备用悬浮按钮。
+- 备用悬浮按钮只有在确认存在活动通话时才允许显示。
+- 尚需 Theos 编译和 RootHide 真机验证。

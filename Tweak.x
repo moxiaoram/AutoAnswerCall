@@ -27,6 +27,12 @@ static NSString * const kAACPlaybackStartedNotification = @"com.autoanswer.call.
 static BOOL AACRemoteKeypadShown = NO;
 static CFAbsoluteTime AACLastInCallUIReady = 0;
 static CFAbsoluteTime AACLastKeypadReport = 0;
+// Live-call state is tracked by a persistent CXCallObserver in SpringBoard.
+static BOOL AACCallObserverHasLiveCall = NO;
+static BOOL AACCallObserverSawLiveCall = NO;
+static BOOL AACCallObserverEndHandled = NO;
+static id AACCallObserverInstance = nil;
+static id AACCallObserverDelegateInstance = nil;
 static NSString * const kAACBridgePlayNotification = @"com.autoanswer.call.trBridgePlay";
 static NSString * const kAACBridgeStopNotification = @"com.autoanswer.call.trBridgeStop";
 static NSString * const kAACBridgeCommandPath = @"/var/mobile/Library/AutoAnswerAudio/tr-bridge-command.plist";
@@ -229,6 +235,49 @@ static void AACRefreshFloatingStopVisibility(void);
 static void AACUpdateStopButtonAppearance(void);
 static BOOL AACIntegratedUIFresh(void);
 static BOOL AACKeypadConfirmedHidden(void);
+static BOOL AACCallObserverAnyLiveCall(id observer);
+
+// SpringBoard and InCallService are separate processes. Persist playback state so the
+// native-slot replacement can render the correct red/gray state even if it starts late
+// and misses the one-shot Darwin notification.
+static NSString *AACPlaybackStatePath(void) {
+    return [kAACSharedDir stringByAppendingPathComponent:@"playback-state.plist"];
+}
+static NSDictionary *AACReadPlaybackStateFile(void) {
+    NSDictionary *state = [NSDictionary dictionaryWithContentsOfFile:AACPlaybackStatePath()];
+    return [state isKindOfClass:NSDictionary.class] ? state : nil;
+}
+static void AACWritePlaybackState(BOOL active, BOOL stopped) {
+    @try {
+        [[NSFileManager defaultManager] createDirectoryAtPath:kAACSharedDir
+                                  withIntermediateDirectories:YES attributes:nil error:nil];
+        NSDictionary *state = @{
+            @"active": @(active),
+            @"stopped": @(stopped),
+            @"timestamp": @([NSDate date].timeIntervalSince1970)
+        };
+        [state writeToFile:AACPlaybackStatePath() atomically:YES];
+    } @catch (NSException *e) {
+        AACLog([NSString stringWithFormat:@"播放状态写入失败：%@", e.reason ?: @"unknown"]);
+    }
+}
+static BOOL AACLoadSharedPlaybackState(void) {
+    NSDictionary *state = AACReadPlaybackStateFile();
+    if (!state) return NO;
+    NSTimeInterval stamp = [state[@"timestamp"] doubleValue];
+    if (stamp <= 0 || [NSDate date].timeIntervalSince1970 - stamp > 4.0) return NO;
+    AACPlaybackActive = [state[@"active"] boolValue];
+    AACStopPressed = [state[@"stopped"] boolValue];
+    AACUserStopped = AACStopPressed || !AACPlaybackActive;
+    return YES;
+}
+static void AACHeartbeatPlaybackState(void) {
+    if (!AACUplinkLooping || AACUserStopped) return;
+    NSDictionary *existing = AACReadPlaybackStateFile();
+    // A stop written by InCallService wins over a racing SpringBoard heartbeat.
+    if ([existing[@"stopped"] boolValue]) return;
+    AACWritePlaybackState(YES, NO);
+}
 
 @interface AACSpeechDelegate : NSObject <AVSpeechSynthesizerDelegate>
 @end
@@ -342,6 +391,12 @@ static void AACStartUplinkAudio(void) {
         AACPlaybackActive = YES;
         AACStopPressed = NO;
         AACUplinkLooping = YES;
+        AACWritePlaybackState(YES, NO);
+        if (AACCallObserverInstance && AACCallObserverAnyLiveCall(AACCallObserverInstance)) {
+            AACCallObserverHasLiveCall = YES;
+            AACCallObserverSawLiveCall = YES;
+            AACCallObserverEndHandled = NO;
+        }
         AACAudioRouteGeneration++; // invalidate route-recovery requests from a previous call
         if (!AACSpeechDelegateInstance) AACSpeechDelegateInstance = [AACSpeechDelegate new];
         AACSpeechSynth.delegate = AACSpeechDelegateInstance;
@@ -379,6 +434,9 @@ static void AACSetUplinkMuted(BOOL muted) {
 static void AACStopUplinkAudioTTS(void) {
     AACUserStopped = YES;
     AACUplinkLooping = NO;
+    AACPlaybackActive = NO;
+    AACStopPressed = YES;
+    AACWritePlaybackState(NO, YES);
     AACAudioRouteGeneration++;  // cancel pending speaker/route recovery
     if (AACMutedUplink) AACSetUplinkMuted(NO);   // 恢复麦克风
     AACShowFloatingStop(NO);                     // 隐藏悬浮按钮
@@ -478,6 +536,8 @@ static void AACStopButtonTapped(void) {
     }
     AACPlaybackActive = NO;
     AACStopPressed = YES;
+    AACUserStopped = YES;
+    AACWritePlaybackState(NO, YES);
     AACLog(@"通话界面：按下插件停止；通知 SpringBoard 停止、恢复麦克风，不挂断电话");
     AACPostDarwinNotification(kAACStopUplinkNotification);
     AACStopUplinkAudioTTS();
@@ -802,6 +862,7 @@ static UIControl *AACFindNativeStopControl(UIView *root) {
     return best;
 }
 static void AACUpdateStopButtonAppearanceOnMain(void) {
+    AACLoadSharedPlaybackState();
     BOOL active = AACPlaybackActive && !AACStopPressed && AACEnabled();
     if (AACStopButtonCircle) AACStopButtonCircle.backgroundColor = active ? AACStopActiveRed() : [UIColor colorWithWhite:0.85 alpha:0.20];
     if (AACNativeStopCircleView) AACSetStopCircleActive(AACNativeStopCircleView, active);
@@ -824,6 +885,110 @@ static void AACUpdateStopButtonAppearanceOnMain(void) {
 static void AACUpdateStopButtonAppearance(void) {
     if ([NSThread isMainThread]) AACUpdateStopButtonAppearanceOnMain();
     else dispatch_async(dispatch_get_main_queue(), ^{ AACUpdateStopButtonAppearanceOnMain(); });
+}
+
+static UILabel *AACFindNativeStopLabelNearControl(UIView *root, UIControl *control) {
+    if (!root || !control) return nil;
+    if ([control isKindOfClass:UIButton.class]) {
+        UILabel *buttonLabel = ((UIButton *)control).titleLabel;
+        if (AACIsStopTitle(buttonLabel.text)) return buttonLabel;
+    }
+    CGRect controlFrame = [root convertRect:control.bounds fromView:control];
+    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:root];
+    UILabel *best = nil;
+    CGFloat bestDistance = CGFLOAT_MAX;
+    NSUInteger visited = 0;
+    while (queue.count && visited++ < 4000) {
+        UIView *view = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        if (view.hidden || view.alpha < 0.05) continue;
+        if ([view isKindOfClass:UILabel.class] && AACIsStopTitle(((UILabel *)view).text)) {
+            UILabel *label = (UILabel *)view;
+            if ([label isDescendantOfView:control]) return label;
+            CGRect labelFrame = [root convertRect:label.bounds fromView:label];
+            CGFloat dx = fabs(CGRectGetMidX(labelFrame) - CGRectGetMidX(controlFrame));
+            CGFloat dy = CGRectGetMinY(labelFrame) - CGRectGetMaxY(controlFrame);
+            if (dx < 48.0 && dy >= -8.0 && dy < 55.0 && dy < bestDistance) {
+                best = label;
+                bestDistance = dy;
+            }
+        }
+        for (UIView *child in view.subviews) [queue addObject:child];
+    }
+    return best;
+}
+
+static void AACInstallStopOverlayReplacingControl(UIControl *add, UILabel *label) {
+    if (!add || !add.superview || !add.window || AACStopButton) return;
+    AACLoadSharedPlaybackState();
+    CGRect frame = add.frame;
+    CGFloat side = MIN(CGRectGetWidth(frame), CGRectGetHeight(frame));
+    if (side < 44.0 || side > 150.0) return;
+
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+    button.frame = frame;
+    button.autoresizingMask = add.autoresizingMask;
+    button.backgroundColor = UIColor.clearColor;
+    button.clipsToBounds = NO;
+
+    CGFloat circleX = (CGRectGetWidth(frame) - side) / 2.0;
+    UIView *circle = [[UIView alloc] initWithFrame:CGRectMake(circleX, 0, side, side)];
+    BOOL active = AACPlaybackActive && !AACStopPressed && AACEnabled();
+    circle.backgroundColor = active ? AACStopActiveRed() : [UIColor colorWithWhite:0.85 alpha:0.20];
+    circle.layer.cornerRadius = side / 2.0;
+    circle.userInteractionEnabled = NO;
+    [button addSubview:circle];
+
+    CGFloat iconSide = side * 0.33;
+    UIView *icon = [[UIView alloc] initWithFrame:CGRectMake((side-iconSide)/2.0,
+                                                           (side-iconSide)/2.0,
+                                                           iconSide, iconSide)];
+    icon.backgroundColor = UIColor.whiteColor;
+    icon.layer.cornerRadius = iconSide * 0.14;
+    icon.userInteractionEnabled = NO;
+    [circle addSubview:icon];
+
+    UILabel *title = [[UILabel alloc] init];
+    title.text = @"停止";
+    title.textColor = UIColor.whiteColor;
+    title.font = label.font ?: [UIFont systemFontOfSize:14 weight:UIFontWeightRegular];
+    title.textAlignment = NSTextAlignmentCenter;
+    title.userInteractionEnabled = NO;
+    [title sizeToFit];
+    CGFloat labelOffset = side + 8.0;
+    if (label && label.superview) {
+        CGRect labelFrame = [add convertRect:label.bounds fromView:label];
+        labelOffset = MAX(side + 3.0, labelFrame.origin.y);
+    }
+    title.frame = CGRectMake((CGRectGetWidth(frame)-MAX(side,title.bounds.size.width))/2.0,
+                             labelOffset, MAX(side,title.bounds.size.width), title.bounds.size.height);
+    [button addSubview:title];
+    [button addTarget:[AACStopButtonTarget shared] action:@selector(tapped) forControlEvents:UIControlEventTouchUpInside];
+    button.accessibilityLabel = active ? @"停止插件播放，恢复麦克风，人工接管通话" : @"插件已停止或尚未播放";
+
+    AACOriginalAddControl = add;
+    AACOriginalAddLabel = label;
+    AACOriginalAddControlWasHidden = add.hidden;
+    AACOriginalAddLabelWasHidden = label.hidden;
+    [add.superview addSubview:button];
+    add.hidden = YES;
+    if (label && ![label isDescendantOfView:add]) label.hidden = YES;
+    AACStopButton = button;
+    AACStopButtonCircle = circle;
+    AACNativeStopCircleView = nil;
+    AACLog([NSString stringWithFormat:@"通话界面：已用同尺寸插件按钮覆盖原生控制槽位，size=%.1f", side]);
+    AACUpdateStopButtonAppearance();
+}
+
+static void AACInstallNativeStopOverlay(void) {
+    UIViewController *controller = AACNativeControlsController;
+    if (!controller.isViewLoaded || !controller.view.window || AACStopButton) return;
+    // Ensure the replacement symbol exists before searching the native button hierarchy.
+    AACNativeStopControlImage();
+    UIControl *control = AACFindNativeStopControl(controller.view);
+    if (!control) return;
+    UILabel *label = AACFindNativeStopLabelNearControl(controller.view, control);
+    AACInstallStopOverlayReplacingControl(control, label);
 }
 
 static void AACInstallStopButtonInView(UIView *root) {
@@ -864,82 +1029,7 @@ static void AACInstallStopButtonInView(UIView *root) {
             }
         }
     }
-    if (!add || !add.superview || !add.window) return;
-    // Control accessibility and title labels are frequently exposed in different sibling views.
-    if (!label) {
-        NSMutableArray<UIView *> *labels = [NSMutableArray arrayWithObject:root];
-        NSUInteger checks = 0;
-        while (labels.count && checks++ < 4000) {
-            UIView *v = labels.firstObject;
-            [labels removeObjectAtIndex:0];
-            if ([v isKindOfClass:UILabel.class] && AACLabelIsAdd(((UILabel *)v).text)) {
-                CGRect vf = [root convertRect:add.bounds fromView:add];
-                CGRect lf = [root convertRect:v.bounds fromView:v];
-                if (fabs(CGRectGetMidX(vf)-CGRectGetMidX(lf)) < 35 &&
-                    CGRectGetMinY(lf) >= CGRectGetMinY(vf) &&
-                    CGRectGetMinY(lf)-CGRectGetMaxY(vf) < 35) {
-                    label = (UILabel *)v;
-                    break;
-                }
-            }
-            for (UIView *child in v.subviews) [labels addObject:child];
-        }
-    }
-    CGRect frame = add.frame;
-    CGFloat side = MIN(CGRectGetWidth(frame), CGRectGetHeight(frame));
-    if (side < 44 || side > 150) return;
-    // Same coordinates/diameter as the original system button, never a hardcoded 64pt bubble.
-    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
-    button.frame = frame;
-    button.autoresizingMask = add.autoresizingMask;
-    button.backgroundColor = UIColor.clearColor;
-    button.clipsToBounds = NO;
-    CGFloat circleY = 0;
-    UIView *circle = [[UIView alloc] initWithFrame:CGRectMake((frame.size.width-side)/2.0, circleY, side, side)];
-    circle.backgroundColor = (AACPlaybackActive && !AACStopPressed) ? AACStopActiveRed() : [UIColor colorWithWhite:0.85 alpha:0.20];
-    circle.layer.cornerRadius = side/2.0;
-    circle.userInteractionEnabled = NO;
-    [button addSubview:circle];
-    button.accessibilityLabel = @"停止插件播放，恢复麦克风，人工接管通话";
-    [button addTarget:[AACStopButtonTarget shared] action:@selector(tapped) forControlEvents:UIControlEventTouchUpInside];
-
-    CGFloat iconSide = side * 0.33;
-    UIView *icon = [[UIView alloc] initWithFrame:CGRectMake((side-iconSide)/2.0,
-                                                           (side-iconSide)/2.0,
-                                                           iconSide, iconSide)];
-    icon.backgroundColor = UIColor.whiteColor;
-    icon.layer.cornerRadius = iconSide * 0.14;
-    icon.userInteractionEnabled = NO;
-    [circle addSubview:icon];
-
-    // If original label is outside UIControl, reuse its position and typography.
-    // Otherwise place our own title below the native-size circle.
-    UILabel *title = [[UILabel alloc] init];
-    title.text = @"停止";
-    title.textColor = UIColor.whiteColor;
-    title.font = label.font ?: [UIFont systemFontOfSize:14 weight:UIFontWeightRegular];
-    title.textAlignment = NSTextAlignmentCenter;
-    title.userInteractionEnabled = NO;
-    [title sizeToFit];
-    CGFloat labelOffset = side + 8;
-    if (label && label.superview) {
-        CGRect labelFrame = [add convertRect:label.bounds fromView:label];
-        labelOffset = MAX(side+3, labelFrame.origin.y);
-    }
-    title.frame = CGRectMake((frame.size.width-MAX(side,title.bounds.size.width))/2.0,
-                             labelOffset, MAX(side,title.bounds.size.width), title.bounds.size.height);
-    [button addSubview:title];
-    [add.superview addSubview:button];
-    AACOriginalAddControl = add;
-    AACOriginalAddLabel = label;
-    AACOriginalAddControlWasHidden = add.hidden;
-    AACOriginalAddLabelWasHidden = label.hidden;
-    add.hidden = YES;
-    if (label && ![label isDescendantOfView:add]) label.hidden = YES;
-    AACStopButton = button;
-    AACStopButtonCircle = circle;
-    AACLog([NSString stringWithFormat:@"通话界面：原生“添加”已替换为同尺寸停止按钮，size=%.1f", side]);
-    AACUpdateStopButtonAppearance();
+    AACInstallStopOverlayReplacingControl(add, label);
 }
 
 static void AACScanForInCallUI(void) {
@@ -958,10 +1048,14 @@ static void AACScanForInCallUI(void) {
         return; // 禁止通过按钮扫描强行关闭系统拨号盘。
     }
     if (AACNativeHooksInstalled && AACNativeAddType != ULLONG_MAX) {
-        // 原生按钮直接由系统管理；按播放状态将圆形背景切换为红色/系统原始灰色。
-        if (AACStopButton) AACResetStopButton();
+        // The private native control API reliably supplies the slot and label, but some
+        // iOS builds render its circle with a material/effect view that ignores backgroundColor.
+        // Overlay only that exact native slot so the red/gray state is deterministic.
+        if (AACStopButton && (!AACStopButton.superview || !AACStopButton.window)) AACResetStopButton();
+        if (!AACStopButton) AACInstallNativeStopOverlay();
         AACUpdateStopButtonAppearance();
-        if (AACNativeControlsAreVisible()) AACPostDarwinNotification(kAACIntegratedReadyNotification);
+        if (AACStopButton && AACStopButton.window) AACPostDarwinNotification(kAACIntegratedReadyNotification);
+        else if (AACNativeControlsAreVisible()) AACPostDarwinNotification(kAACIntegratedReadyNotification);
         return;
     }
     if (AACStopButton && (!AACStopButton.superview || !AACStopButton.window)) AACResetStopButton();
@@ -976,6 +1070,9 @@ static void AACScanForInCallUI(void) {
             if (AACStopButton) break;
         }
     }
+    // Refresh from the shared playback-state file on every scan, even if the one-shot
+    // playback-start notification was missed by a late InCallService injection.
+    AACUpdateStopButtonAppearance();
     if (AACStopButton && AACStopButton.window && !AACStopButton.hidden) {
         // Heartbeat allows SpringBoard to suppress fallback overlay only while the system slot works.
         AACPostDarwinNotification(kAACIntegratedReadyNotification);
@@ -994,6 +1091,7 @@ static void AACPlaybackStartedCallback(CFNotificationCenterRef center, void *obs
         AACPlaybackActive = YES;
         AACStopPressed = NO;
         AACUserStopped = NO;
+        AACWritePlaybackState(YES, NO);
         AACUpdateStopButtonAppearance();
     });
 }
@@ -1005,6 +1103,7 @@ static void AACStopUplinkNotificationCallback(CFNotificationCenterRef center, vo
             AACPlaybackActive = NO;
             AACStopPressed = YES;
             AACUserStopped = YES;
+            AACWritePlaybackState(NO, YES);
             AACUpdateStopButtonAppearance();
         }
         AACStopUplinkAudio();
@@ -1049,11 +1148,105 @@ static id AACCallCenter(void) {
     if (center) AACLoggedCallCenterUnavailable = NO;
     return center;
 }
+
+static BOOL AACCallObserverAnyLiveCall(id observer) {
+    NSArray *calls = AACSend(observer, @"calls");
+    if (![calls isKindOfClass:NSArray.class]) return NO;
+    for (id call in calls) {
+        SEL endedSel = NSSelectorFromString(@"hasEnded");
+        BOOL ended = [call respondsToSelector:endedSel] ? ((BOOL (*)(id, SEL))objc_msgSend)(call, endedSel) : NO;
+        if (!ended) return YES;
+    }
+    return NO;
+}
+
+static void AACHandleCallEndedImmediately(void) {
+    BOOL hadPluginUI = AACFloatingStop != nil;
+    BOOL hadPlayback = AACUplinkLooping || AACPlaybackActive || hadPluginUI;
+    AACCallObserverHasLiveCall = NO;
+    AACCallObserverSawLiveCall = NO;
+    AACCallObserverEndHandled = YES;
+    AACLastScheduledToken = nil;
+    AACLastAnsweredToken = nil;
+    AACPlaybackActive = NO;
+    AACStopPressed = YES;
+    AACUserStopped = YES;
+    AACUplinkLooping = NO;
+    AACAudioRouteGeneration++;
+    AACWritePlaybackState(NO, YES);
+    AACShowFloatingStop(NO); // remove from the window now; do not leave it on the lock screen
+    if (!hadPlayback) return;
+    AACLog(@"CXCallObserver 检测到通话结束：立即停止插件、清理悬浮按钮并同步停止状态");
+    AACPostDarwinNotification(kAACStopUplinkNotification);
+    AACStopUplinkAudio();
+    AACStopUplinkAudioTTS();
+    AACRequestTRBridgeStop();
+}
+
+static void AACHandleCallObserverChange(id observer, id changedCall);
+@interface AACCallObserverDelegate : NSObject
+- (void)callObserver:(id)observer callChanged:(id)call;
+@end
+@implementation AACCallObserverDelegate
+- (void)callObserver:(id)observer callChanged:(id)call {
+    AACHandleCallObserverChange(observer, call);
+}
+@end
+
+static void AACHandleCallObserverChange(id observer, id changedCall) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        BOOL anyLive = AACCallObserverAnyLiveCall(observer);
+        if (anyLive) {
+            AACCallObserverHasLiveCall = YES;
+            AACCallObserverSawLiveCall = YES;
+            AACCallObserverEndHandled = NO;
+            AACRefreshFloatingStopVisibility();
+            return;
+        }
+        SEL endedSel = NSSelectorFromString(@"hasEnded");
+        BOOL changedEnded = [changedCall respondsToSelector:endedSel] ? ((BOOL (*)(id, SEL))objc_msgSend)(changedCall, endedSel) : NO;
+        if (AACCallObserverSawLiveCall && (changedEnded || !anyLive) && !AACCallObserverEndHandled) {
+            AACHandleCallEndedImmediately();
+        } else {
+            AACCallObserverHasLiveCall = NO;
+            AACRefreshFloatingStopVisibility();
+        }
+    });
+}
+
+static void AACInstallCallObserver(void) {
+    if (AACCallObserverInstance) return;
+    dlopen("/System/Library/Frameworks/CallKit.framework/CallKit", RTLD_LAZY | RTLD_LOCAL);
+    Class cls = NSClassFromString(@"CXCallObserver");
+    if (!cls) {
+        static BOOL loggedNoCallKit = NO;
+        if (!loggedNoCallKit) { loggedNoCallKit = YES; AACLog(@"CallKit CXCallObserver 不可用；保留轮询式结束检测"); }
+        return;
+    }
+    id observer = ((id (*)(id, SEL))objc_msgSend)((id)cls, @selector(new));
+    if (!observer) return;
+    AACCallObserverInstance = observer;
+    AACCallObserverDelegateInstance = [AACCallObserverDelegate new];
+    SEL setDelegateQueue = NSSelectorFromString(@"setDelegate:queue:");
+    if ([observer respondsToSelector:setDelegateQueue]) {
+        ((void (*)(id, SEL, id, dispatch_queue_t))objc_msgSend)(observer, setDelegateQueue,
+                                                               AACCallObserverDelegateInstance,
+                                                               dispatch_get_main_queue());
+    } else {
+        AACLog(@"CXCallObserver 不支持 setDelegate:queue:，保留轮询式结束检测");
+    }
+    if (AACCallObserverAnyLiveCall(observer)) {
+        AACCallObserverHasLiveCall = YES;
+        AACCallObserverSawLiveCall = YES;
+    }
+    AACLog(@"已安装持久 CXCallObserver：用于即时检测挂断并清理悬浮停止按钮");
+}
 __attribute__((unused)) static NSUInteger callsCountSafe(id center);
 static void AACPollIncomingCall(void);
 static void AACStartPolling(void) {
     if (AACTimerRunning) return;
     AACTimerRunning = YES;
+    AACInstallCallObserver();
     dispatch_async(dispatch_get_main_queue(), ^{ AACPollIncomingCall(); });
 }
 static NSUInteger callsCountSafe(id center) {
@@ -1079,24 +1272,21 @@ static void AACPollIncomingCall(void) {
             // 通话结束检测：改用 CallKit 的 CXCall 状态，而不是轮询 incomingCall/currentCall。
             // 之前用轮询判断会在接听后误判（incomingCall 变空），导致播放一次就被停。
             if (AACUplinkLooping && !call) {
-                Class obsCls = NSClassFromString(@"CXCallObserver");
-                if (obsCls) {
-                    id obs = AACSend((id)obsCls, @"new") ?: ((id (*)(id, SEL))objc_msgSend)((id)obsCls, @selector(new));
-                    NSArray *calls = AACSend(obs, @"calls");
-                    BOOL anyLive = NO;
-                    if ([calls isKindOfClass:NSArray.class]) {
-                        for (id c in calls) {
-                            SEL endSel = NSSelectorFromString(@"hasEnded");
-                            BOOL ended = [c respondsToSelector:endSel] ? ((BOOL (*)(id, SEL))objc_msgSend)(c, endSel) : NO;
-                            if (!ended) { anyLive = YES; break; }
-                        }
-                    }
+                if (!AACCallObserverInstance) AACInstallCallObserver();
+                id obs = AACCallObserverInstance;
+                if (obs) {
                     static NSInteger liveMiss = 0;
-                    if (anyLive) liveMiss = 0; else liveMiss++;
-                    if (liveMiss >= 10) {   // 约 5 秒确实没有活动通话
-                        AACLog(@"CallKit 确认无活动通话，停止上行朗读并同步通话界面停止状态");
-                        AACPostDarwinNotification(kAACStopUplinkNotification);
-                        AACStopUplinkAudioTTS();
+                    BOOL anyLive = AACCallObserverAnyLiveCall(obs);
+                    if (anyLive) {
+                        liveMiss = 0;
+                        AACCallObserverHasLiveCall = YES;
+                        AACCallObserverSawLiveCall = YES;
+                    } else {
+                        liveMiss++;
+                    }
+                    if (liveMiss >= 10) {   // Observer 回调失效时的兜底；正常情况由 callChanged 立即处理
+                        AACLog(@"CXCallObserver 连续未发现活动通话：执行挂断清理兜底");
+                        AACHandleCallEndedImmediately();
                         liveMiss = 0;
                     }
                 }
@@ -1141,6 +1331,9 @@ static void AACPollIncomingCall(void) {
             }
         }
     }
+    AACHeartbeatPlaybackState();
+    // Retry observer initialization if CallKit was not loaded at SpringBoard startup.
+    if (!AACCallObserverInstance) AACInstallCallObserver();
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ AACPollIncomingCall(); });
 }
 
@@ -1293,17 +1486,19 @@ static BOOL AACKeypadConfirmedHidden(void) {
 }
 static void AACRefreshFloatingStopVisibility(void) {
     if (!AACFloatingStop) return;
-    BOOL visible = AACUplinkLooping && !AACUserStopped && !AACIntegratedUIFresh() && AACKeypadConfirmedHidden();
+    BOOL visible = AACUplinkLooping && !AACUserStopped && AACCallObserverHasLiveCall &&
+                   !AACIntegratedUIFresh() && AACKeypadConfirmedHidden();
     AACFloatingStop.hidden = !visible;
 }
 static void AACShowFloatingStop(BOOL show) {
-    dispatch_async(dispatch_get_main_queue(), ^{
+    void (^update)(void) = ^{
         if (!show) {
-            if (AACFloatingStop) AACFloatingStop.hidden = YES;
+            [AACFloatingStop removeFromSuperview];
+            AACFloatingStop = nil;
             return;
         }
         // A native-size integrated stop button takes precedence over any overlay.
-        if (AACIntegratedUIFresh() || !AACKeypadConfirmedHidden()) {
+        if (!AACCallObserverHasLiveCall || AACIntegratedUIFresh() || !AACKeypadConfirmedHidden()) {
             AACRefreshFloatingStopVisibility();
             return;
         }
@@ -1340,7 +1535,9 @@ static void AACShowFloatingStop(BOOL show) {
             AACLog(@"InCallService 尚未报告集成停止按钮，启用备用浮层");
         }
         AACRefreshFloatingStopVisibility();
-    });
+    };
+    if ([NSThread isMainThread]) update();
+    else dispatch_async(dispatch_get_main_queue(), update);
 }
 static void AACIntegratedReadyCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -1392,7 +1589,7 @@ static void AACKeypadStateCallback(CFNotificationCenterRef center, void *observe
             NSNumber *type = n.userInfo[AVAudioSessionInterruptionTypeKey];
             if (type.unsignedIntegerValue == AVAudioSessionInterruptionTypeEnded) AACAudioRouteChanged(n);
         }];
-        AACLog(@"AutoAnswerAudio v2.3.0：停止按钮播放时红色、停止后恢复系统灰色");
+        AACLog(@"AutoAnswerAudio v2.4.0：跨进程同步停止按钮红灰状态，挂断时立即清理悬浮层");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }

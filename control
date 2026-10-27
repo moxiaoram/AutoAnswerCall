@@ -1,8 +1,8 @@
 Package: com.autoanswer.call
 Name: AutoAnswerAudio
-Version: 2.3.0
+Version: 2.4.0
 Architecture: iphoneos-arm64e
-Description: Experimental RootHide call automation with native stop button active/stopped visual states; uplink playback is unverified
+Description: Experimental RootHide call automation with native stop button red/gray state sync and immediate call-end overlay cleanup; uplink playback is unverified
 Maintainer: AutoAnswerAudio
 Author: AutoAnswerAudio
 Section: Tweaks
