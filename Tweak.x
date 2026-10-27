@@ -1392,7 +1392,7 @@ static void AACKeypadStateCallback(CFNotificationCenterRef center, void *observe
             NSNumber *type = n.userInfo[AVAudioSessionInterruptionTypeKey];
             if (type.unsignedIntegerValue == AVAudioSessionInterruptionTypeEnded) AACAudioRouteChanged(n);
         }];
-        AACLog(@"AutoAnswerAudio v2.1.4：停止按钮播放时红色、停止后恢复系统灰色");
+        AACLog(@"AutoAnswerAudio v2.3.0：停止按钮播放时红色、停止后恢复系统灰色");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }
