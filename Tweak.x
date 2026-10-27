@@ -19,6 +19,7 @@ static BOOL AACTimerRunning = NO;
 static BOOL AACLoggedCallCenterUnavailable = NO;
 static id AACUplinkPlayer = nil; // Must be a TrollRecorder TRAudioPlayer instance, not plain AVAudioPlayer.
 static NSString * const kAACStopUplinkNotification = @"com.autoanswer.call.stopUplinkPlayback";
+static NSString * const kAACMuteNotification = @"com.autoanswer.call.setMicMuted";   // InCallService 侧执行真正的静音
 // InCallService -> SpringBoard UI state. Darwin notifications are process-wide signals, not UI objects.
 static NSString * const kAACIntegratedReadyNotification = @"com.autoanswer.call.inCallStopReady";
 static NSString * const kAACKeypadShownNotification = @"com.autoanswer.call.keypadShown";
@@ -342,7 +343,7 @@ static void AACStartUplinkAudio(void) {
         AACLog(@"上行：已调用 speakUtterance（对方是否能听到需实际通话验证）");
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (AACUplinkLooping) {
-                AACSetUplinkMuted(YES);      // 播放期间静音麦克风
+                AACRequestMicMute(YES);      // 请求 InCallService 静音麦克风
                 AACShowFloatingStop(YES);    // 显示悬浮停止按钮
             }
         });
@@ -353,6 +354,14 @@ static void AACStartUplinkAudio(void) {
 
 // 麦克风静音控制：播放上行朗读期间静音麦克风，避免对方听到本机环境音。
 static BOOL AACMutedUplink = NO;
+
+// SpringBoard 里拿不到 InCallService 的 TUCall，因此通过 Darwin 通知让 InCallService 执行静音。
+extern void AACPostDarwinNotification(NSString *name);
+static void AACRequestMicMute(BOOL muted) {
+    AACPostDarwinNotification(muted ? @"com.autoanswer.call.micMute.on" : @"com.autoanswer.call.micMute.off");
+    AACLog([NSString stringWithFormat:@"麦克风：已向 InCallService 发送%@请求", muted ? @"静音" : @"恢复"]);
+}
+
 static void AACSetUplinkMuted(BOOL muted) {
     id center = AACCallCenter();
     id call = AACSend(center, @"currentCall");
@@ -372,7 +381,7 @@ static void AACStopUplinkAudioTTS(void) {
     AACUserStopped = YES;
     AACUplinkLooping = NO;
     AACAudioRouteGeneration++;  // cancel pending speaker/route recovery
-    if (AACMutedUplink) AACSetUplinkMuted(NO);   // 恢复麦克风
+    AACRequestMicMute(NO);                        // 请求恢复麦克风
     AACShowFloatingStop(NO);                     // 隐藏悬浮按钮
     AACLog(@"上行：收到停止请求，结束循环并把麦克风交还人工");
     @try {
@@ -820,6 +829,36 @@ static void AACPlaybackStartedCallback(CFNotificationCenterRef center, void *obs
     });
 }
 
+static void AACMicMuteCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    BOOL mute = CFStringFind(name, CFSTR(".on"), 0).location != kCFNotFound;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // InCallService 内：直接从 CallKit/TU 取当前通话并静音
+        Class obsCls = NSClassFromString(@"CXCallObserver");
+        id target = nil;
+        if (obsCls) {
+            id obs = ((id (*)(id, SEL))objc_msgSend)((id)obsCls, @selector(new));
+            NSArray *calls = AACSend(obs, @"calls");
+            for (id c in calls) {
+                SEL e = NSSelectorFromString(@"hasEnded");
+                BOOL ended = [c respondsToSelector:e] ? ((BOOL (*)(id, SEL))objc_msgSend)(c, e) : NO;
+                if (!ended) { target = c; break; }
+            }
+        }
+        AACLog([NSString stringWithFormat:@"InCallService：收到%@请求，目标=%@", mute ? @"静音" : @"恢复", target ? NSStringFromClass([target class]) : @"nil"]);
+        SEL sel = NSSelectorFromString(@"setUplinkMuted:");
+        if (target && [target respondsToSelector:sel]) {
+            @try {
+                ((void (*)(id, SEL, BOOL))objc_msgSend)(target, sel, mute);
+                AACLog([NSString stringWithFormat:@"InCallService：麦克风已%@", mute ? @"静音" : @"恢复"]);
+            } @catch (NSException *ex) {
+                AACLog([NSString stringWithFormat:@"InCallService：静音异常 %@", ex.reason ?: @""]);
+            }
+        } else {
+            AACLog(@"InCallService：静音失败——无目标或无 setUplinkMuted:");
+        }
+    });
+}
+
 static void AACStopUplinkNotificationCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
         AACStopUplinkAudio();
@@ -1185,6 +1224,8 @@ static void AACKeypadStateCallback(CFNotificationCenterRef center, void *observe
         // 通话界面进程：负责接管通话界面按钮
         if ([bundle isEqualToString:@"com.apple.InCallService"] || [process isEqualToString:@"InCallService"]) {
             CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACStopUplinkNotificationCallback, (__bridge CFStringRef)kAACStopUplinkNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACMicMuteCallback, CFSTR("com.autoanswer.call.micMute.on"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACMicMuteCallback, CFSTR("com.autoanswer.call.micMute.off"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
             CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, AACPlaybackStartedCallback, (__bridge CFStringRef)kAACPlaybackStartedNotification, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
             AACLog(@"InCallService 已加载：优先 Hook 原生添加按钮（标题/图标/点击），失效时使用旧版视图兼容模式");
             AACInCallScanStarted = YES;
@@ -1206,7 +1247,7 @@ static void AACKeypadStateCallback(CFNotificationCenterRef center, void *observe
             NSNumber *type = n.userInfo[AVAudioSessionInterruptionTypeKey];
             if (type.unsignedIntegerValue == AVAudioSessionInterruptionTypeEnded) AACAudioRouteChanged(n);
         }];
-        AACLog(@"AutoAnswerAudio v2.2.0：原生添加按钮 Hook/拨号盘避让/停止交还麦克风");
+        AACLog(@"AutoAnswerAudio v2.2.1：原生添加按钮 Hook/拨号盘避让/停止交还麦克风");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }
