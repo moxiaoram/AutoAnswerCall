@@ -1,6 +1,6 @@
 Package: com.autoanswer.call
 Name: AutoAnswerAudio
-Version: 2.4.0
+Version: 2.5.0
 Architecture: iphoneos-arm64e
 Description: Experimental RootHide call automation with native stop button red/gray state sync and immediate call-end overlay cleanup; uplink playback is unverified
 Maintainer: AutoAnswerAudio

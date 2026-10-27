@@ -1589,7 +1589,7 @@ static void AACKeypadStateCallback(CFNotificationCenterRef center, void *observe
             NSNumber *type = n.userInfo[AVAudioSessionInterruptionTypeKey];
             if (type.unsignedIntegerValue == AVAudioSessionInterruptionTypeEnded) AACAudioRouteChanged(n);
         }];
-        AACLog(@"AutoAnswerAudio v2.4.0：跨进程同步停止按钮红灰状态，挂断时立即清理悬浮层");
+        AACLog(@"AutoAnswerAudio v2.5.0：跨进程同步停止按钮红灰状态，挂断时立即清理悬浮层");
         // 探针已关闭（回退版）：确认接听恢复正常后再单独启用
         AACStartPolling();
     }
