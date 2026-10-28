@@ -1,0 +1,23 @@
+# AwemeVision 2.0.15 offline verification
+Base: 2.0.14, targeting iOS 17.3 / RELAXIN 0.4.8 / RootHide / Douyin 40.8.0
+Verification scope: sources/config only; iOS build and live video/API tests UNAVAILABLE.
+External network: documented TikHub original-quality endpoint; no token for authenticated live verification.
+The legacy public parsing demo was NOT auto-enabled: endpoint availability unverified.
+Settings: original-quality token stored in Keychain; no bundled token.
+Home long press: extra real plugin actions + delayed native action merge.
+Tab bar: constrained player underlay condition adjusted and optional UI layout diagnostics included.
+GitHub Actions workflow YAML: PASS
+Source checks:
+- check_208_ui_regressions.py: PASS — 12/12
+- check_208_visual_native.py: PASS — 11/11
+- check_209_ui_regressions.py: PASS — 14/14 checks passed (source only)
+- check_210_visual_regressions.py: PASS — 14/14 source-only assertions pass
+- check_211_longpress_speed.py: PASS — 10/10 checks passed (static only)
+- check_212_tabbar_regression.py: PASS — PASS 11/11 2.0.12 tab-bar source checks
+- check_213_settings_glass.py: PASS — PASS 12/12 root UI and comment-glass source checks (not a device test)
+- check_214_video_resolver.py: PASS — 13/13 checks passed (source only)
+- check_215_panel_original.py: PASS — 2.0.15 offline source checks passed; third-party API live availability NOT verified.
+- check_build_toolchain.py: PASS — 0 preflight failure(s)
+- check_interaction_regression.py: PASS — 17/17
+- check_relaxin_source.py: PASS — 43/43 checks passed (static only)
+- check_visual_effect_regression.py: PASS — PASS 12/12: visual effect regression guards (source-only)

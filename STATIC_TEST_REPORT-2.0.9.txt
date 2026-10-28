@@ -1,0 +1,15 @@
+影流助手 2.0.9 静态测试报告
+
+check_relaxin_source.py: PASS
+check_build_toolchain.py: PASS
+check_interaction_regression.py: PASS
+check_visual_effect_regression.py: PASS
+check_208_visual_native.py: PASS
+check_208_ui_regressions.py: PASS
+check_209_ui_regressions.py: PASS
+GitHub Actions YAML: PASS
+Python scripts syntax: PASS
+DYYY.xm delimiter check: PASS
+ZIP integrity: pending
+
+说明：不包含 Theos/macOS 真实编译，也不包含真机抖音视图验证。

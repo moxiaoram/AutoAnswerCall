@@ -1,0 +1,19 @@
+# 2.0.14 静态检查结果
+
+以下检查只确认源码和 CI 配置，并非真机验证，也不意味着已实际编译 DEB。
+
+- PASS: check_208_ui_regressions.py — 12/12
+- PASS: check_208_visual_native.py — 11/11
+- PASS: check_209_ui_regressions.py — 14/14 checks passed (source only)
+- PASS: check_210_visual_regressions.py — 14/14 source-only assertions pass
+- PASS: check_211_longpress_speed.py — 10/10 checks passed (static only)
+- PASS: check_212_tabbar_regression.py — PASS 11/11 2.0.12 tab-bar source checks
+- PASS: check_213_settings_glass.py — PASS 12/12 root UI and comment-glass source checks (not a device test)
+- PASS: check_214_video_resolver.py — 13/13 checks passed (source only)
+- PASS: check_build_toolchain.py — 0 preflight failure(s)
+- PASS: check_interaction_regression.py — 17/17
+- PASS: check_relaxin_source.py — 43/43 checks passed (static only)
+- PASS: check_visual_effect_regression.py — PASS 12/12: visual effect regression guards (source-only)
+- GitHub Actions YAML 解析: PASS
+- 用户上传的第三方备份: 只有 Base64 高熵二进制，未找到可核实解析 API
+- 不包含未知第三方 API、登录令牌或私人配置

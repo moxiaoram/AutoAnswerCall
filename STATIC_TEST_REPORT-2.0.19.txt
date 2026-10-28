@@ -1,0 +1,23 @@
+AwemeVision 2.0.19 / RELAXIN RootHide / Static validation
+Date: 2026-10-28
+Pass: 17/17 Python regression scripts, GitHub Actions YAML parse, control/strict-link architecture.
+NO macOS Theos/Logos DEB compilation or physical iPhone 14 Pro Max test was performed.
+The transparent footer is a guarded source-level fix requiring real device validation.
+
+check_208_ui_regressions.py: PASS — 12/12
+check_208_visual_native.py: PASS — 11/11
+check_209_ui_regressions.py: PASS — 14/14 checks passed (source only)
+check_210_visual_regressions.py: PASS — 14/14 source-only assertions pass
+check_211_longpress_speed.py: PASS — 10/10 checks passed (static only)
+check_212_tabbar_regression.py: PASS — PASS 11/11 2.0.12 tab-bar source checks
+check_213_settings_glass.py: PASS — PASS 12/12 root UI and comment-glass source checks (not a device test)
+check_214_video_resolver.py: PASS — 13/13 checks passed (source only)
+check_215_panel_original.py: PASS — 2.0.19 offline source checks passed; third-party API live availability NOT verified.
+check_216_feed_icons.py: PASS — PASS: native-sized bitmap rendering, state preservation, settings toggle, user priority, strict linkage
+check_217_follow_star.py: PASS — PASS 16/16 follow-star checks
+check_218_panel_settings.py: PASS — 19/19 checks passed (static only)
+check_219_stable_tab_underlay.py: PASS — 20/20 checks passed (static only)
+check_build_toolchain.py: PASS — 0 preflight failure(s)
+check_interaction_regression.py: PASS — 17/17
+check_relaxin_source.py: PASS — 43/43 checks passed (static only)
+check_visual_effect_regression.py: PASS — PASS 12/12: visual effect regression guards (source-only)
