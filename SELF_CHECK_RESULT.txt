@@ -1,0 +1,25 @@
+AwemeVision 2.0.2 — regression review against last-known-working 1.7
+Device target: iPhone15,3 / iOS 17.3 / RELAXIN RootHide White List
+
+SOURCE CHECK: 36/36 PASS
+WORKFLOW: YAML parsed, one job, eight steps PASS
+MAKE CONFIG: compat/legacy, full/legacy, compat/new, probe/legacy parsed by GNU Make PASS
+PYTHON CHECKER: py_compile PASS
+DEB VERIFIER: synthetic structure harness passed both loader filenames
+ZIP: see final packaging audit
+
+UNTESTED: Logos via THEOS SDK, real clang compile, full link, actual DEB build, device injection and runtime behavior.
+
+DEFAULT PROFILE:
+- Independent package ID com.local.awemevision.relaxin
+- LEGACY_LOADER_NAME=1 -> DYYY.dylib / DYYY.plist (name reused only for loading compatibility)
+- AWEMEVISION_STARTUP=compat -> no global default %init; (mirrors 1.7 startup)
+- RootHide package architecture iphoneos-arm64e; binary arm64; target iOS 17.3
+- Bundles-only filter com.ss.iphone.ugc.Aweme and lite
+- New ABTest remote update removed; legacy update channel is not used
+
+FAILURE TRIAGE:
+- If no early marker, check device whitelist, actual DEB files and dyld errors.
+- If early marker exists and UI missing, check group hooks and startup log.
+- If compat works but full fails, audit global default Hooks introduced in 1.8.
+- If legacy loader works and new loader fails, review device whitelist/loader name association.

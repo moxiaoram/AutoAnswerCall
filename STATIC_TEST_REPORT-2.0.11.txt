@@ -1,0 +1,19 @@
+# AwemeVision 2.0.11 — 本地静态自检
+
+基础来源：AwemeVision 2.0.10 完整源码（非 1.7）。只修改长按手势区域过滤、版本号及回归审计。
+
+- check_relaxin_source.py: 43/43 通过
+- check_interaction_regression.py: 17/17 通过
+- check_211_longpress_speed.py: 10/10 通过
+- check_208_ui_regressions.py: 12/12 通过
+- check_208_visual_native.py: 11/11 通过
+- check_209_ui_regressions.py: 14/14 通过
+- check_210_visual_regressions.py: 14/14 通过
+- check_visual_effect_regression.py: 12/12 通过
+- check_build_toolchain.py: 0 preflight failure(s)
+- GitHub Actions build.yml: YAML 解析通过
+- Python 校验脚本语法：通过
+
+重点检查：视频两侧屏幕区域不启动插件长按识别器；视频中间能继续启动；原生倍速 Hook、保存/解析和完整 RootHide 严格链接配置仍在。
+
+注意：以上全部是源码静态检查，不代表实际 macOS Theos 编译成功，也不代表 iOS 17.3 / RELAXIN / 抖音40.8.0 真机触摸行为已验证。
