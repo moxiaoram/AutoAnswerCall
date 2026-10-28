@@ -1,0 +1,35 @@
+AwemeVision 2.0.0 — SELF-CHECK (SOURCE ONLY)
+Target: RELAXIN v0.4.8 / RootHide / iOS 17.3 (21D50) / iPhone15,3 / Douyin 40.8.0
+Status: SOURCE AUDIT PASSED — NO REAL COMPILATION, NO DEB, NO DEVICE TEST
+Workflow YAML: parsed successfully; macos-15; artifact upload enabled
+Remote updater: old default GitHub updater, startup fetch, manual check, UI entries absent
+Metadata: independent package ID / independent dylib & filter name / explicit old package conflict
+File layout: separate Documents/AwemeVision for local configs
+
+PASS RootHide-only build
+PASS app dylib arm64
+PASS RootHide deb architecture
+PASS iOS 17.3 deployment
+PASS independent tweak binary
+PASS independent Debian identity
+PASS Debian architecture
+PASS prevent old/new concurrent injection; no old package identity
+PASS iOS 17.3 version range
+PASS Douyin process filter
+PASS GitHub Actions rootHide theos
+PASS GitHub Actions real .deb validation
+PASS configured 31 source files exist
+PASS no abandoned old Makefile build variables
+PASS old remote updater absent: DYYY_DEFAULT_ABTEST_URL
+PASS old remote updater absent: checkForRemoteConfigUpdate
+PASS old remote updater absent: DYYYCheckUpdate
+PASS old remote updater absent: DYYYRemoteConfigURL
+PASS old remote updater absent: DYYY_REMOTE_MODE_STRING
+PASS old remote updater absent: DYYY_REMOTE_CONFIG_FLAG_KEY
+PASS old remote updater absent: DYYY_REMOTE_CONFIG_CHANGED_NOTIFICATION
+PASS old remote updater absent: latest/download/ABTestDataPatch_A.json
+PASS ABTest hook does not fetch update URL
+PASS settings show current version
+PASS obsolete DYYY filter not packaged
+PASS balanced blocks in DYYYABTestHook.xm
+PASS balanced blocks in DYYYSettings.xm

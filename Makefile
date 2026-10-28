@@ -1,50 +1,70 @@
-TARGET := iphone:clang:latest:17.0
-ARCHS := arm64e
-THEOS_PACKAGE_SCHEME := roothide
-PACKAGE_VERSION := 2.5.0
-INSTALL_TARGET_PROCESSES := SpringBoard InCallService
+#
+#  DYYY
+#
+#  Copyright (c) 2024 huami. All rights reserved.
+#  Channel: @huamidev
+#  Created on: 2024/10/04
+#
+# 本地配置文件（可选）
+-include Makefile.local
+
+# 2.0.0: The target device is iPhone15,3 / iOS 17.3 / Relaxin v0.4.8.
+# Relaxin uses the RootHide packaging/injection scheme, *not* generic rootless.
+SCHEME ?= roothide
+ifneq ($(strip $(SCHEME)),roothide)
+  $(error This device-targeted release requires SCHEME=roothide; got '$(SCHEME)')
+endif
+ifneq ($(strip $(THEOS_PACKAGE_SCHEME)),)
+  ifneq ($(strip $(THEOS_PACKAGE_SCHEME)),roothide)
+    $(error RootHide build required: THEOS_PACKAGE_SCHEME must equal roothide)
+  endif
+endif
+override THEOS_PACKAGE_SCHEME := roothide
+export THEOS_PACKAGE_SCHEME
+
+# Third-party App Store app executable is arm64; Debian package arch is
+# iphoneos-arm64e for RootHide. Do not confuse the two architecture fields.
+ARCHS = arm64
+DEB_ARCH = iphoneos-arm64e
+TARGET = iphone:clang:latest:17.3
+$(info [AwemeVision 2.0.0] target: Relaxin v0.4.8 / iOS 17.3 / RootHide / arm64 dylib / iphoneos-arm64e deb)
+
+# 在GitHub Actions中运行时的特殊配置
+ifeq ($(GITHUB_ACTIONS),true)
+    export INSTALL = 0
+    export FINALPACKAGE = 1
+endif
+
+export DEBUG = 0
+INSTALL_TARGET_PROCESSES = Aweme
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME := AutoAnswerCall AutoAnswerTRBridge
-AutoAnswerCall_FILES := Tweak.x
-AutoAnswerCall_CFLAGS := -fobjc-arc
-AutoAnswerCall_FRAMEWORKS := Foundation UIKit AVFoundation
-# RootHide 运行时：系统进程（如 InCallService）注入时必须链接 libroothide，
-# 否则 dylib 在 .jbroot 沙盒外无法重定位（表现为"装了但不注入"）。
-# 注意：不加 -l 前缀解析失败时，直接写 .tbd 全路径。
-# 按 CallAssist 的方式链接 RootHide 运行时：
-# install-name 使用 @loader_path/.jbroot/... 相对路径，
-# 这样注入到系统进程（InCallService）时能正确重定向回 /var/jb。
-AutoAnswerCall_LDFLAGS := $(THEOS_PROJECT_DIR)/vendor/libroothide.tbd $(THEOS_PROJECT_DIR)/vendor/libsubstrate.tbd
-AutoAnswerCall_PLIST := AutoAnswerCall.plist
+TWEAK_NAME = AwemeVision
 
-AutoAnswerTRBridge_FILES := Tweak.x
-AutoAnswerTRBridge_CFLAGS := -fobjc-arc
-AutoAnswerTRBridge_FRAMEWORKS := Foundation UIKit AVFoundation
-AutoAnswerTRBridge_PLIST := AutoAnswerTRBridge.plist
+# Minimal injection self-test: build only a constructor marker, with no complex Logos hooks.
+# After testing: make clean && make package SCHEME=roothide (without PROBE_ONLY).
+ifeq ($(PROBE_ONLY),1)
+  AwemeVision_FILES = DYYYInjectionProbe.m
+  AwemeVision_CFLAGS = -fobjc-arc -w -DDYYY_PROBE_ONLY=1
+else
+  AwemeVision_FILES = DYYYInjectionProbe.m DYYY.xm DYYYFloatClearButton.xm DYYYFloatSpeedButton.m DYYYSettings.xm DYYYABTestHook.xm DYYYLongPressPanel.xm DYYYGridLongPressPanel.m DYYYImmersivePlaybackManager.m DYYYAutoNextManager.m DYYYAlbumThumbnailBar.m DYYYPhotoGalleryController.m DYYYSettingsHelper.m DYYYImagePickerDelegate.m DYYYBackupPickerDelegate.m DYYYSettingViewController.m DYYYSystemSettingsViewController.m DYYYBottomAlertView.m DYYYCustomInputView.m DYYYOptionsSelectionView.m DYYYIconOptionsDialogView.m DYYYAboutDialogView.m DYYYKeywordListView.m DYYYFilterSettingsView.m DYYYConfirmCloseView.m DYYYToast.m DYYYManager.m DYYYUtils.m CityManager.m AWMSafeDispatchTimer.m
+  AwemeVision_FILES += DYYY408Compatibility.m
+  AwemeVision_CFLAGS = -fobjc-arc -w
+endif
+AwemeVision_LDFLAGS = -weak_framework AVFAudio
+AwemeVision_FRAMEWORKS = CoreAudio ImageIO
+CXXFLAGS += -std=c++11
+CCFLAGS += -std=c++11
+AwemeVision_LOGOS_DEFAULT_GENERATOR = internal
 
-BUNDLE_NAME := AutoAnswerCallPrefs
-AutoAnswerCallPrefs_FILES := Preferences/AARootListController.m
-AutoAnswerCallPrefs_INFO_PLIST := Preferences/Resources/Info.plist
-AutoAnswerCallPrefs_RESOURCE_FILES := Preferences/Resources/Root.plist Preferences/Resources/icon.png Preferences/Resources/icon@2x.png Preferences/Resources/icon@3x.png
-AutoAnswerCallPrefs_FRAMEWORKS := UIKit Foundation AVFoundation
-AutoAnswerCallPrefs_PRIVATE_FRAMEWORKS := Preferences
-AutoAnswerCallPrefs_LDFLAGS := -F$(THEOS_PROJECT_DIR)/vendor
-AutoAnswerCallPrefs_INSTALL_PATH := /Library/PreferenceBundles
-AutoAnswerCallPrefs_CFLAGS := -fobjc-arc
+export THEOS_STRICT_LOGOS=0
+export ERROR_ON_WARNINGS=0
+export LOGOS_DEFAULT_GENERATOR=internal
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
-include $(THEOS_MAKE_PATH)/bundle.mk
-
-
-# RootHide 需要为每个 tweak 生成 .roothidepatch 符号链接，
-# 否则 dylib 装载后无法正确重定位（表现为"装了但完全不生效"）。
-after-stage::
-	@mkdir -p $(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries
-	@for t in $(TWEAK_NAME); do \
-	  ln -sf /usr/lib/DynamicPatches/AutoPatches.dylib \
-	    $(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/$$t.dylib.roothidepatch; \
-	  echo "  patched $$t.dylib.roothidepatch"; \
-	done
+# Install only after verifying the .deb on your device. Never install from CI.
+# No hard-coded SSH IP addresses or silent push-to-device hooks.
+after-package::
+	@echo "[AwemeVision] Package created; run scripts/verify_relaxin_deb.py on the .deb."

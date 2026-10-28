@@ -1,8 +1,0 @@
---- !tapi-tbd-v3
-archs: [ arm64, arm64e ]
-platform: ios
-install-name: '@loader_path/.jbroot/usr/lib/libsubstrate.dylib'
-exports:
-  - archs: [ arm64, arm64e ]
-    symbols: [ MSHookMessageEx, MSHookFunction, MSHookIvar ]
-...
