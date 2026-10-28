@@ -1,0 +1,115 @@
+AwemeVision 2.0.8 static self-check
+Target: RELAXIN 0.4.8 / RootHide / iOS 17.3 / Douyin 40.8.0
+Note: static checks only; no Theos toolchain or real device is available in this runtime.
+
+===== scripts/check_relaxin_source.py =====
+PASS DYYY targets actual Douyin bundle ID
+PASS DYYY uses legacy Bundles-only filter
+PASS AwemeVision targets actual Douyin bundle ID
+PASS AwemeVision uses legacy Bundles-only filter
+PASS new independent Debian identity
+PASS new version
+PASS RootHide package arch
+PASS do not load legacy package simultaneously
+PASS do not impersonate old updates
+PASS iOS 17.3 minimum
+PASS RootHide enforced
+PASS dylib arch and DEB arch separate
+PASS strict linking: never emit dynamic_lookup imports
+PASS weak framework is listed via Theos, not raw LDFLAGS
+PASS public iOS frameworks linked via Theos _FRAMEWORKS
+PASS CI installs ldid and checks signer early
+PASS CI blocks framework/linker-flag regression
+PASS hooks not gated on agreement at startup
+PASS settings gesture hook remains installed when toggled off
+PASS iOS 17.3 deployment target
+PASS known-good 1.7 loader basename default
+PASS shipping startup enables default feature hooks
+PASS default feature hook group installed in FULL; compat is diagnostic only
+PASS explicit named Hook groups preserved
+PASS early constructor breadcrumb independent of UIKit
+PASS main-queue injection marker
+PASS RootHide Theos and SDK from Git clones
+PASS avoid previous exit 128 action
+PASS Logos preprocessing test
+PASS clean CI builds chosen mode
+PASS inspect real DEB
+PASS CI exposes 3 build switches
+PASS Swift Logos group init fix retained
+PASS dynamic long-press manager fix retained
+PASS AWELongPressPanelTableViewController dataArray declared
+PASS AWEModernLongPressPanelTableViewController dataArray declared
+PASS all current tweak sources exist
+PASS generic target vars prevent stale dylib naming
+PASS old remote update disabled: DYYY_DEFAULT_ABTEST_URL
+PASS old remote update disabled: checkForRemoteConfigUpdate
+PASS old remote update disabled: DYYYRemoteConfigURL
+PASS old remote update disabled: latest/download/ABTestDataPatch_A.json
+PASS settings report v2.0.8
+
+43/43 checks passed (static only)
+
+===== scripts/check_interaction_regression.py =====
+PASS Strict RootHide linker
+PASS Complete hook startup
+PASS Progress default and migration
+PASS Title default
+PASS Progress transform reapplication
+PASS Feed geometry stable
+PASS Tab bar background paint clear
+PASS Cell long press fallback
+PASS Feed long press fallback
+PASS Early gesture with overlay
+PASS No native panel premature dismissal
+PASS Prefer existing Douyin navigation stack
+PASS Modal navigation only as fallback
+PASS Close only plugin page on existing stack
+PASS Subsections remain on active nav
+PASS One-swipe exit gesture
+PASS Actual DEB version check
+17/17
+
+===== scripts/check_208_visual_native.py =====
+PASS: footer host paint, stable feed mode retained
+PASS: footer restore
+PASS: comment panel blur
+PASS: comment cell clear
+PASS: comment scroll reuse
+PASS: comment paint restored
+PASS: native actions merge rather than replace
+PASS: native complete menu fallback
+PASS: do not simplify away native menu in custom mode
+PASS: default visual flags
+PASS: strict rootHide linking
+11/11
+
+===== scripts/check_208_ui_regressions.py =====
+PASS: transparent tabbar extends only player view in stable mode
+PASS: player extension remains limited to exact tabbar-height gap
+PASS: black interaction overlay cleared for transparent tabbar
+PASS: title offset is not clamped to safe-area remaining distance
+PASS: comment containers recursively cleared
+PASS: comment collection cells refreshed on reuse
+PASS: comment blur restores layer backgrounds
+PASS: settings prefers original navigation stack
+PASS: modal settings stack is fallback only
+PASS: settings close pops only plugin root on existing stack
+PASS: dedicated modal navigation explicitly tracked
+PASS: strict linker retained
+12/12
+
+===== scripts/check_build_toolchain.py =====
+PASS: Theos _FRAMEWORKS declares required frameworks
+PASS: AVFAudio uses weak-framework variable
+PASS: _LDFLAGS has no bare framework names: -Wl,-undefined,error
+PASS: strict undefined symbol check remains enabled
+PASS: dynamic_lookup is not passed to linker
+PASS: GitHub Actions installs ldid
+PASS: GitHub Actions checks for ldid before compiling
+PASS: GitHub Actions checks for packaging tool
+PASS: GitHub Actions uses RootHide Theos
+0 preflight failure(s)
+
+===== scripts/check_visual_effect_regression.py =====
+PASS 12/12: visual effect regression guards (source-only)
+
