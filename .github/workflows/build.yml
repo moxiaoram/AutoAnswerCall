@@ -1,59 +1,163 @@
-name: Build AutoAnswerAudio (RootHide)
+name: Build AwemeVision RELAXIN RootHide DEB
 
 on:
-  workflow_dispatch:
   push:
-    branches: [main]
-    tags: ['v*']
+    branches-ignore: [dev]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      startup_mode:
+        description: 'full = all settings enabled (default); compat = diagnostics only'
+        required: false
+        type: choice
+        options: [full, compat]
+        default: full
+      legacy_loader_name:
+        description: 'Reuse working DYYY.dylib basename (recommended for white list)'
+        required: false
+        type: boolean
+        default: true
+      probe_only:
+        description: 'Only build the minimal injection diagnostic probe (not the full tweak)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-    runs-on: macos-14
+  relaxin-roothide:
+    name: iOS 17.3 / RELAXIN 0.4.8 / RootHide
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      PROBE_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.probe_only && '1' || '0' }}
+      AWEMEVISION_STARTUP: ${{ github.event_name == 'workflow_dispatch' && inputs.startup_mode || 'full' }}
+      LEGACY_LOADER_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.legacy_loader_name == false && '0' || '1' }}
     steps:
-      - name: Checkout source
+      - name: Checkout project
         uses: actions/checkout@v4
 
-      - name: Install RootHide Theos
+      - name: Audit source before compiling
+        run: python3 scripts/check_relaxin_source.py
+
+      - name: Audit UI interaction regressions
+        run: python3 scripts/check_interaction_regression.py
+
+      - name: Audit 2.0.13 progress, tab bar, settings navigation
+        run: python3 scripts/check_209_ui_regressions.py
+
+      - name: Audit 2.0.13 tab bar, comment blur and settings navigation
+        run: python3 scripts/check_208_visual_native.py
+
+      - name: Audit 2.0.13 player extension, comment surfaces and navigation return
+        run: python3 scripts/check_208_ui_regressions.py
+
+      - name: Audit 2.0.13 scoped comment labels and stable player underlay
+        run: python3 scripts/check_210_visual_regressions.py
+
+      - name: Audit 2.0.13 original transparent tab bar behavior
+        run: python3 scripts/check_212_tabbar_regression.py
+
+      - name: Audit 2.0.13 native edge long-press speed preservation
+        run: python3 scripts/check_211_longpress_speed.py
+
+      - name: Audit 2.0.13 settings header and comment glass
+        run: python3 scripts/check_213_settings_glass.py
+
+      - name: Audit linker flags and required signing tools
+        run: python3 scripts/check_build_toolchain.py
+
+      - name: Audit 2.0.15 homepage actions and original quality provider
+        run: python3 scripts/check_215_panel_original.py
+
+      - name: Prepare RootHide Theos and SDKs using git (no third-party action)
+        shell: bash
         run: |
+          set -euo pipefail
           git clone --depth 1 --recursive https://github.com/roothide/theos.git "$RUNNER_TEMP/theos"
+          git clone --depth 1 https://github.com/theos/sdks.git "$RUNNER_TEMP/sdks"
+          mkdir -p "$RUNNER_TEMP/theos/sdks"
+          THEOS_SDK_ROOT="$RUNNER_TEMP/sdks" THEOS_DEST="$RUNNER_TEMP/theos/sdks" python3 - <<'PYSDK'
+          import os, pathlib, re
+          root=pathlib.Path(os.environ['THEOS_SDK_ROOT'])
+          dest=pathlib.Path(os.environ['THEOS_DEST'])
+          sdks=sorted(root.glob('iPhoneOS*.sdk'), key=lambda p: tuple(map(int,re.findall(r'\d+',p.stem))))
+          if not sdks: raise SystemExit('No iPhoneOS SDKs found in checkout')
+          selected=sdks[-1]
+          link=dest/selected.name
+          if not link.exists(): link.symlink_to(selected.resolve(),target_is_directory=True)
+          print('Selected SDK:',selected.name)
+          PYSDK
           echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/theos/bin" >> "$GITHUB_PATH"
+          git -C "$RUNNER_TEMP/theos" rev-parse HEAD
+          git -C "$RUNNER_TEMP/sdks" rev-parse HEAD
 
-      - name: Install build tools
-        run: brew install ldid dpkg
-
-      - name: Build RootHide arm64e package
+      - name: Prepare GNU Make, packaging and signing tools
+        shell: bash
         run: |
-          set -euxo pipefail
-          make clean package FINALPACKAGE=1 ARCHS=arm64e THEOS="$THEOS" THEOS_PACKAGE_SCHEME=roothide 2>&1 | tee build.log
+          set -euo pipefail
+          brew install make ldid xz dpkg
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+          # Fail BEFORE compiling if the RootHide package cannot be signed.
+          command -v ldid
+          command -v dpkg-deb
+          test -x "$(brew --prefix make)/libexec/gnubin/make"
+          xcodebuild -version
 
-      - name: Validate package contents
+      - name: Confirm RootHide signing preflight
+        shell: bash
         run: |
-          set -euxo pipefail
-          debs=(packages/*.deb)
-          test "${#debs[@]}" -gt 0
-          for deb in "${debs[@]}"; do
-            dpkg-deb --info "$deb"
-            test "$(dpkg-deb -f "$deb" Architecture)" = "iphoneos-arm64e"
-            dpkg-deb --contents "$deb" | grep -F 'AutoAnswerCall.dylib'
-            dpkg-deb --contents "$deb" | grep -F 'AutoAnswerTRBridge.dylib'
-            dpkg-deb --contents "$deb" | grep -F 'AutoAnswerTRBridge.plist'
-            dpkg-deb --contents "$deb" | grep -F 'AutoAnswerCallPrefs.bundle'
-            dpkg-deb --contents "$deb" | grep -F 'autoanswer.call.plist'
-            # RootHide 必须带 patch 链接，否则注入不生效
-            dpkg-deb --contents "$deb" | grep -E 'roothidepatch' || {
-              echo "ERROR: 缺少 roothidepatch 符号链接，RootHide 下不会生效"; exit 1; }
-          done
+          set -euo pipefail
+          command -v ldid
+          command -v dpkg-deb
+          command -v gmake
+          echo "ldid: $(command -v ldid)"
+          echo "dpkg-deb: $(command -v dpkg-deb)"
 
-      - name: Upload build log
-        if: always()
+      - name: Logos syntax preprocessing check
+        shell: bash
+        run: |
+          set -euo pipefail
+          perl "$THEOS/bin/logos.pl" DYYY.xm > "$RUNNER_TEMP/AwemeVision-DYYY-logos.mm"
+          test -s "$RUNNER_TEMP/AwemeVision-DYYY-logos.mm"
+          wc -c "$RUNNER_TEMP/AwemeVision-DYYY-logos.mm"
+
+      - name: Clean and build RootHide DEB
+        shell: bash
+        env:
+          INSTALL: '0'
+        run: |
+          set -euo pipefail
+          echo "THEOS=$THEOS; PROBE_ONLY=$PROBE_ONLY; AWEMEVISION_STARTUP=$AWEMEVISION_STARTUP; LEGACY_LOADER_NAME=$LEGACY_LOADER_NAME"
+          gmake clean SCHEME=roothide PROBE_ONLY="$PROBE_ONLY" AWEMEVISION_STARTUP="$AWEMEVISION_STARTUP" LEGACY_LOADER_NAME="$LEGACY_LOADER_NAME"
+          rm -rf packages
+          gmake package SCHEME=roothide PROBE_ONLY="$PROBE_ONLY" AWEMEVISION_STARTUP="$AWEMEVISION_STARTUP" LEGACY_LOADER_NAME="$LEGACY_LOADER_NAME" FINALPACKAGE=1 -j"$(sysctl -n hw.ncpu)"
+          test "$(find packages -maxdepth 1 -name '*.deb' | wc -l | tr -d ' ')" = '1'
+          printf 'version=2.0.10\nloader=%s\nstartup=%s\nprobe_only=%s\nplatform=RELAXIN-RootHide-iOS17.3\n' "$LEGACY_LOADER_NAME" "$AWEMEVISION_STARTUP" "$PROBE_ONLY" > packages/BUILD_METADATA.txt
+
+      - name: Verify real DEB and Mach-O dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          LEGACY_LOADER_NAME="$LEGACY_LOADER_NAME" python3 scripts/verify_relaxin_deb.py packages/*.deb
+          shasum -a 256 packages/*.deb | tee packages/SHA256SUMS.txt
+
+      - name: Check all settings hooks are reachable
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/audit_settings_bindings.py
+
+      - name: Upload verified RootHide package
         uses: actions/upload-artifact@v4
         with:
-          name: AutoAnswerAudio-build-log
-          path: build.log
-
-      - name: Upload DEB
-        uses: actions/upload-artifact@v4
-        with:
-          name: AutoAnswerAudio-roothide-arm64e
-          path: packages/*.deb
+          name: AwemeVision-2.0.10-RELAXIN-RootHide-${{ env.PROBE_ONLY == '1' && 'PROBE' || env.AWEMEVISION_STARTUP }}-${{ env.LEGACY_LOADER_NAME == '1' && 'legacy-loader' || 'new-loader' }}
+          path: |
+            packages/*.deb
+            packages/SHA256SUMS.txt
+            packages/BUILD_METADATA.txt
           if-no-files-found: error
+          retention-days: 30

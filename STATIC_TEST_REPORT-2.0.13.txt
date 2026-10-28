@@ -1,0 +1,18 @@
+影流助手 2.0.13 / RELAXIN RootHide 源码静态检查
+
+来源：2.0.12 完整源码，针对设置首页文字及评论区模糊修改。
+- RootHide source audit 43/43 PASS
+- UI interaction regression 17/17 PASS
+- Visual effect regression 12/12 PASS
+- 2.0.8 visual native 11/11 PASS
+- 2.0.8 UI regression 12/12 PASS
+- 2.0.9 UI regression 14/14 PASS
+- 2.0.10 visual regression 14/14 PASS
+- 2.0.11 edge long press 10/10 PASS
+- 2.0.12 tabbar regression 11/11 PASS
+- Build toolchain preflight 0 errors PASS
+- 2.0.13 settings & blur 12/12 PASS
+- All non-navigation settings have non-UI references PASS
+- YAML parsing and Python syntax PASS
+
+These are static checks only. Theos compilation / DEB signing / real device not tested here.
