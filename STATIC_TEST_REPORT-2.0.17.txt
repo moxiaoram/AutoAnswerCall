@@ -1,0 +1,25 @@
+AwemeVision 2.0.17 — RELAXIN RootHide source audit
+Date: 2026-10-28
+Target: iPhone15,3 / iOS 17.3 / Douyin 40.8.0 / RELAXIN 0.4.8 / RootHide
+Scope: STATIC ONLY. Does not verify Theos build, injection, visual alignment or follow callback.
+
+PASS check_relaxin_source.py: 43/43 checks passed (static only)
+PASS check_interaction_regression.py: 17/17
+PASS check_208_ui_regressions.py: 12/12
+PASS check_208_visual_native.py: 11/11
+PASS check_209_ui_regressions.py: 14/14 checks passed (source only)
+PASS check_210_visual_regressions.py: 14/14 source-only assertions pass
+PASS check_211_longpress_speed.py: 10/10 checks passed (static only)
+PASS check_212_tabbar_regression.py: PASS 11/11 2.0.12 tab-bar source checks
+PASS check_213_settings_glass.py: PASS 12/12 root UI and comment-glass source checks (not a device test)
+PASS check_214_video_resolver.py: 13/13 checks passed (source only)
+PASS check_215_panel_original.py: 2.0.17 offline source checks passed; third-party API live availability NOT verified.
+PASS check_216_feed_icons.py: PASS: native-sized bitmap rendering, state preservation, settings toggle, user priority, strict linkage
+PASS check_217_follow_star.py: PASS 16/16 follow-star checks
+PASS check_build_toolchain.py: 0 preflight failure(s)
+PASS check_visual_effect_regression.py: PASS 12/12: visual effect regression guards (source-only)
+PASS audit_settings_bindings.py: PASS: all non-navigation setting identifiers have non-UI source references (NOT proof of runtime behavior)
+PASS CI YAML parsing
+PASS strict -Wl,-undefined,error configuration; dynamic_lookup prohibited
+PASS RootHide iphoneos-arm64e package and arm64 dylib target
+NOT PERFORMED: actual Theos/Logos compilation; runtime and device tests; follow/star physical appearance.
