@@ -1,9 +1,11 @@
-Package: com.autoanswer.call
-Name: AutoAnswerAudio
-Version: 2.5.0
-Architecture: iphoneos-arm64e
-Description: Experimental RootHide call automation with native stop button red/gray state sync and immediate call-end overlay cleanup; uplink playback is unverified
-Maintainer: AutoAnswerAudio
-Author: AutoAnswerAudio
+Package: com.local.awemevision.relaxin
+Name: 影流助手（RELAXIN 专用）
+Version: 2.0.7
+Description: 独立二次开发插件；RELAXIN RootHide / iOS 17.3 / 抖音 40.8.0 专用；无旧版更新检查
 Section: Tweaks
-Depends: mobilesubstrate, preferenceloader
+Depends: firmware (>= 17.3), firmware (<< 17.4), mobilesubstrate | ellekit
+Conflicts: com.huami.dyyy
+Priority: optional
+Maintainer: Local build
+Author: Independent fork based on DYYY (original credits retained)
+Architecture: iphoneos-arm64e
